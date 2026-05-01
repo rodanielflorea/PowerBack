@@ -5,6 +5,7 @@ const hideBtn = document.getElementById('hideBtn');
 const quitBtn = document.getElementById('quitBtn');
 
 const urlMenuBtn = document.getElementById('urlMenuBtn');
+const reloadBtn = document.getElementById('reloadBtn');
 const settingsBtn = document.getElementById('settingsBtn');
 const recBtn = document.getElementById('recBtn');
 const settingsOverlay = document.getElementById('settingsOverlay');
@@ -12,6 +13,9 @@ const settingsCloseBtn = document.getElementById('settingsCloseBtn');
 const urlList = document.getElementById('urlList');
 const urlInput = document.getElementById('urlInput');
 const urlAddBtn = document.getElementById('urlAddBtn');
+
+const modeVoice = document.getElementById('modeVoice');
+const modeCaption = document.getElementById('modeCaption');
 
 const micSelect = document.getElementById('micSelect');
 const captureMicEl = document.getElementById('captureMic');
@@ -24,10 +28,21 @@ const whisperExeBrowse = document.getElementById('whisperExeBrowse');
 const whisperModelEl = document.getElementById('whisperModel');
 const whisperModelBrowse = document.getElementById('whisperModelBrowse');
 const languageSelect = document.getElementById('languageSelect');
+
+const captureRectEl = document.getElementById('captureRect');
+const selectAreaBtn = document.getElementById('selectAreaBtn');
+const captureLanguageEl = document.getElementById('captureLanguage');
+const capturePollMsEl = document.getElementById('capturePollMs');
+
+const hotkeyList = document.getElementById('hotkeyList');
+const resetAllHotkeysBtn = document.getElementById('resetAllHotkeysBtn');
+
 const logBody = document.getElementById('logBody');
 
 let urls = [];
-let cfg = null;
+let txCfg = null;
+let capCfg = null;
+let mode = 'voice';
 
 function updateFill(opacity) {
   sliderFill.style.width = `${Math.round(opacity * 100)}%`;
@@ -120,13 +135,17 @@ urlInput.addEventListener('keydown', (e) => {
 });
 
 urlMenuBtn.addEventListener('click', () => window.api.showUrlMenu());
+reloadBtn.addEventListener('click', () => window.api.reloadWebview());
 
 function openSettings() {
   settingsOverlay.hidden = false;
   window.api.setWebviewVisible(false);
   refreshUrls();
+  refreshModeUI();
   refreshTranscriptionUI();
+  refreshCaptureUI();
   refreshMicList();
+  refreshHotkeysUI();
 }
 
 function closeSettings() {
@@ -147,40 +166,254 @@ function log(msg, kind = '') {
   logBody.scrollTop = logBody.scrollHeight;
 }
 
-async function refreshTranscriptionUI() {
-  cfg = await window.api.getTranscriptionConfig();
-  engineOpenai.checked = cfg.engine !== 'local';
-  engineLocal.checked = cfg.engine === 'local';
-  openaiKeyEl.value = cfg.openaiApiKey || '';
-  whisperExeEl.value = cfg.whisperExe || '';
-  whisperModelEl.value = cfg.whisperModel || '';
-  languageSelect.value = cfg.language || 'auto';
-  captureMicEl.checked = cfg.captureMic !== false;
-  captureSystemEl.checked = cfg.captureSystem !== false;
+async function refreshModeUI() {
+  mode = await window.api.getMode();
+  modeVoice.checked = mode !== 'caption';
+  modeCaption.checked = mode === 'caption';
+  updateRecTitle();
 }
 
-async function persistConfig(patch) {
-  cfg = { ...(cfg || {}), ...patch };
+function updateRecTitle() {
+  const verb = recState || captureRunning ? 'Stop' : 'Start';
+  const what = mode === 'caption' ? 'caption capture' : 'voice transcription';
+  recBtn.title = `${verb} ${what}`;
+}
+
+modeVoice.addEventListener('change', async () => {
+  if (modeVoice.checked) { mode = 'voice'; await window.api.setMode('voice'); updateRecTitle(); }
+});
+modeCaption.addEventListener('change', async () => {
+  if (modeCaption.checked) { mode = 'caption'; await window.api.setMode('caption'); updateRecTitle(); }
+});
+
+async function refreshTranscriptionUI() {
+  txCfg = await window.api.getTranscriptionConfig();
+  engineOpenai.checked = txCfg.engine !== 'local';
+  engineLocal.checked = txCfg.engine === 'local';
+  openaiKeyEl.value = txCfg.openaiApiKey || '';
+  whisperExeEl.value = txCfg.whisperExe || '';
+  whisperModelEl.value = txCfg.whisperModel || '';
+  languageSelect.value = txCfg.language || 'auto';
+  captureMicEl.checked = txCfg.captureMic !== false;
+  captureSystemEl.checked = txCfg.captureSystem !== false;
+}
+
+async function persistTx(patch) {
+  txCfg = { ...(txCfg || {}), ...patch };
   await window.api.setTranscriptionConfig(patch);
 }
 
-engineOpenai.addEventListener('change', () => engineOpenai.checked && persistConfig({ engine: 'openai' }));
-engineLocal.addEventListener('change', () => engineLocal.checked && persistConfig({ engine: 'local' }));
-openaiKeyEl.addEventListener('change', () => persistConfig({ openaiApiKey: openaiKeyEl.value.trim() }));
-whisperExeEl.addEventListener('change', () => persistConfig({ whisperExe: whisperExeEl.value.trim() }));
-whisperModelEl.addEventListener('change', () => persistConfig({ whisperModel: whisperModelEl.value.trim() }));
-languageSelect.addEventListener('change', () => persistConfig({ language: languageSelect.value }));
-captureMicEl.addEventListener('change', () => persistConfig({ captureMic: captureMicEl.checked }));
-captureSystemEl.addEventListener('change', () => persistConfig({ captureSystem: captureSystemEl.checked }));
-micSelect.addEventListener('change', () => persistConfig({ micDeviceId: micSelect.value }));
+engineOpenai.addEventListener('change', () => engineOpenai.checked && persistTx({ engine: 'openai' }));
+engineLocal.addEventListener('change', () => engineLocal.checked && persistTx({ engine: 'local' }));
+openaiKeyEl.addEventListener('change', () => persistTx({ openaiApiKey: openaiKeyEl.value.trim() }));
+whisperExeEl.addEventListener('change', () => persistTx({ whisperExe: whisperExeEl.value.trim() }));
+whisperModelEl.addEventListener('change', () => persistTx({ whisperModel: whisperModelEl.value.trim() }));
+languageSelect.addEventListener('change', () => persistTx({ language: languageSelect.value }));
+captureMicEl.addEventListener('change', () => persistTx({ captureMic: captureMicEl.checked }));
+captureSystemEl.addEventListener('change', () => persistTx({ captureSystem: captureSystemEl.checked }));
+micSelect.addEventListener('change', () => persistTx({ micDeviceId: micSelect.value }));
 
 whisperExeBrowse.addEventListener('click', async () => {
   const p = await window.api.pickFile('exe');
-  if (p) { whisperExeEl.value = p; persistConfig({ whisperExe: p }); }
+  if (p) { whisperExeEl.value = p; persistTx({ whisperExe: p }); }
 });
 whisperModelBrowse.addEventListener('click', async () => {
   const p = await window.api.pickFile('model');
-  if (p) { whisperModelEl.value = p; persistConfig({ whisperModel: p }); }
+  if (p) { whisperModelEl.value = p; persistTx({ whisperModel: p }); }
+});
+
+async function refreshCaptureUI() {
+  capCfg = await window.api.getCaptureConfig();
+  captureLanguageEl.value = capCfg.language || 'English';
+  capturePollMsEl.value = capCfg.pollMs || 700;
+  renderCaptureRect(capCfg.rect);
+}
+
+function renderCaptureRect(rect) {
+  if (!rect) {
+    captureRectEl.value = '';
+    captureRectEl.placeholder = 'No area selected';
+  } else {
+    const w = rect.x2 - rect.x1;
+    const h = rect.y2 - rect.y1;
+    captureRectEl.value = `(${rect.x1}, ${rect.y1}) ${w}×${h}${rect.scaleFactor && rect.scaleFactor !== 1 ? ` @${rect.scaleFactor}x` : ''}`;
+  }
+}
+
+async function persistCap(patch) {
+  capCfg = { ...(capCfg || {}), ...patch };
+  await window.api.setCaptureConfig(patch);
+}
+
+captureLanguageEl.addEventListener('change', () => persistCap({ language: captureLanguageEl.value }));
+capturePollMsEl.addEventListener('change', () => {
+  const v = parseInt(capturePollMsEl.value, 10);
+  if (Number.isFinite(v) && v >= 200) persistCap({ pollMs: v });
+});
+selectAreaBtn.addEventListener('click', async () => {
+  log('Selecting capture area — drag a rectangle, Esc to cancel', 'info');
+  await window.api.selectCaptureArea();
+});
+
+window.api.onCaptureRectChanged((rect) => {
+  capCfg = { ...(capCfg || {}), rect };
+  renderCaptureRect(rect);
+  log(`Capture area set: ${rect.x1},${rect.y1} → ${rect.x2},${rect.y2}`, 'info');
+});
+
+const HOTKEY_LABELS = {
+  toggleVisibility: 'Toggle window visibility',
+  moveLeft: 'Move window left',
+  moveRight: 'Move window right',
+  moveUp: 'Move window up',
+  moveDown: 'Move window down',
+  opacityUp: 'Opacity up',
+  opacityDown: 'Opacity down',
+  scrollUp: 'Scroll page up',
+  scrollDown: 'Scroll page down',
+  resetCaptureArea: 'Reset capture area (re-pick)',
+  reloadSite: 'Reload site',
+  toggleStealth: 'Toggle stealth',
+  toggleRecording: 'Start/stop voice or caption',
+};
+
+function eventToBinding(e) {
+  const key = e.key;
+  if (['Control', 'Alt', 'Shift', 'Meta', 'Dead'].includes(key)) return null;
+  const parts = [];
+  if (e.ctrlKey) parts.push('Ctrl');
+  if (e.altKey) parts.push('Alt');
+  if (e.shiftKey) parts.push('Shift');
+  if (e.metaKey) parts.push('Super');
+  const map = {
+    'ArrowLeft': 'Left', 'ArrowRight': 'Right',
+    'ArrowUp': 'Up', 'ArrowDown': 'Down',
+    ' ': 'Space', 'Escape': 'Esc',
+    'Enter': 'Return', 'Tab': 'Tab', 'Backspace': 'Backspace',
+    'Delete': 'Delete', 'Home': 'Home', 'End': 'End',
+    'PageUp': 'PageUp', 'PageDown': 'PageDown',
+  };
+  let k;
+  if (map[key]) k = map[key];
+  else if (key.length === 1) k = key.toUpperCase();
+  else if (/^F\d{1,2}$/.test(key)) k = key;
+  else k = key;
+  parts.push(k);
+  return parts.join('+');
+}
+
+let hotkeyState = { current: {}, defaults: {}, failures: {} };
+let capturingFor = null;
+let captureKeyHandler = null;
+
+async function refreshHotkeysUI() {
+  hotkeyState = await window.api.getHotkeys();
+  renderHotkeyList();
+}
+
+function renderHotkeyList() {
+  hotkeyList.innerHTML = '';
+  for (const action of Object.keys(HOTKEY_LABELS)) {
+    const row = document.createElement('div');
+    row.className = 'hotkey-row';
+
+    const label = document.createElement('span');
+    label.className = 'hotkey-label';
+    label.textContent = HOTKEY_LABELS[action];
+    row.appendChild(label);
+
+    const binding = document.createElement('button');
+    binding.className = 'hotkey-binding';
+    const combo = hotkeyState.current[action] || '';
+    if (capturingFor === action) {
+      binding.textContent = 'Press keys…';
+      binding.classList.add('capturing');
+    } else if (!combo) {
+      binding.textContent = '(disabled)';
+      binding.classList.add('empty');
+    } else {
+      binding.textContent = combo;
+      if (hotkeyState.failures && hotkeyState.failures[action]) {
+        binding.classList.add('failed');
+        binding.title = hotkeyState.failures[action];
+      }
+    }
+    binding.addEventListener('click', () => beginCapture(action));
+    row.appendChild(binding);
+
+    const reset = document.createElement('button');
+    reset.className = 'hotkey-reset';
+    reset.textContent = 'reset';
+    reset.title = 'Reset to default: ' + (hotkeyState.defaults[action] || '(none)');
+    reset.addEventListener('click', async () => {
+      cancelCapture();
+      await window.api.resetHotkey(action);
+    });
+    row.appendChild(reset);
+
+    hotkeyList.appendChild(row);
+  }
+}
+
+function beginCapture(action) {
+  cancelCapture();
+  capturingFor = action;
+  renderHotkeyList();
+  captureKeyHandler = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
+      cancelCapture();
+      renderHotkeyList();
+      return;
+    }
+    if (e.key === 'Backspace' && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
+      const a = capturingFor;
+      cancelCapture();
+      await window.api.setHotkey(a, '');
+      return;
+    }
+    const combo = eventToBinding(e);
+    if (!combo) return;
+    const a = capturingFor;
+    cancelCapture();
+    await window.api.setHotkey(a, combo);
+  };
+  document.addEventListener('keydown', captureKeyHandler, true);
+}
+
+function cancelCapture() {
+  if (captureKeyHandler) {
+    document.removeEventListener('keydown', captureKeyHandler, true);
+    captureKeyHandler = null;
+  }
+  capturingFor = null;
+}
+
+resetAllHotkeysBtn.addEventListener('click', async () => {
+  cancelCapture();
+  await window.api.resetAllHotkeys();
+});
+
+window.api.onHotkeysChanged((data) => {
+  hotkeyState = { ...hotkeyState, ...data };
+  if (!settingsOverlay.hidden) renderHotkeyList();
+});
+
+window.api.onToggleRecording(() => {
+  recBtn.click();
+});
+
+window.api.onSelectorClosed(() => {
+  if (!settingsOverlay.hidden) closeSettings();
+});
+
+window.api.onCaptureText((text) => log('OCR: ' + text));
+window.api.onCaptureError((msg) => log('OCR error: ' + msg, 'err'));
+window.api.onCaptureState((on) => {
+  captureRunning = !!on;
+  recBtn.classList.toggle('on', captureRunning);
+  updateRecTitle();
 });
 
 async function refreshMicList() {
@@ -199,28 +432,29 @@ async function refreshMicList() {
       o.textContent = m.label || `Microphone (${m.deviceId.slice(0, 6)})`;
       micSelect.appendChild(o);
     });
-    if (cfg && cfg.micDeviceId) micSelect.value = cfg.micDeviceId;
+    if (txCfg && txCfg.micDeviceId) micSelect.value = txCfg.micDeviceId;
   } catch (e) {
     log('Mic enumeration failed: ' + e.message, 'err');
   }
 }
 
 let recState = null;
+let captureRunning = false;
 
-async function startTranscription() {
+async function startVoice() {
   if (recState) return;
-  cfg = await window.api.getTranscriptionConfig();
+  txCfg = await window.api.getTranscriptionConfig();
 
   const ctx = new AudioContext();
   const dest = ctx.createMediaStreamDestination();
   const streams = [];
   const sources = [];
 
-  if (cfg.captureMic !== false) {
+  if (txCfg.captureMic !== false) {
     try {
       const constraints = {
-        audio: cfg.micDeviceId
-          ? { deviceId: { exact: cfg.micDeviceId }, echoCancellation: true, noiseSuppression: true }
+        audio: txCfg.micDeviceId
+          ? { deviceId: { exact: txCfg.micDeviceId }, echoCancellation: true, noiseSuppression: true }
           : { echoCancellation: true, noiseSuppression: true },
       };
       const mic = await navigator.mediaDevices.getUserMedia(constraints);
@@ -235,7 +469,7 @@ async function startTranscription() {
     }
   }
 
-  if (cfg.captureSystem !== false) {
+  if (txCfg.captureSystem !== false) {
     try {
       const sys = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
       sys.getVideoTracks().forEach(t => t.stop());
@@ -285,31 +519,51 @@ async function startTranscription() {
       const mono16k = downsampleTo16k(samples, sampleRate);
       if (!isSilent(mono16k)) {
         const wav = encodeWav(mono16k, 16000);
-        runTranscription(wav).catch(e => log('Transcribe error: ' + e.message, 'err'));
+        runTranscription(wav).catch(err => log('Transcribe error: ' + err.message, 'err'));
       }
     }
   };
 
   recState = { ctx, streams, processor };
   recBtn.classList.add('on');
-  recBtn.title = 'Stop transcription';
-  log('Transcription started (engine: ' + cfg.engine + ')', 'info');
+  updateRecTitle();
+  log('Voice transcription started (engine: ' + txCfg.engine + ')', 'info');
 }
 
-async function stopTranscription() {
+async function stopVoice() {
   if (!recState) return;
   try { recState.processor.disconnect(); } catch {}
   recState.streams.forEach(s => s.getTracks().forEach(t => t.stop()));
   try { await recState.ctx.close(); } catch {}
   recState = null;
   recBtn.classList.remove('on');
-  recBtn.title = 'Start transcription';
-  log('Transcription stopped', 'info');
+  updateRecTitle();
+  log('Voice transcription stopped', 'info');
 }
 
-recBtn.addEventListener('click', () => {
-  if (recState) stopTranscription();
-  else startTranscription();
+async function startCaption() {
+  capCfg = await window.api.getCaptureConfig();
+  if (!capCfg.rect) {
+    log('No capture area set — open settings, click Select', 'err');
+    return;
+  }
+  await window.api.startCaptureLoop();
+  log('Caption capture started (' + (capCfg.language || 'English') + ', poll ' + (capCfg.pollMs || 700) + 'ms)', 'info');
+}
+
+async function stopCaption() {
+  await window.api.stopCaptureLoop();
+  log('Caption capture stopped', 'info');
+}
+
+recBtn.addEventListener('click', async () => {
+  if (mode === 'caption') {
+    if (captureRunning) stopCaption();
+    else startCaption();
+  } else {
+    if (recState) stopVoice();
+    else startVoice();
+  }
 });
 
 async function runTranscription(wavBuf) {

@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body {
+      margin: 0; padding: 0;
+      height: 100vh; width: 100vw;
+      background: rgba(0, 0, 0, 0.25);
+      overflow: hidden;
+      cursor: crosshair !important;
+      user-select: none;
+    }
+    *, *::before, *::after { cursor: inherit !important; }
+    .hint {
+      position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+      background: #ffffff; color: #111; padding: 6px 14px; border-radius: 4px;
+      font: 12px -apple-system, "Segoe UI", sans-serif;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      z-index: 10;
+    }
+    .box {
+      position: absolute;
+      border: 2px solid #2563eb;
+      background: rgba(37, 99, 235, 0.18);
+      pointer-events: none;
+      display: none;
+    }
+    .dim {
+      position: absolute;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="hint">Click and drag to select capture area · Esc to cancel</div>
+  <div class="box" id="box"></div>
+  <script src="selector.js"></script>
+</body>
+</html>

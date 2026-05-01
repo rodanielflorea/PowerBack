@@ -20,6 +20,7 @@
 
   <aside class="rail">
     <button class="rail-btn" id="urlMenuBtn" title="Switch site">&#9662;</button>
+    <button class="rail-btn" id="reloadBtn" title="Reload site">&#8635;</button>
     <button class="rail-btn" id="settingsBtn" title="Settings">&#9881;</button>
     <button class="rail-btn rec-btn" id="recBtn" title="Start transcription">
       <span class="rec-dot"></span>
@@ -44,7 +45,16 @@
       </section>
 
       <section class="settings-section">
-        <h3>Audio capture</h3>
+        <h3>Mode</h3>
+        <p class="hint">Pick before starting. The dot button on the rail starts the selected mode.</p>
+        <div class="field-row">
+          <label class="radio"><input type="radio" name="mode" value="voice" id="modeVoice" /> Voice (mic + system audio &rarr; foreground app)</label>
+          <label class="radio"><input type="radio" name="mode" value="caption" id="modeCaption" /> Caption (OCR a screen area &rarr; site input)</label>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h3>Voice mode &mdash; audio capture</h3>
         <div class="field">
           <label for="micSelect">Microphone</label>
           <select id="micSelect"></select>
@@ -56,7 +66,38 @@
       </section>
 
       <section class="settings-section">
-        <h3>Transcription</h3>
+        <h3>Caption mode &mdash; OCR area</h3>
+        <p class="hint">Select a screen area (e.g. video caption strip). Polled every interval, diffed, new text is sent into the loaded site's chat input.</p>
+        <div class="field">
+          <label>Capture area</label>
+          <div class="path-row">
+            <input type="text" id="captureRect" readonly placeholder="No area selected" />
+            <button id="selectAreaBtn">Select</button>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field" style="flex:1">
+            <label for="captureLanguage">OCR language</label>
+            <select id="captureLanguage">
+              <option>English</option>
+              <option>French</option>
+              <option>German</option>
+              <option>Japanese</option>
+              <option>Korean</option>
+              <option>Russian</option>
+              <option>Spanish</option>
+            </select>
+          </div>
+          <div class="field" style="flex:1">
+            <label for="capturePollMs">Poll interval (ms)</label>
+            <input type="number" id="capturePollMs" min="200" max="5000" step="100" />
+          </div>
+        </div>
+        <p class="hint">Before starting: open the site in the dropdown, click into its chat input so it has focus, then click the rail dot.</p>
+      </section>
+
+      <section class="settings-section">
+        <h3>Voice mode &mdash; transcription</h3>
         <div class="field-row">
           <label class="radio"><input type="radio" name="engine" value="openai" id="engineOpenai" /> OpenAI Whisper API</label>
           <label class="radio"><input type="radio" name="engine" value="local" id="engineLocal" /> Local whisper.cpp</label>
@@ -85,7 +126,6 @@
             <option value="auto">Auto-detect</option>
             <option value="en">English</option>
             <option value="ru">Russian</option>
-            <option value="ko">Korean</option>
             <option value="ja">Japanese</option>
             <option value="zh">Chinese</option>
             <option value="es">Spanish</option>
@@ -102,8 +142,21 @@
           </select>
         </div>
         <p class="hint">Click the dot button on the left rail to start/stop. Transcribed text auto-pastes into the foreground app at the cursor.</p>
+      </section>
+
+      <section class="settings-section">
+        <h3>Hotkeys</h3>
+        <p class="hint">Click a binding to change. Press Esc to cancel. Empty = disabled.</p>
+        <div class="hotkey-list" id="hotkeyList"></div>
+        <div class="hotkey-actions">
+          <button id="resetAllHotkeysBtn">Reset all to defaults</button>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h3>Activity log</h3>
         <div class="log-box">
-          <div class="log-header">Transcription log</div>
+          <div class="log-header">Voice transcription &middot; OCR captions &middot; errors</div>
           <div class="log-body" id="logBody"></div>
         </div>
       </section>
