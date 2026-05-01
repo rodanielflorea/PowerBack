@@ -1,0 +1,12 @@
+{
+  "name": "stealth-support",
+  "version": "0.1.0",
+  "description": "Stealth always-on-top assistant window",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^41.4.0"
+  }
+}
