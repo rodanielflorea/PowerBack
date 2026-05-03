@@ -26,10 +26,10 @@ const HOTKEY_DEFAULTS = {
   scrollUp: 'Ctrl+Up',
   scrollDown: 'Ctrl+Down',
   resetCaptureArea: 'Ctrl+Q',
-  reloadSite: '',
-  toggleStealth: '',
-  toggleRecording: '',
-  pushToTalk: '',
+  reloadSite: 'Ctrl+R',
+  toggleStealth: 'Ctrl+H',
+  toggleRecording: 'Alt+C',
+  pushToTalk: 'Ctrl+B',
 };
 
 const DEFAULT_STATE = {
@@ -56,6 +56,8 @@ const DEFAULT_STATE = {
   network: {
     role: '',
     address: '172.16.98.11:2000',
+    speakerPort: 2000,
+    supporterAddress: '172.16.98.11:2000',
     twoWay: true,
     maxSupporters: 1,
     incomingVolume: 1.0,
@@ -67,9 +69,9 @@ const DEFAULT_STATE = {
 const MIN_OPACITY = 0.05;
 const MOVE_STEP = 40;
 const OPACITY_STEP = 0.05;
-const SCROLL_STEP = 300;
+const SCROLL_STEP = 100;
 const HEADER_H = 28;
-const RAIL_W = 30;
+const RAIL_W = 0;
 
 let win;
 let webView;
@@ -141,6 +143,9 @@ function loadState() {
       network: { ...DEFAULT_STATE.network, ...(raw.network || {}) },
       hotkeys: { ...HOTKEY_DEFAULTS, ...(raw.hotkeys || {}) },
     };
+    for (const k of Object.keys(HOTKEY_DEFAULTS)) {
+      if (!state.hotkeys[k] && HOTKEY_DEFAULTS[k]) state.hotkeys[k] = HOTKEY_DEFAULTS[k];
+    }
     state.network.role = '';
   } catch {
     state = {
@@ -935,6 +940,11 @@ ipcMain.handle('reset-all-hotkeys', () => {
 ipcMain.handle('get-network-config', () => ({ ...state.network }));
 ipcMain.handle('set-network-config', (_e, cfg) => {
   state.network = { ...state.network, ...(cfg || {}) };
+  if (state.network.role === 'speaker') {
+    state.network.address = `0.0.0.0:${state.network.speakerPort || 2000}`;
+  } else if (state.network.role === 'supporter') {
+    state.network.address = state.network.supporterAddress || '172.16.98.11:2000';
+  }
   saveState();
   broadcastNetworkStatus();
 });

@@ -14,7 +14,31 @@ const setupPortBlock = document.getElementById('setupPortBlock');
 const setupAddressBlock = document.getElementById('setupAddressBlock');
 const setupPortEl = document.getElementById('setupPort');
 const setupAddressEl = document.getElementById('setupAddress');
+const setupSavePortBtn = document.getElementById('setupSavePortBtn');
+const setupSaveAddressBtn = document.getElementById('setupSaveAddressBtn');
 const setupStartBtn = document.getElementById('setupStartBtn');
+
+const setupUrlList = document.getElementById('setupUrlList');
+const setupUrlInput = document.getElementById('setupUrlInput');
+const setupUrlAddBtn = document.getElementById('setupUrlAddBtn');
+
+const setupCaptureLanguage = document.getElementById('setupCaptureLanguage');
+const setupCapturePollMs = document.getElementById('setupCapturePollMs');
+
+const setupEngineOpenai = document.getElementById('setupEngineOpenai');
+const setupEngineLocal = document.getElementById('setupEngineLocal');
+const setupOpenaiKey = document.getElementById('setupOpenaiKey');
+const setupWhisperExe = document.getElementById('setupWhisperExe');
+const setupWhisperExeBrowse = document.getElementById('setupWhisperExeBrowse');
+const setupWhisperModel = document.getElementById('setupWhisperModel');
+const setupWhisperModelBrowse = document.getElementById('setupWhisperModelBrowse');
+const setupVoiceLanguage = document.getElementById('setupVoiceLanguage');
+const setupMicSelect = document.getElementById('setupMicSelect');
+const setupCaptureMic = document.getElementById('setupCaptureMic');
+const setupCaptureSystem = document.getElementById('setupCaptureSystem');
+
+const setupMaxSupporters = document.getElementById('setupMaxSupporters');
+const setupTwoWay = document.getElementById('setupTwoWay');
 
 const urlMenuBtn = document.getElementById('urlMenuBtn');
 const reloadBtn = document.getElementById('reloadBtn');
@@ -89,12 +113,32 @@ function updateStealth(on) {
     : 'Stealth OFF — visible to screen capture (click to enable)';
 }
 
-slider.addEventListener('mousemove', (e) => {
+let sliderDragging = false;
+
+function setOpacityFromEvent(e) {
   const rect = slider.getBoundingClientRect();
   const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
   const opacity = x / rect.width;
   window.api.setOpacity(opacity);
   updateFill(opacity);
+}
+
+slider.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  sliderDragging = true;
+  setOpacityFromEvent(e);
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (sliderDragging) setOpacityFromEvent(e);
+});
+
+window.addEventListener('mouseup', () => {
+  sliderDragging = false;
+});
+
+window.addEventListener('mouseleave', () => {
+  sliderDragging = false;
 });
 
 stealthBtn.addEventListener('click', async () => {
@@ -106,12 +150,99 @@ hideBtn.addEventListener('click', () => window.api.hide());
 quitBtn.addEventListener('click', () => window.api.quit());
 
 function applySetupRoleVisibility() {
-  if (setupRoleSpeaker.checked) {
-    setupPortBlock.hidden = false;
-    setupAddressBlock.hidden = true;
-  } else {
-    setupPortBlock.hidden = true;
-    setupAddressBlock.hidden = false;
+  const isSpeaker = setupRoleSpeaker.checked;
+  setupPortBlock.hidden = !isSpeaker;
+  setupAddressBlock.hidden = isSpeaker;
+  if (setupMaxSupporters) {
+    const field = document.getElementById('setupMaxSupportersField');
+    if (field) field.style.display = isSpeaker ? '' : 'none';
+  }
+}
+
+function activateSetupTab(name) {
+  document.querySelectorAll('.stab-btn').forEach(b => b.classList.toggle('active', b.dataset.stab === name));
+  document.querySelectorAll('.setup-tab-pane').forEach(p => { p.hidden = p.dataset.stab !== name; });
+}
+
+document.querySelectorAll('.stab-btn').forEach(btn => {
+  btn.addEventListener('click', () => activateSetupTab(btn.dataset.stab));
+});
+
+function applySetupModeTabVisibility(activeMode) {
+  const voiceTab = document.querySelector('.stab-btn[data-stab="voice"]');
+  const captionTab = document.querySelector('.stab-btn[data-stab="caption"]');
+  const isCaption = activeMode === 'caption';
+  if (voiceTab) voiceTab.style.display = isCaption ? 'none' : '';
+  if (captionTab) captionTab.style.display = isCaption ? '' : 'none';
+  const activeBtn = document.querySelector('.stab-btn.active');
+  if (activeBtn && activeBtn.style.display === 'none') activateSetupTab('essentials');
+}
+
+setupModeCaption.addEventListener('change', () => {
+  if (setupModeCaption.checked) applySetupModeTabVisibility('caption');
+});
+setupModeVoice.addEventListener('change', () => {
+  if (setupModeVoice.checked) applySetupModeTabVisibility('voice');
+});
+
+function flashSaved(el) {
+  if (!el) return;
+  el.classList.remove('save-flash');
+  void el.offsetWidth;
+  el.classList.add('save-flash');
+  setTimeout(() => el.classList.remove('save-flash'), 1300);
+}
+
+function renderSetupUrlList(urlsArr) {
+  setupUrlList.innerHTML = '';
+  if (urlsArr.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'url-empty';
+    empty.textContent = 'No URLs added yet.';
+    setupUrlList.appendChild(empty);
+    return;
+  }
+  urlsArr.forEach((u, i) => {
+    const row = document.createElement('div');
+    row.className = 'url-row';
+    const txt = document.createElement('span');
+    txt.className = 'url-text';
+    txt.textContent = u;
+    const rm = document.createElement('button');
+    rm.className = 'url-remove';
+    rm.textContent = '×';
+    rm.title = 'Remove';
+    rm.addEventListener('click', async () => {
+      urlsArr.splice(i, 1);
+      await window.api.setUrls(urlsArr);
+      renderSetupUrlList(urlsArr);
+    });
+    row.appendChild(txt);
+    row.appendChild(rm);
+    setupUrlList.appendChild(row);
+  });
+}
+
+async function refreshSetupMicList() {
+  if (!setupMicSelect) return;
+  try {
+    await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const mics = devices.filter(d => d.kind === 'audioinput');
+    setupMicSelect.innerHTML = '';
+    const def = document.createElement('option');
+    def.value = '';
+    def.textContent = 'System default';
+    setupMicSelect.appendChild(def);
+    mics.forEach(m => {
+      const o = document.createElement('option');
+      o.value = m.deviceId;
+      o.textContent = m.label || `Microphone (${m.deviceId.slice(0, 6)})`;
+      setupMicSelect.appendChild(o);
+    });
+    if (txCfg && txCfg.micDeviceId) setupMicSelect.value = txCfg.micDeviceId;
+  } catch (e) {
+    log('Setup mic enumeration failed: ' + e.message, 'err');
   }
 }
 
@@ -119,57 +250,153 @@ function applySetupRoleVisibility() {
   el.addEventListener('change', applySetupRoleVisibility);
 });
 
+setupSavePortBtn.addEventListener('click', async () => {
+  const port = parseInt(setupPortEl.value, 10);
+  if (!Number.isFinite(port) || port < 1 || port > 65535) {
+    window.alert('Enter a valid port (1–65535)');
+    return;
+  }
+  await window.api.setNetworkConfig({ speakerPort: port });
+  flashSaved(setupPortEl);
+  log(`Default port saved: ${port}`, 'info');
+});
+
+setupSaveAddressBtn.addEventListener('click', async () => {
+  const addr = setupAddressEl.value.trim();
+  if (!/^[^:\s]+:\d+$/.test(addr)) {
+    window.alert('Enter address as host:port (e.g. 172.16.98.11:2000)');
+    return;
+  }
+  await window.api.setNetworkConfig({ supporterAddress: addr });
+  flashSaved(setupAddressEl);
+  log(`Default address saved: ${addr}`, 'info');
+});
+
+setupUrlAddBtn.addEventListener('click', async () => {
+  const u = normalizeUrl(setupUrlInput.value);
+  if (!u) return;
+  const data = await window.api.getUrls();
+  const arr = data.urls.slice();
+  arr.push(u);
+  await window.api.setUrls(arr);
+  setupUrlInput.value = '';
+  renderSetupUrlList(arr);
+});
+setupUrlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') setupUrlAddBtn.click(); });
+
+setupCaptureLanguage.addEventListener('change', () => window.api.setCaptureConfig({ language: setupCaptureLanguage.value }));
+setupCapturePollMs.addEventListener('change', () => {
+  const v = parseInt(setupCapturePollMs.value, 10);
+  if (Number.isFinite(v) && v >= 200) window.api.setCaptureConfig({ pollMs: v });
+});
+
+setupEngineOpenai.addEventListener('change', () => setupEngineOpenai.checked && window.api.setTranscriptionConfig({ engine: 'openai' }));
+setupEngineLocal.addEventListener('change', () => setupEngineLocal.checked && window.api.setTranscriptionConfig({ engine: 'local' }));
+setupOpenaiKey.addEventListener('change', () => window.api.setTranscriptionConfig({ openaiApiKey: setupOpenaiKey.value.trim() }));
+setupWhisperExe.addEventListener('change', () => window.api.setTranscriptionConfig({ whisperExe: setupWhisperExe.value.trim() }));
+setupWhisperModel.addEventListener('change', () => window.api.setTranscriptionConfig({ whisperModel: setupWhisperModel.value.trim() }));
+setupVoiceLanguage.addEventListener('change', () => window.api.setTranscriptionConfig({ language: setupVoiceLanguage.value }));
+setupCaptureMic.addEventListener('change', () => window.api.setTranscriptionConfig({ captureMic: setupCaptureMic.checked }));
+setupCaptureSystem.addEventListener('change', () => window.api.setTranscriptionConfig({ captureSystem: setupCaptureSystem.checked }));
+setupMicSelect.addEventListener('change', () => window.api.setTranscriptionConfig({ micDeviceId: setupMicSelect.value }));
+
+setupWhisperExeBrowse.addEventListener('click', async () => {
+  const p = await window.api.pickFile('exe');
+  if (p) { setupWhisperExe.value = p; window.api.setTranscriptionConfig({ whisperExe: p }); }
+});
+setupWhisperModelBrowse.addEventListener('click', async () => {
+  const p = await window.api.pickFile('model');
+  if (p) { setupWhisperModel.value = p; window.api.setTranscriptionConfig({ whisperModel: p }); }
+});
+
+setupMaxSupporters.addEventListener('change', () => {
+  const n = parseInt(setupMaxSupporters.value, 10);
+  if (Number.isFinite(n) && n >= 1) window.api.setNetworkConfig({ maxSupporters: n });
+});
+setupTwoWay.addEventListener('change', () => window.api.setNetworkConfig({ twoWay: setupTwoWay.checked }));
+
 async function refreshSetupUI() {
   const m = await window.api.getMode();
   setupModeCaption.checked = m !== 'voice';
   setupModeVoice.checked = m === 'voice';
-  const cfg = await window.api.getNetworkConfig();
-  const role = cfg.role || 'speaker';
+  applySetupModeTabVisibility(m === 'voice' ? 'voice' : 'caption');
+
+  const netC = await window.api.getNetworkConfig();
+  const role = netC.role || 'speaker';
   setupRoleSpeaker.checked = role === 'speaker';
   setupRoleSupporter.checked = role === 'supporter';
-  const port = parsePort(cfg.address) || 2000;
-  setupPortEl.value = port;
-  setupAddressEl.value = cfg.address || '172.16.98.11:2000';
+  setupPortEl.value = netC.speakerPort || parsePort(netC.address) || 2000;
+  setupAddressEl.value = netC.supporterAddress || (netC.address && !netC.address.startsWith('0.0.0.0') ? netC.address : '172.16.98.11:2000');
+  setupMaxSupporters.value = netC.maxSupporters || 1;
+  setupTwoWay.checked = netC.twoWay !== false;
   applySetupRoleVisibility();
+
+  const data = await window.api.getUrls();
+  renderSetupUrlList(data.urls.slice());
+
+  const tx = await window.api.getTranscriptionConfig();
+  txCfg = tx;
+  setupEngineOpenai.checked = tx.engine !== 'local';
+  setupEngineLocal.checked = tx.engine === 'local';
+  setupOpenaiKey.value = tx.openaiApiKey || '';
+  setupWhisperExe.value = tx.whisperExe || '';
+  setupWhisperModel.value = tx.whisperModel || '';
+  setupVoiceLanguage.value = tx.language || 'auto';
+  setupCaptureMic.checked = tx.captureMic !== false;
+  setupCaptureSystem.checked = tx.captureSystem !== false;
+
+  const cap = await window.api.getCaptureConfig();
+  capCfg = cap;
+  setupCaptureLanguage.value = cap.language || 'English';
+  setupCapturePollMs.value = cap.pollMs || 700;
+
+  refreshSetupMicList();
 }
 
 function showSetup() {
   if (settingsOverlay) settingsOverlay.hidden = true;
   setupOverlay.hidden = false;
+  document.body.classList.remove('in-interview');
+  endBtn.classList.remove('live');
   window.api.setWebviewVisible(false);
+  activateSetupTab('essentials');
   refreshSetupUI();
 }
 
 function hideSetup() {
   if (settingsOverlay) settingsOverlay.hidden = true;
   setupOverlay.hidden = true;
+  document.body.classList.add('in-interview');
+  endBtn.classList.add('live');
   window.api.setWebviewVisible(true);
 }
 
 setupStartBtn.addEventListener('click', async () => {
   const chosenMode = setupModeCaption.checked ? 'caption' : 'voice';
   const chosenRole = setupRoleSpeaker.checked ? 'speaker' : 'supporter';
-  let address;
+  const patch = { role: chosenRole };
   if (chosenRole === 'speaker') {
     const port = parseInt(setupPortEl.value, 10);
     if (!Number.isFinite(port) || port < 1 || port > 65535) {
       window.alert('Enter a valid port (1–65535)');
       return;
     }
-    address = `0.0.0.0:${port}`;
+    patch.speakerPort = port;
   } else {
-    address = setupAddressEl.value.trim();
-    if (!/^[^:\s]+:\d+$/.test(address)) {
+    const addr = setupAddressEl.value.trim();
+    if (!/^[^:\s]+:\d+$/.test(addr)) {
       window.alert('Enter address as host:port (e.g. 172.16.98.11:2000)');
       return;
     }
+    patch.supporterAddress = addr;
   }
   await window.api.setMode(chosenMode);
   mode = chosenMode;
-  await window.api.setNetworkConfig({ role: chosenRole, address });
+  await window.api.setNetworkConfig(patch);
   await window.api.startNetwork();
   hideSetup();
-  log(`Started: ${chosenMode} mode as ${chosenRole} on ${address}`, 'info');
+  const showAddr = chosenRole === 'speaker' ? `0.0.0.0:${patch.speakerPort}` : patch.supporterAddress;
+  log(`Started: ${chosenMode} mode as ${chosenRole} on ${showAddr}`, 'info');
 
   if (chosenMode === 'caption') {
     const cap = await window.api.getCaptureConfig();
@@ -181,8 +408,47 @@ setupStartBtn.addEventListener('click', async () => {
   }
 });
 
-endBtn.addEventListener('click', async () => {
-  if (!window.confirm('End session? This stops the network and any active mode.')) return;
+const endModal = document.getElementById('endModal');
+const endModalList = document.getElementById('endModalList');
+const endModalCancel = document.getElementById('endModalCancel');
+const endModalConfirm = document.getElementById('endModalConfirm');
+
+function addModalItem(text, kind) {
+  const li = document.createElement('li');
+  if (kind) li.className = kind;
+  li.appendChild(document.createTextNode(text));
+  endModalList.appendChild(li);
+}
+
+async function showEndModal() {
+  endModalList.innerHTML = '';
+  if (recState) addModalItem('Voice transcription · running', 'live');
+  else if (captureRunning) addModalItem('Caption capture · running', 'live');
+  else addModalItem(`Active mode · ${mode || 'none'} (idle)`, 'idle');
+
+  const status = await window.api.getNetworkStatus().catch(() => ({}));
+  if (status.bound) {
+    const n = (status.supporters || []).length;
+    addModalItem(`Hosting on ${status.address} · ${n}/${status.maxSupporters} supporter${n === 1 ? '' : 's'}`, 'live');
+  } else if (status.connected) {
+    addModalItem(`Connected to ${status.address}`, 'live');
+  } else if (status.role) {
+    addModalItem(`Network · ${status.role} (idle)`, 'idle');
+  }
+
+  endModal.hidden = false;
+  window.api.setWebviewVisible(false);
+}
+
+function hideEndModal() {
+  endModal.hidden = true;
+  if (setupOverlay.hidden && settingsOverlay.hidden) window.api.setWebviewVisible(true);
+}
+
+endBtn.addEventListener('click', showEndModal);
+endModalCancel.addEventListener('click', hideEndModal);
+endModalConfirm.addEventListener('click', async () => {
+  endModal.hidden = true;
   if (recState) await stopVoice().catch(() => {});
   if (captureRunning) await stopCaption().catch(() => {});
   await window.api.stopNetwork();
@@ -190,6 +456,10 @@ endBtn.addEventListener('click', async () => {
   delete netActionBtn.dataset.connecting;
   log('Session ended — back to setup', 'info');
   showSetup();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (!endModal.hidden && e.key === 'Escape') hideEndModal();
 });
 
 showSetup();
@@ -272,7 +542,8 @@ tabBtns.forEach(btn => btn.addEventListener('click', () => activateTab(btn.datas
 function openSettings() {
   settingsOverlay.hidden = false;
   window.api.setWebviewVisible(false);
-  activateTab('general');
+  const inInterview = document.body.classList.contains('in-interview');
+  activateTab(inInterview ? 'caption' : 'general');
   refreshUrls();
   refreshModeUI();
   refreshTranscriptionUI();

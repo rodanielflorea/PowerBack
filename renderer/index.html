@@ -8,25 +8,28 @@
 <body>
   <header class="titlebar">
     <div class="drag"></div>
-    <div class="slider" id="slider" title="Hover and drag horizontally to change opacity">
+    <div class="slider" id="slider" title="Click and drag horizontally to change opacity">
       <div class="slider-fill" id="sliderFill"></div>
     </div>
+    <div class="header-tools">
+      <button class="btn iv-btn" id="urlMenuBtn" title="Switch site">&#9662;</button>
+      <button class="btn iv-btn" id="reloadBtn" title="Reload site">&#8635;</button>
+      <button class="btn iv-btn" id="settingsBtn" title="Settings">&#9881;</button>
+      <button class="btn iv-btn rec-btn" id="recBtn" title="Start transcription">
+        <span class="rec-dot"></span>
+      </button>
+    </div>
     <button class="btn stealth-btn" id="stealthBtn" title="Toggle stealth (hidden from screen capture)">
-      <span class="stealth-dot"></span>
+      <svg class="stealth-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path class="shield-body" d="M12 2 L4 5 L4 12 C4 16.5 7.5 20.5 12 22 C16.5 20.5 20 16.5 20 12 L20 5 Z" />
+        <path class="shield-check" d="M8.5 12.5 l2.5 2.5 l4.5 -5.5" />
+        <path class="shield-slash" d="M7 7 l10 10" />
+      </svg>
     </button>
-    <button class="btn end-btn" id="endBtn" title="End session — return to setup">End</button>
+    <button class="btn end-btn iv-btn" id="endBtn" title="End session — return to setup">End</button>
     <button class="btn" id="hideBtn" title="Hide (Ctrl+Alt+H)">&minus;</button>
     <button class="btn" id="quitBtn" title="Quit">&times;</button>
   </header>
-
-  <aside class="rail">
-    <button class="rail-btn" id="urlMenuBtn" title="Switch site">&#9662;</button>
-    <button class="rail-btn" id="reloadBtn" title="Reload site">&#8635;</button>
-    <button class="rail-btn" id="settingsBtn" title="Settings">&#9881;</button>
-    <button class="rail-btn rec-btn" id="recBtn" title="Start transcription">
-      <span class="rec-dot"></span>
-    </button>
-  </aside>
 
   <section class="settings-overlay" id="settingsOverlay" hidden>
     <div class="settings-header">
@@ -141,7 +144,7 @@
           <p class="hint">Tip: bind <b>Reset capture area</b> in Hotkeys (default Ctrl+Q) to re-pick mid-run.</p>
         </section>
 
-        <section class="settings-section">
+        <section class="settings-section caption-options-block">
           <h3>OCR options</h3>
           <div class="field-row">
             <div class="field" style="flex:1">
@@ -412,35 +415,181 @@
   <section class="setup-overlay" id="setupOverlay">
     <div class="setup-card">
       <h2 class="setup-title">Setup</h2>
-      <p class="hint">Pick mode and network role. Click Start to begin the session.</p>
+      <p class="hint">Configure everything for the session. Caption area &amp; hotkeys are set later in interview mode.</p>
 
-      <div class="setup-section">
-        <h4>Active mode</h4>
-        <label class="radio"><input type="radio" name="setupMode" value="caption" id="setupModeCaption" checked /> Caption (OCR a screen area)</label>
-        <label class="radio"><input type="radio" name="setupMode" value="voice" id="setupModeVoice" /> Voice (mic + system audio)</label>
-      </div>
+      <nav class="setup-tabs-nav" id="setupTabs">
+        <button class="stab-btn active" data-stab="essentials" type="button">Essentials</button>
+        <button class="stab-btn" data-stab="sites" type="button">Sites</button>
+        <button class="stab-btn" data-stab="caption" type="button">Caption</button>
+        <button class="stab-btn" data-stab="voice" type="button">Voice</button>
+        <button class="stab-btn" data-stab="network" type="button">Network</button>
+      </nav>
 
-      <div class="setup-section">
-        <h4>Network role</h4>
-        <label class="radio"><input type="radio" name="setupRole" value="speaker" id="setupRoleSpeaker" checked /> Speaker (host)</label>
-        <label class="radio"><input type="radio" name="setupRole" value="supporter" id="setupRoleSupporter" /> Supporter (client)</label>
-      </div>
+      <div class="setup-tabs-body">
 
-      <div class="setup-section" id="setupPortBlock">
-        <h4>Port</h4>
-        <input type="number" id="setupPort" min="1" max="65535" value="2000" />
-        <p class="hint" style="margin:6px 0 0">Speaker binds <code>0.0.0.0</code> on this port.</p>
-      </div>
+        <div class="setup-tab-pane" data-stab="essentials">
+          <div class="setup-section">
+            <h4>Active mode</h4>
+            <label class="radio"><input type="radio" name="setupMode" value="caption" id="setupModeCaption" checked /> Caption (OCR a screen area)</label>
+            <label class="radio"><input type="radio" name="setupMode" value="voice" id="setupModeVoice" /> Voice (mic + system audio)</label>
+          </div>
 
-      <div class="setup-section" id="setupAddressBlock" hidden>
-        <h4>Speaker address</h4>
-        <input type="text" id="setupAddress" placeholder="172.16.98.11:2000" spellcheck="false" />
-        <p class="hint" style="margin:6px 0 0">Format: <code>host:port</code></p>
+          <div class="setup-section">
+            <h4>Network role</h4>
+            <label class="radio"><input type="radio" name="setupRole" value="speaker" id="setupRoleSpeaker" checked /> Speaker (host)</label>
+            <label class="radio"><input type="radio" name="setupRole" value="supporter" id="setupRoleSupporter" /> Supporter (client)</label>
+          </div>
+
+          <div class="setup-section" id="setupPortBlock">
+            <h4>Port</h4>
+            <div class="path-row">
+              <input type="number" id="setupPort" min="1" max="65535" value="2000" />
+              <button id="setupSavePortBtn" title="Save current port as default">Save default</button>
+            </div>
+            <p class="hint" style="margin:6px 0 0">Speaker binds <code>0.0.0.0</code> on this port.</p>
+          </div>
+
+          <div class="setup-section" id="setupAddressBlock" hidden>
+            <h4>Speaker address</h4>
+            <div class="path-row">
+              <input type="text" id="setupAddress" placeholder="172.16.98.11:2000" spellcheck="false" />
+              <button id="setupSaveAddressBtn" title="Save current address as default">Save default</button>
+            </div>
+            <p class="hint" style="margin:6px 0 0">Format: <code>host:port</code></p>
+          </div>
+        </div>
+
+        <div class="setup-tab-pane" data-stab="sites" hidden>
+          <div class="setup-section">
+            <h4>Web URLs</h4>
+            <p class="hint" style="margin:0 0 8px">Sites picked from the rail dropdown during the session.</p>
+            <div class="url-list" id="setupUrlList"></div>
+            <div class="url-add">
+              <input type="text" id="setupUrlInput" placeholder="https://chatgpt.com" spellcheck="false" />
+              <button id="setupUrlAddBtn">Add</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="setup-tab-pane" data-stab="caption" hidden>
+          <div class="setup-section" id="setupCaptionSection">
+            <h4>OCR options</h4>
+            <p class="hint" style="margin:0 0 8px">Capture area is picked after Start.</p>
+            <div class="field-row">
+              <div class="field" style="flex:1">
+                <label for="setupCaptureLanguage">OCR language</label>
+                <select id="setupCaptureLanguage">
+                  <option>English</option>
+                  <option>French</option>
+                  <option>German</option>
+                  <option>Japanese</option>
+                  <option>Korean</option>
+                  <option>Russian</option>
+                  <option>Spanish</option>
+                </select>
+              </div>
+              <div class="field" style="flex:1">
+                <label for="setupCapturePollMs">Poll (ms)</label>
+                <input type="number" id="setupCapturePollMs" min="200" max="5000" step="100" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setup-tab-pane" data-stab="voice" hidden>
+          <div class="setup-section" id="setupVoiceSection">
+            <h4>Transcription engine</h4>
+            <label class="radio"><input type="radio" name="setupEngine" value="openai" id="setupEngineOpenai" /> OpenAI Whisper API</label>
+            <label class="radio"><input type="radio" name="setupEngine" value="local" id="setupEngineLocal" /> Local whisper.cpp</label>
+            <div class="field" id="setupOpenaiBlock">
+              <label for="setupOpenaiKey">OpenAI API key</label>
+              <input type="password" id="setupOpenaiKey" placeholder="sk-..." spellcheck="false" />
+            </div>
+            <div class="field" id="setupLocalExeBlock">
+              <label for="setupWhisperExe">whisper.exe path</label>
+              <div class="path-row">
+                <input type="text" id="setupWhisperExe" placeholder="C:\path\to\whisper-cli.exe" spellcheck="false" />
+                <button id="setupWhisperExeBrowse">Browse</button>
+              </div>
+            </div>
+            <div class="field" id="setupLocalModelBlock">
+              <label for="setupWhisperModel">Whisper model file</label>
+              <div class="path-row">
+                <input type="text" id="setupWhisperModel" placeholder="C:\path\to\ggml-base.bin" spellcheck="false" />
+                <button id="setupWhisperModelBrowse">Browse</button>
+              </div>
+            </div>
+            <div class="field">
+              <label for="setupVoiceLanguage">Language</label>
+              <select id="setupVoiceLanguage">
+                <option value="auto">Auto-detect</option>
+                <option value="en">English</option>
+                <option value="ru">Russian</option>
+                <option value="ja">Japanese</option>
+                <option value="zh">Chinese</option>
+                <option value="es">Spanish</option>
+                <option value="fr">French</option>
+                <option value="de">German</option>
+                <option value="pt">Portuguese</option>
+                <option value="it">Italian</option>
+                <option value="nl">Dutch</option>
+                <option value="tr">Turkish</option>
+                <option value="pl">Polish</option>
+                <option value="ar">Arabic</option>
+                <option value="hi">Hindi</option>
+                <option value="uk">Ukrainian</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="setup-section">
+            <h4>Audio capture</h4>
+            <div class="field">
+              <label for="setupMicSelect">Microphone</label>
+              <select id="setupMicSelect"></select>
+            </div>
+            <div class="field-row">
+              <label class="checkbox"><input type="checkbox" id="setupCaptureMic" /> Capture microphone</label>
+              <label class="checkbox"><input type="checkbox" id="setupCaptureSystem" /> Capture system audio</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="setup-tab-pane" data-stab="network" hidden>
+          <div class="setup-section">
+            <h4>Network options</h4>
+            <div class="field" id="setupMaxSupportersField">
+              <label for="setupMaxSupporters">Max supporters (Speaker only)</label>
+              <input type="number" id="setupMaxSupporters" min="1" max="10" step="1" />
+            </div>
+            <div class="field-row">
+              <label class="checkbox"><input type="checkbox" id="setupTwoWay" /> Enable two-way mic (Supporter &rarr; Speaker)</label>
+            </div>
+          </div>
+        </div>
+
       </div>
 
       <button class="action-btn setup-start-btn" id="setupStartBtn">Start</button>
     </div>
   </section>
+
+  <div class="modal-overlay" id="endModal" hidden>
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-icon">&#9209;</div>
+        <h3 class="modal-title">End session?</h3>
+      </div>
+      <div class="modal-body">
+        <p class="modal-lead">The following will be stopped before returning to setup:</p>
+        <ul class="modal-list" id="endModalList"></ul>
+      </div>
+      <div class="modal-actions">
+        <button class="modal-btn-secondary" id="endModalCancel">Cancel</button>
+        <button class="modal-btn-danger" id="endModalConfirm">End session</button>
+      </div>
+    </div>
+  </div>
 
   <audio id="remoteAudio" autoplay style="display:none"></audio>
   <audio id="speakerInAudio" autoplay style="display:none"></audio>
