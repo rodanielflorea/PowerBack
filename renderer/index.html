@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src 'self' blob:; connect-src 'self' blob:" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src 'self' blob: mediastream:; connect-src 'self' blob:" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -14,6 +14,7 @@
     <button class="btn stealth-btn" id="stealthBtn" title="Toggle stealth (hidden from screen capture)">
       <span class="stealth-dot"></span>
     </button>
+    <button class="btn end-btn" id="endBtn" title="End session — return to setup">End</button>
     <button class="btn" id="hideBtn" title="Hide (Ctrl+Alt+H)">&minus;</button>
     <button class="btn" id="quitBtn" title="Quit">&times;</button>
   </header>
@@ -32,138 +33,419 @@
       <span>Settings</span>
       <button class="btn" id="settingsCloseBtn" title="Close settings">&times;</button>
     </div>
+    <nav class="settings-tabs" id="settingsTabs">
+      <button class="tab-btn active" data-tab="general" type="button">General</button>
+      <button class="tab-btn" data-tab="voice" type="button">Voice</button>
+      <button class="tab-btn" data-tab="caption" type="button">Caption</button>
+      <button class="tab-btn" data-tab="network" type="button">Network</button>
+      <button class="tab-btn" data-tab="hotkeys" type="button">Hotkeys</button>
+      <button class="tab-btn" data-tab="log" type="button">Log</button>
+      <button class="tab-btn" data-tab="help" type="button">Help</button>
+    </nav>
     <div class="settings-body">
 
-      <section class="settings-section">
-        <h3>Web URLs</h3>
-        <p class="hint">Add the sites you want available from the dropdown on the left.</p>
-        <div class="url-list" id="urlList"></div>
-        <div class="url-add">
-          <input type="text" id="urlInput" placeholder="https://chatgpt.com" spellcheck="false" />
-          <button id="urlAddBtn">Add</button>
-        </div>
-      </section>
-
-      <section class="settings-section">
-        <h3>Mode</h3>
-        <p class="hint">Pick before starting. The dot button on the rail starts the selected mode.</p>
-        <div class="field-row">
-          <label class="radio"><input type="radio" name="mode" value="voice" id="modeVoice" /> Voice (mic + system audio &rarr; foreground app)</label>
-          <label class="radio"><input type="radio" name="mode" value="caption" id="modeCaption" /> Caption (OCR a screen area &rarr; site input)</label>
-        </div>
-      </section>
-
-      <section class="settings-section">
-        <h3>Voice mode &mdash; audio capture</h3>
-        <div class="field">
-          <label for="micSelect">Microphone</label>
-          <select id="micSelect"></select>
-        </div>
-        <div class="field-row">
-          <label class="checkbox"><input type="checkbox" id="captureMic" /> Capture microphone</label>
-          <label class="checkbox"><input type="checkbox" id="captureSystem" /> Capture system audio (loopback)</label>
-        </div>
-      </section>
-
-      <section class="settings-section">
-        <h3>Caption mode &mdash; OCR area</h3>
-        <p class="hint">Select a screen area (e.g. video caption strip). Polled every interval, diffed, new text is sent into the loaded site's chat input.</p>
-        <div class="field">
-          <label>Capture area</label>
-          <div class="path-row">
-            <input type="text" id="captureRect" readonly placeholder="No area selected" />
-            <button id="selectAreaBtn">Select</button>
+      <div class="settings-tab" data-tab="general">
+        <section class="settings-section">
+          <h3>Active mode</h3>
+          <p class="hint">Pick before starting. The dot button on the rail starts the selected mode.</p>
+          <div class="field-row">
+            <label class="radio"><input type="radio" name="mode" value="voice" id="modeVoice" /> Voice (mic + system audio &rarr; foreground app)</label>
+            <label class="radio"><input type="radio" name="mode" value="caption" id="modeCaption" /> Caption (OCR a screen area &rarr; site input)</label>
           </div>
-        </div>
-        <div class="field-row">
-          <div class="field" style="flex:1">
-            <label for="captureLanguage">OCR language</label>
-            <select id="captureLanguage">
-              <option>English</option>
-              <option>French</option>
-              <option>German</option>
-              <option>Japanese</option>
-              <option>Korean</option>
-              <option>Russian</option>
-              <option>Spanish</option>
+        </section>
+
+        <section class="settings-section">
+          <h3>Web URLs</h3>
+          <p class="hint">Add the sites you want available from the dropdown on the left.</p>
+          <div class="url-list" id="urlList"></div>
+          <div class="url-add">
+            <input type="text" id="urlInput" placeholder="https://chatgpt.com" spellcheck="false" />
+            <button id="urlAddBtn">Add</button>
+          </div>
+        </section>
+      </div>
+
+      <div class="settings-tab" data-tab="voice" hidden>
+        <section class="settings-section">
+          <h3>Audio capture</h3>
+          <div class="field">
+            <label for="micSelect">Microphone</label>
+            <select id="micSelect"></select>
+          </div>
+          <div class="field-row">
+            <label class="checkbox"><input type="checkbox" id="captureMic" /> Capture microphone</label>
+            <label class="checkbox"><input type="checkbox" id="captureSystem" /> Capture system audio (loopback)</label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3>Transcription engine</h3>
+          <div class="field-row">
+            <label class="radio"><input type="radio" name="engine" value="openai" id="engineOpenai" /> OpenAI Whisper API</label>
+            <label class="radio"><input type="radio" name="engine" value="local" id="engineLocal" /> Local whisper.cpp</label>
+          </div>
+          <div class="field" id="openaiBlock">
+            <label for="openaiKey">OpenAI API key</label>
+            <input type="password" id="openaiKey" placeholder="sk-..." spellcheck="false" />
+          </div>
+          <div class="field" id="localExeBlock">
+            <label for="whisperExe">whisper.exe path</label>
+            <div class="path-row">
+              <input type="text" id="whisperExe" placeholder="C:\path\to\whisper-cli.exe" spellcheck="false" />
+              <button id="whisperExeBrowse">Browse</button>
+            </div>
+          </div>
+          <div class="field" id="localModelBlock">
+            <label for="whisperModel">Whisper model file</label>
+            <div class="path-row">
+              <input type="text" id="whisperModel" placeholder="C:\path\to\ggml-base.bin" spellcheck="false" />
+              <button id="whisperModelBrowse">Browse</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="languageSelect">Language</label>
+            <select id="languageSelect">
+              <option value="auto">Auto-detect</option>
+              <option value="en">English</option>
+              <option value="ru">Russian</option>
+              <option value="ja">Japanese</option>
+              <option value="zh">Chinese</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="pt">Portuguese</option>
+              <option value="it">Italian</option>
+              <option value="nl">Dutch</option>
+              <option value="tr">Turkish</option>
+              <option value="pl">Polish</option>
+              <option value="ar">Arabic</option>
+              <option value="hi">Hindi</option>
+              <option value="uk">Ukrainian</option>
             </select>
           </div>
-          <div class="field" style="flex:1">
-            <label for="capturePollMs">Poll interval (ms)</label>
-            <input type="number" id="capturePollMs" min="200" max="5000" step="100" />
-          </div>
-        </div>
-        <p class="hint">Before starting: open the site in the dropdown, click into its chat input so it has focus, then click the rail dot.</p>
-      </section>
+          <p class="hint">Click the rail dot to start/stop. Transcribed text auto-pastes into the foreground app at the cursor.</p>
+        </section>
+      </div>
 
-      <section class="settings-section">
-        <h3>Voice mode &mdash; transcription</h3>
-        <div class="field-row">
-          <label class="radio"><input type="radio" name="engine" value="openai" id="engineOpenai" /> OpenAI Whisper API</label>
-          <label class="radio"><input type="radio" name="engine" value="local" id="engineLocal" /> Local whisper.cpp</label>
-        </div>
-        <div class="field" id="openaiBlock">
-          <label for="openaiKey">OpenAI API key</label>
-          <input type="password" id="openaiKey" placeholder="sk-..." spellcheck="false" />
-        </div>
-        <div class="field" id="localExeBlock">
-          <label for="whisperExe">whisper.exe path</label>
-          <div class="path-row">
-            <input type="text" id="whisperExe" placeholder="C:\path\to\whisper-cli.exe" spellcheck="false" />
-            <button id="whisperExeBrowse">Browse</button>
+      <div class="settings-tab" data-tab="caption" hidden>
+        <section class="settings-section">
+          <h3>OCR area</h3>
+          <p class="hint">Select a screen area (e.g. video caption strip). Polled, diffed, new text is sent into the loaded site's chat input.</p>
+          <div class="field">
+            <label>Capture area</label>
+            <div class="path-row">
+              <input type="text" id="captureRect" readonly placeholder="No area selected" />
+              <button id="selectAreaBtn">Select</button>
+            </div>
           </div>
-        </div>
-        <div class="field" id="localModelBlock">
-          <label for="whisperModel">Whisper model file</label>
-          <div class="path-row">
-            <input type="text" id="whisperModel" placeholder="C:\path\to\ggml-base.bin" spellcheck="false" />
-            <button id="whisperModelBrowse">Browse</button>
+          <p class="hint">Tip: bind <b>Reset capture area</b> in Hotkeys (default Ctrl+Q) to re-pick mid-run.</p>
+        </section>
+
+        <section class="settings-section">
+          <h3>OCR options</h3>
+          <div class="field-row">
+            <div class="field" style="flex:1">
+              <label for="captureLanguage">Language</label>
+              <select id="captureLanguage">
+                <option>English</option>
+                <option>French</option>
+                <option>German</option>
+                <option>Japanese</option>
+                <option>Korean</option>
+                <option>Russian</option>
+                <option>Spanish</option>
+              </select>
+            </div>
+            <div class="field" style="flex:1">
+              <label for="capturePollMs">Poll (ms)</label>
+              <input type="number" id="capturePollMs" min="200" max="5000" step="100" />
+            </div>
           </div>
-        </div>
-        <div class="field">
-          <label for="languageSelect">Language</label>
-          <select id="languageSelect">
-            <option value="auto">Auto-detect</option>
-            <option value="en">English</option>
-            <option value="ru">Russian</option>
-            <option value="ja">Japanese</option>
-            <option value="zh">Chinese</option>
-            <option value="es">Spanish</option>
-            <option value="fr">French</option>
-            <option value="de">German</option>
-            <option value="pt">Portuguese</option>
-            <option value="it">Italian</option>
-            <option value="nl">Dutch</option>
-            <option value="tr">Turkish</option>
-            <option value="pl">Polish</option>
-            <option value="ar">Arabic</option>
-            <option value="hi">Hindi</option>
-            <option value="uk">Ukrainian</option>
-          </select>
-        </div>
-        <p class="hint">Click the dot button on the left rail to start/stop. Transcribed text auto-pastes into the foreground app at the cursor.</p>
-      </section>
+          <p class="hint">Before starting: pick the site in the rail dropdown, focus the chat input, then press the rail dot.</p>
+        </section>
+      </div>
 
-      <section class="settings-section">
-        <h3>Hotkeys</h3>
-        <p class="hint">Click a binding to change. Press Esc to cancel. Empty = disabled.</p>
-        <div class="hotkey-list" id="hotkeyList"></div>
-        <div class="hotkey-actions">
-          <button id="resetAllHotkeysBtn">Reset all to defaults</button>
-        </div>
-      </section>
+      <div class="settings-tab" data-tab="network" hidden>
+        <section class="settings-section">
+          <h3>Role</h3>
+          <p class="hint">Pick a role, then press the action button. You'll be asked to confirm.</p>
+          <div class="field-row">
+            <label class="radio"><input type="radio" name="role" value="speaker" id="roleSpeaker" /> Speaker (host)</label>
+            <label class="radio"><input type="radio" name="role" value="supporter" id="roleSupporter" /> Supporter (client)</label>
+          </div>
+          <div class="field" id="netPortField">
+            <label for="netPort">Port</label>
+            <input type="number" id="netPort" min="1" max="65535" />
+          </div>
+          <div class="field" id="netAddressField">
+            <label for="netAddress">Speaker address (host:port)</label>
+            <input type="text" id="netAddress" placeholder="172.16.98.11:2000" spellcheck="false" />
+          </div>
+          <div class="field" id="maxSupportersField">
+            <label for="maxSupporters">Max supporters (Speaker only)</label>
+            <input type="number" id="maxSupporters" min="1" max="10" step="1" />
+          </div>
+          <div class="field">
+            <button class="action-btn" id="netActionBtn">Start hosting</button>
+            <button class="action-btn-secondary" id="netStopBtn" hidden>Stop</button>
+          </div>
+          <div class="status-row">
+            <span class="status-flag" id="netFlag">IDLE</span>
+            <span class="net-status-text" id="netStatus">Pick a role and start.</span>
+          </div>
+        </section>
 
-      <section class="settings-section">
-        <h3>Activity log</h3>
-        <div class="log-box">
-          <div class="log-header">Voice transcription &middot; OCR captions &middot; errors</div>
-          <div class="log-body" id="logBody"></div>
-        </div>
-      </section>
+        <section class="settings-section">
+          <h3>Audio</h3>
+          <div class="field">
+            <label for="incomingVolume">Incoming volume (Supporter listening / Speaker hearing)</label>
+            <input type="range" id="incomingVolume" min="0" max="100" step="5" />
+            <div class="range-value" id="incomingVolumeVal">100%</div>
+          </div>
+          <div class="field">
+            <label>Incoming audio level</label>
+            <div class="level-meter"><div class="level-fill" id="incomingLevelFill"></div></div>
+            <div class="hint" style="margin:4px 0 0">Bar moves when audio is actually flowing from the peer.</div>
+          </div>
+          <div class="field-row">
+            <label class="checkbox"><input type="checkbox" id="twoWay" /> Enable two-way mic (Supporter &rarr; Speaker)</label>
+          </div>
+          <p class="hint">When enabled, the supporter's mic is captured and sent to the speaker. Mic starts <b>active</b>. Click Mute to toggle, or bind <b>Push-to-talk</b> in Hotkeys for a hotkey toggle.</p>
+          <div class="ptt-row">
+            <div class="ptt-status" id="pttStatus">Mic: not active</div>
+            <button class="action-btn-secondary" id="muteToggleBtn">Mute</button>
+          </div>
+        </section>
+      </div>
+
+      <div class="settings-tab" data-tab="hotkeys" hidden>
+        <section class="settings-section">
+          <h3>Hotkeys</h3>
+          <p class="hint">Click a binding to change. Press Esc to cancel, Backspace to disable.</p>
+          <div class="hotkey-list" id="hotkeyList"></div>
+          <div class="hotkey-actions">
+            <button id="resetAllHotkeysBtn">Reset all to defaults</button>
+          </div>
+        </section>
+      </div>
+
+      <div class="settings-tab" data-tab="log" hidden>
+        <section class="settings-section">
+          <h3>Activity log</h3>
+          <div class="log-box">
+            <div class="log-header">Voice transcription &middot; OCR captions &middot; errors</div>
+            <div class="log-body" id="logBody"></div>
+          </div>
+        </section>
+      </div>
+
+      <div class="settings-tab help-tab" data-tab="help" hidden>
+
+        <section class="settings-section help-section">
+          <h3>Quick start</h3>
+          <ol class="help-steps">
+            <li>Open <b>General</b> tab &rarr; add a URL like <code>https://chatgpt.com</code> or <code>https://claude.ai</code>.</li>
+            <li>Click the <span class="kbd">&#9662;</span> on the left rail and pick the site.</li>
+            <li>Pick a mode (<b>Voice</b> or <b>Caption</b>) under <b>General &rarr; Active mode</b>.</li>
+            <li>Configure that mode's tab (engine + key for Voice; pick area for Caption).</li>
+            <li>Click the <b>&#9679;</b> dot on the rail to start. Click again to stop.</li>
+          </ol>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>The window</h3>
+          <div class="help-figure">
+            <svg width="280" height="36" viewBox="0 0 280 36" xmlns="http://www.w3.org/2000/svg" aria-label="Header bar diagram">
+              <rect x="0" y="2" width="280" height="28" fill="#f4f4f5" stroke="#e4e4e7"/>
+              <text x="60" y="20" font-size="9" fill="#71717a" font-family="sans-serif">drag to move</text>
+              <rect x="140" y="12" width="60" height="8" rx="4" fill="#d4d4d8"/>
+              <rect x="140" y="12" width="40" height="8" rx="4" fill="#2563eb"/>
+              <text x="170" y="32" font-size="8" fill="#71717a" text-anchor="middle" font-family="sans-serif">opacity</text>
+              <circle cx="218" cy="16" r="5" fill="#16a34a" stroke="#15803d"/>
+              <text x="218" y="32" font-size="8" fill="#71717a" text-anchor="middle" font-family="sans-serif">stealth</text>
+              <text x="244" y="20" font-size="14" text-anchor="middle" font-family="sans-serif">&minus;</text>
+              <text x="244" y="32" font-size="8" fill="#71717a" text-anchor="middle" font-family="sans-serif">hide</text>
+              <text x="266" y="20" font-size="14" text-anchor="middle" font-family="sans-serif">&times;</text>
+              <text x="266" y="32" font-size="8" fill="#71717a" text-anchor="middle" font-family="sans-serif">quit</text>
+            </svg>
+          </div>
+          <ul>
+            <li><b>Drag</b> anywhere on the empty header to move the window.</li>
+            <li><b>Opacity slider</b>: hover and slide your cursor across it &mdash; <i>no clicking needed</i>. Cursor X position = opacity 0&ndash;100&#37;.</li>
+            <li><b>Stealth dot</b>: <span style="color:#16a34a">green</span> = invisible to screen capture / recorders / meeting share-screen. <span style="color:#dc2626">red</span> = visible. Click to toggle.</li>
+            <li><b>&minus;</b> hides the window (use the toggle hotkey to bring it back, default <span class="kbd">Ctrl+Alt+H</span>).</li>
+            <li><b>&times;</b> quits the app.</li>
+          </ul>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>The rail (left side)</h3>
+          <div class="help-figure">
+            <svg width="32" height="140" viewBox="0 0 32 140" xmlns="http://www.w3.org/2000/svg" aria-label="Rail buttons diagram">
+              <rect width="32" height="140" fill="#f4f4f5" stroke="#e4e4e7"/>
+              <text x="16" y="22" text-anchor="middle" font-size="14" font-family="sans-serif">&#9662;</text>
+              <text x="16" y="50" text-anchor="middle" font-size="14" font-family="sans-serif">&#8635;</text>
+              <text x="16" y="78" text-anchor="middle" font-size="14" font-family="sans-serif">&#9881;</text>
+              <circle cx="16" cy="106" r="6" fill="#dc2626" stroke="#b91c1c"/>
+            </svg>
+            <div class="help-figure-caption">
+              <div><span class="kbd">&#9662;</span> &mdash; switch site (preset URL dropdown)</div>
+              <div><span class="kbd">&#8635;</span> &mdash; reload the loaded site (also force-shows the webview if it ever gets stuck hidden)</div>
+              <div><span class="kbd">&#9881;</span> &mdash; settings (this dialog)</div>
+              <div><span class="kbd">&#9679;</span> &mdash; start/stop the active mode (gray = idle, pulsing red = running)</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>Voice mode</h3>
+          <p>Listens to your microphone and/or system audio, transcribes in ~5-second chunks, and pastes the text into <b>whichever app is foreground</b> via clipboard + Ctrl+V. Useful for relaying spoken meeting content into a chat editor in another app.</p>
+          <h4>Setup (Voice tab)</h4>
+          <ol class="help-steps">
+            <li><b>Audio capture</b>: pick a microphone and choose which sources to capture (mic + system loopback by default).</li>
+            <li><b>Transcription engine</b>:
+              <ul>
+                <li><b>OpenAI Whisper API</b> &mdash; needs an API key. Easy, accurate, audio leaves your machine.</li>
+                <li><b>Local whisper.cpp</b> &mdash; needs <code>whisper-cli.exe</code> and a model file (<code>ggml-base.bin</code> etc). Fully offline. Slower without GPU.</li>
+              </ul>
+            </li>
+            <li>Pick a language or leave on Auto-detect.</li>
+          </ol>
+          <h4>Use it</h4>
+          <ol class="help-steps">
+            <li>Switch to <b>Voice</b> mode under General &rarr; Active mode.</li>
+            <li>Click into the target app's input box (Notepad, chat, editor &mdash; anything that accepts paste).</li>
+            <li>Click the <b>&#9679;</b> dot. After ~5&ndash;8 s, transcribed text appears in your target.</li>
+          </ol>
+          <p class="hint">&#9888; While running, do <b>not</b> click into this app or the paste will land here.</p>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>Caption mode</h3>
+          <p>OCRs a screen rectangle (e.g. video captions in a browser), removes already-pasted text via word-level diffing, and inserts the new portion directly into the chat input of the loaded site (ChatGPT / Claude). No clipboard, no foreground stealing.</p>
+          <h4>Setup (Caption tab)</h4>
+          <ol class="help-steps">
+            <li>Click <b>Select</b> next to "Capture area".</li>
+            <li>The window hides &rarr; a transparent overlay covers your screen.</li>
+            <li>Drag a rectangle around the caption area.</li>
+            <li>Pick OCR language and poll interval (700&nbsp;ms is a good default).</li>
+          </ol>
+          <div class="help-figure">
+            <svg width="280" height="120" viewBox="0 0 280 120" xmlns="http://www.w3.org/2000/svg" aria-label="Drag to select diagram">
+              <rect width="280" height="120" fill="#1a1a1a" opacity="0.85"/>
+              <rect x="60" y="70" width="160" height="32" fill="#000" opacity="0.5"/>
+              <text x="140" y="92" text-anchor="middle" font-size="11" fill="#fff" font-family="sans-serif">live captions go here</text>
+              <rect x="56" y="66" width="168" height="40" fill="rgba(37,99,235,0.18)" stroke="#2563eb" stroke-width="2" stroke-dasharray="4 2"/>
+              <text x="140" y="20" text-anchor="middle" font-size="10" fill="#fff" font-family="sans-serif">drag to draw the capture rectangle</text>
+            </svg>
+          </div>
+          <h4>Use it</h4>
+          <ol class="help-steps">
+            <li>Switch to <b>Caption</b> mode under General &rarr; Active mode.</li>
+            <li>Pick the AI site in the rail dropdown <span class="kbd">&#9662;</span>.</li>
+            <li>The chat input is auto-focused; click it once if needed.</li>
+            <li>Click the <b>&#9679;</b> dot &mdash; new caption text streams into the chat input as it appears.</li>
+            <li>Press your <b>Reset capture area</b> hotkey (default <span class="kbd">Ctrl+Q</span>) anytime to re-pick the area without stopping.</li>
+          </ol>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>Hotkeys</h3>
+          <p>Open the <b>Hotkeys</b> tab to view and rebind every shortcut. Click a binding, press a new key combo (or <span class="kbd">Esc</span> to cancel, <span class="kbd">Backspace</span> to disable). Per-row "reset" restores defaults. Failed registrations show in red &mdash; usually means another app already grabbed that combo.</p>
+          <table class="help-table">
+            <thead><tr><th>Action</th><th>Default</th></tr></thead>
+            <tbody>
+              <tr><td>Toggle window visibility</td><td><span class="kbd">Ctrl+Alt+H</span></td></tr>
+              <tr><td>Move window left / right / up / down</td><td><span class="kbd">Ctrl+Alt+&larr;</span> &hellip; <span class="kbd">Ctrl+Alt+&darr;</span></td></tr>
+              <tr><td>Opacity up / down</td><td><span class="kbd">Ctrl+Alt+]</span> / <span class="kbd">Ctrl+Alt+[</span></td></tr>
+              <tr><td>Scroll page up / down</td><td><span class="kbd">Ctrl+&uarr;</span> / <span class="kbd">Ctrl+&darr;</span></td></tr>
+              <tr><td>Reset capture area</td><td><span class="kbd">Ctrl+Q</span></td></tr>
+              <tr><td>Reload site</td><td>(unbound)</td></tr>
+              <tr><td>Toggle stealth</td><td>(unbound)</td></tr>
+              <tr><td>Start / stop voice or caption</td><td>(unbound)</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>Stealth from screen capture</h3>
+          <p>The green dot enables <code>setContentProtection</code>. On Windows this hides the window from:</p>
+          <ul>
+            <li>OBS / display capture in screen recorders</li>
+            <li>Zoom / Teams / Meet share-screen</li>
+            <li>Win+PrtScn and most screenshot tools</li>
+          </ul>
+          <p>It does <b>not</b> defeat:</p>
+          <ul>
+            <li>Hardware capture cards</li>
+            <li>A phone / camera pointed at the screen</li>
+            <li>Some kernel-level monitoring agents</li>
+          </ul>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>Troubleshooting</h3>
+          <h4>I can't see the loaded website</h4>
+          <p>Click the <span class="kbd">&#8635;</span> reload button on the rail &mdash; it force-shows the webview and reloads the page. The webview gets hidden whenever Settings is open; if a flow ever leaves it hidden, reload fixes it.</p>
+          <h4>Voice mode pastes into the wrong app</h4>
+          <p>Click the target app's input field <i>before</i> starting Voice mode. While the dot is pulsing, don't click into this app.</p>
+          <h4>Caption mode duplicates text</h4>
+          <p>The diff is word-based and tolerant to OCR variations, but if the OCR engine produces wildly different text for the same speech, some duplication is unavoidable. Press your reset hotkey (<span class="kbd">Ctrl+Q</span>) to re-pick a tighter area &mdash; smaller and cleaner is better.</p>
+          <h4>OpenAI 401 / 429 errors</h4>
+          <p>Check the <b>Log</b> tab. 401 = bad API key. 429 = rate limit / out of credits.</p>
+          <h4>Local whisper exits with non-zero code</h4>
+          <p>Open a terminal and run the same command manually with <code>-f some.wav -m model.bin</code> to see the real error. Ensure the model and exe match the same whisper.cpp version.</p>
+          <h4>Hotkey shows red "register failed"</h4>
+          <p>Another app already owns that combo system-wide. Pick a different one.</p>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>Adding your own screenshots</h3>
+          <p>Drop PNG files into <code>renderer/help-images/</code> and edit this Help tab in <code>renderer/index.html</code> to insert <code>&lt;img&gt;</code> tags wherever you want them. Suggested filenames are listed in <code>renderer/help-images/README.txt</code>.</p>
+        </section>
+
+      </div>
 
     </div>
   </section>
 
+  <section class="setup-overlay" id="setupOverlay">
+    <div class="setup-card">
+      <h2 class="setup-title">Setup</h2>
+      <p class="hint">Pick mode and network role. Click Start to begin the session.</p>
+
+      <div class="setup-section">
+        <h4>Active mode</h4>
+        <label class="radio"><input type="radio" name="setupMode" value="caption" id="setupModeCaption" checked /> Caption (OCR a screen area)</label>
+        <label class="radio"><input type="radio" name="setupMode" value="voice" id="setupModeVoice" /> Voice (mic + system audio)</label>
+      </div>
+
+      <div class="setup-section">
+        <h4>Network role</h4>
+        <label class="radio"><input type="radio" name="setupRole" value="speaker" id="setupRoleSpeaker" checked /> Speaker (host)</label>
+        <label class="radio"><input type="radio" name="setupRole" value="supporter" id="setupRoleSupporter" /> Supporter (client)</label>
+      </div>
+
+      <div class="setup-section" id="setupPortBlock">
+        <h4>Port</h4>
+        <input type="number" id="setupPort" min="1" max="65535" value="2000" />
+        <p class="hint" style="margin:6px 0 0">Speaker binds <code>0.0.0.0</code> on this port.</p>
+      </div>
+
+      <div class="setup-section" id="setupAddressBlock" hidden>
+        <h4>Speaker address</h4>
+        <input type="text" id="setupAddress" placeholder="172.16.98.11:2000" spellcheck="false" />
+        <p class="hint" style="margin:6px 0 0">Format: <code>host:port</code></p>
+      </div>
+
+      <button class="action-btn setup-start-btn" id="setupStartBtn">Start</button>
+    </div>
+  </section>
+
+  <audio id="remoteAudio" autoplay style="display:none"></audio>
+  <audio id="speakerInAudio" autoplay style="display:none"></audio>
+
+  <script src="lib/simplepeer.min.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

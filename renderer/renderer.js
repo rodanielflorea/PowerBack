@@ -1,8 +1,20 @@
 const slider = document.getElementById('slider');
 const sliderFill = document.getElementById('sliderFill');
 const stealthBtn = document.getElementById('stealthBtn');
+const endBtn = document.getElementById('endBtn');
 const hideBtn = document.getElementById('hideBtn');
 const quitBtn = document.getElementById('quitBtn');
+
+const setupOverlay = document.getElementById('setupOverlay');
+const setupModeCaption = document.getElementById('setupModeCaption');
+const setupModeVoice = document.getElementById('setupModeVoice');
+const setupRoleSpeaker = document.getElementById('setupRoleSpeaker');
+const setupRoleSupporter = document.getElementById('setupRoleSupporter');
+const setupPortBlock = document.getElementById('setupPortBlock');
+const setupAddressBlock = document.getElementById('setupAddressBlock');
+const setupPortEl = document.getElementById('setupPort');
+const setupAddressEl = document.getElementById('setupAddress');
+const setupStartBtn = document.getElementById('setupStartBtn');
 
 const urlMenuBtn = document.getElementById('urlMenuBtn');
 const reloadBtn = document.getElementById('reloadBtn');
@@ -36,6 +48,27 @@ const capturePollMsEl = document.getElementById('capturePollMs');
 
 const hotkeyList = document.getElementById('hotkeyList');
 const resetAllHotkeysBtn = document.getElementById('resetAllHotkeysBtn');
+
+const roleSpeaker = document.getElementById('roleSpeaker');
+const roleSupporter = document.getElementById('roleSupporter');
+const netAddressEl = document.getElementById('netAddress');
+const maxSupportersEl = document.getElementById('maxSupporters');
+const maxSupportersField = document.getElementById('maxSupportersField');
+const netPortField = document.getElementById('netPortField');
+const netPortEl = document.getElementById('netPort');
+const netAddressField = document.getElementById('netAddressField');
+const netActionBtn = document.getElementById('netActionBtn');
+const netStopBtn = document.getElementById('netStopBtn');
+const netFlag = document.getElementById('netFlag');
+const netStatusEl = document.getElementById('netStatus');
+const incomingVolumeEl = document.getElementById('incomingVolume');
+const incomingVolumeVal = document.getElementById('incomingVolumeVal');
+const twoWayEl = document.getElementById('twoWay');
+const pttStatusEl = document.getElementById('pttStatus');
+const incomingLevelFill = document.getElementById('incomingLevelFill');
+const remoteAudioEl = document.getElementById('remoteAudio');
+const speakerInAudioEl = document.getElementById('speakerInAudio');
+const muteToggleBtn = document.getElementById('muteToggleBtn');
 
 const logBody = document.getElementById('logBody');
 
@@ -71,6 +104,95 @@ stealthBtn.addEventListener('click', async () => {
 
 hideBtn.addEventListener('click', () => window.api.hide());
 quitBtn.addEventListener('click', () => window.api.quit());
+
+function applySetupRoleVisibility() {
+  if (setupRoleSpeaker.checked) {
+    setupPortBlock.hidden = false;
+    setupAddressBlock.hidden = true;
+  } else {
+    setupPortBlock.hidden = true;
+    setupAddressBlock.hidden = false;
+  }
+}
+
+[setupRoleSpeaker, setupRoleSupporter].forEach(el => {
+  el.addEventListener('change', applySetupRoleVisibility);
+});
+
+async function refreshSetupUI() {
+  const m = await window.api.getMode();
+  setupModeCaption.checked = m !== 'voice';
+  setupModeVoice.checked = m === 'voice';
+  const cfg = await window.api.getNetworkConfig();
+  const role = cfg.role || 'speaker';
+  setupRoleSpeaker.checked = role === 'speaker';
+  setupRoleSupporter.checked = role === 'supporter';
+  const port = parsePort(cfg.address) || 2000;
+  setupPortEl.value = port;
+  setupAddressEl.value = cfg.address || '172.16.98.11:2000';
+  applySetupRoleVisibility();
+}
+
+function showSetup() {
+  if (settingsOverlay) settingsOverlay.hidden = true;
+  setupOverlay.hidden = false;
+  window.api.setWebviewVisible(false);
+  refreshSetupUI();
+}
+
+function hideSetup() {
+  if (settingsOverlay) settingsOverlay.hidden = true;
+  setupOverlay.hidden = true;
+  window.api.setWebviewVisible(true);
+}
+
+setupStartBtn.addEventListener('click', async () => {
+  const chosenMode = setupModeCaption.checked ? 'caption' : 'voice';
+  const chosenRole = setupRoleSpeaker.checked ? 'speaker' : 'supporter';
+  let address;
+  if (chosenRole === 'speaker') {
+    const port = parseInt(setupPortEl.value, 10);
+    if (!Number.isFinite(port) || port < 1 || port > 65535) {
+      window.alert('Enter a valid port (1–65535)');
+      return;
+    }
+    address = `0.0.0.0:${port}`;
+  } else {
+    address = setupAddressEl.value.trim();
+    if (!/^[^:\s]+:\d+$/.test(address)) {
+      window.alert('Enter address as host:port (e.g. 172.16.98.11:2000)');
+      return;
+    }
+  }
+  await window.api.setMode(chosenMode);
+  mode = chosenMode;
+  await window.api.setNetworkConfig({ role: chosenRole, address });
+  await window.api.startNetwork();
+  hideSetup();
+  log(`Started: ${chosenMode} mode as ${chosenRole} on ${address}`, 'info');
+
+  if (chosenMode === 'caption') {
+    const cap = await window.api.getCaptureConfig();
+    if (!cap.rect) {
+      log('Caption mode: pick a screen area to OCR', 'info');
+      pendingCaptureStart = true;
+      setTimeout(() => window.api.selectCaptureArea(), 300);
+    }
+  }
+});
+
+endBtn.addEventListener('click', async () => {
+  if (!window.confirm('End session? This stops the network and any active mode.')) return;
+  if (recState) await stopVoice().catch(() => {});
+  if (captureRunning) await stopCaption().catch(() => {});
+  await window.api.stopNetwork();
+  teardownPeers();
+  delete netActionBtn.dataset.connecting;
+  log('Session ended — back to setup', 'info');
+  showSetup();
+});
+
+showSetup();
 
 window.api.onOpacityChanged((v) => updateFill(v));
 window.api.onStealthChanged((v) => updateStealth(v));
@@ -137,15 +259,27 @@ urlInput.addEventListener('keydown', (e) => {
 urlMenuBtn.addEventListener('click', () => window.api.showUrlMenu());
 reloadBtn.addEventListener('click', () => window.api.reloadWebview());
 
+const tabBtns = document.querySelectorAll('.tab-btn');
+const tabPanels = document.querySelectorAll('.settings-tab');
+
+function activateTab(name) {
+  tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  tabPanels.forEach(p => { p.hidden = p.dataset.tab !== name; });
+}
+
+tabBtns.forEach(btn => btn.addEventListener('click', () => activateTab(btn.dataset.tab)));
+
 function openSettings() {
   settingsOverlay.hidden = false;
   window.api.setWebviewVisible(false);
+  activateTab('general');
   refreshUrls();
   refreshModeUI();
   refreshTranscriptionUI();
   refreshCaptureUI();
   refreshMicList();
   refreshHotkeysUI();
+  refreshNetworkUI();
 }
 
 function closeSettings() {
@@ -171,6 +305,17 @@ async function refreshModeUI() {
   modeVoice.checked = mode !== 'caption';
   modeCaption.checked = mode === 'caption';
   updateRecTitle();
+  updateTabVisibility(mode);
+}
+
+function updateTabVisibility(activeMode) {
+  const voiceBtn = document.querySelector('.tab-btn[data-tab="voice"]');
+  const captionBtn = document.querySelector('.tab-btn[data-tab="caption"]');
+  const isCaption = activeMode === 'caption';
+  if (voiceBtn) voiceBtn.style.display = isCaption ? 'none' : '';
+  if (captionBtn) captionBtn.style.display = isCaption ? '' : 'none';
+  const hiddenActive = document.querySelector('.tab-btn.active');
+  if (hiddenActive && hiddenActive.style.display === 'none') activateTab('general');
 }
 
 function updateRecTitle() {
@@ -180,10 +325,10 @@ function updateRecTitle() {
 }
 
 modeVoice.addEventListener('change', async () => {
-  if (modeVoice.checked) { mode = 'voice'; await window.api.setMode('voice'); updateRecTitle(); }
+  if (modeVoice.checked) { mode = 'voice'; await window.api.setMode('voice'); updateRecTitle(); updateTabVisibility('voice'); }
 });
 modeCaption.addEventListener('change', async () => {
-  if (modeCaption.checked) { mode = 'caption'; await window.api.setMode('caption'); updateRecTitle(); }
+  if (modeCaption.checked) { mode = 'caption'; await window.api.setMode('caption'); updateRecTitle(); updateTabVisibility('caption'); }
 });
 
 async function refreshTranscriptionUI() {
@@ -259,6 +404,11 @@ window.api.onCaptureRectChanged((rect) => {
   capCfg = { ...(capCfg || {}), rect };
   renderCaptureRect(rect);
   log(`Capture area set: ${rect.x1},${rect.y1} → ${rect.x2},${rect.y2}`, 'info');
+  if (pendingCaptureStart) {
+    pendingCaptureStart = false;
+    window.api.startCaptureLoop();
+    log('Auto-starting caption capture with new area', 'info');
+  }
 });
 
 const HOTKEY_LABELS = {
@@ -275,6 +425,7 @@ const HOTKEY_LABELS = {
   reloadSite: 'Reload site',
   toggleStealth: 'Toggle stealth',
   toggleRecording: 'Start/stop voice or caption',
+  pushToTalk: 'Push-to-talk (toggle supporter mic)',
 };
 
 function eventToBinding(e) {
@@ -541,10 +692,14 @@ async function stopVoice() {
   log('Voice transcription stopped', 'info');
 }
 
+let pendingCaptureStart = false;
+
 async function startCaption() {
   capCfg = await window.api.getCaptureConfig();
   if (!capCfg.rect) {
-    log('No capture area set — open settings, click Select', 'err');
+    log('No capture area — opening selector. Capture will auto-start once you pick.', 'info');
+    pendingCaptureStart = true;
+    await window.api.selectCaptureArea();
     return;
   }
   await window.api.startCaptureLoop();
@@ -602,6 +757,438 @@ function isSilent(samples) {
   const rms = Math.sqrt(sum / samples.length);
   return rms < 0.005;
 }
+
+let netCfg = null;
+
+async function refreshNetworkUI() {
+  netCfg = await window.api.getNetworkConfig();
+  const status = await window.api.getNetworkStatus();
+  roleSpeaker.checked = netCfg.role === 'speaker' || !netCfg.role;
+  roleSupporter.checked = netCfg.role === 'supporter';
+  netAddressEl.value = netCfg.address || '';
+  const port = parsePort(netCfg.address) || 2000;
+  if (netPortEl) netPortEl.value = port;
+  maxSupportersEl.value = netCfg.maxSupporters || 1;
+  twoWayEl.checked = !!netCfg.twoWay;
+  const v = Math.round((netCfg.incomingVolume ?? 1) * 100);
+  incomingVolumeEl.value = v;
+  incomingVolumeVal.textContent = v + '%';
+  applyIncomingVolume(netCfg.incomingVolume ?? 1);
+  updateRoleVisibility();
+  renderNetStatus(status);
+}
+
+function parsePort(addr) {
+  const m = String(addr || '').match(/:(\d+)$/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+function parseHost(addr) {
+  const m = String(addr || '').match(/^([^:]+):/);
+  return m ? m[1] : '';
+}
+
+function updateRoleVisibility() {
+  const isSpeaker = netCfg && netCfg.role === 'speaker';
+  const isSupporter = netCfg && netCfg.role === 'supporter';
+  if (maxSupportersField) maxSupportersField.style.display = isSpeaker ? '' : 'none';
+  if (netPortField) netPortField.style.display = isSpeaker ? '' : 'none';
+  if (netAddressField) netAddressField.style.display = isSupporter ? '' : 'none';
+  if (!netCfg || !netCfg.role) {
+    netActionBtn.textContent = 'Pick a role first';
+    netActionBtn.disabled = true;
+  } else {
+    netActionBtn.disabled = false;
+    netActionBtn.textContent = isSpeaker ? 'Start hosting' : 'Connect to speaker';
+  }
+}
+
+function renderNetStatus(status) {
+  if (!netStatusEl || !netFlag) return;
+  let flagText = 'IDLE';
+  let flagCls = '';
+  let txt;
+  const role = (netCfg && netCfg.role) || status.role;
+  if (status.bound && role === 'speaker') {
+    const hasSupporters = status.supporters.length > 0;
+    flagText = hasSupporters ? 'CONNECTED' : 'HOSTING';
+    flagCls = hasSupporters ? 'connected' : 'hosting';
+    txt = `Hosting on ${status.address} · ${status.supporters.length}/${status.maxSupporters} supporter(s)`;
+    netActionBtn.hidden = true;
+    netStopBtn.hidden = false;
+    netStopBtn.textContent = 'Stop hosting';
+  } else if (role === 'supporter' && status.connected) {
+    flagText = 'CONNECTED';
+    flagCls = 'connected';
+    txt = `Connected to ${status.address}`;
+    netActionBtn.hidden = true;
+    netStopBtn.hidden = false;
+    netStopBtn.textContent = 'Disconnect';
+  } else if (role === 'supporter' && netActionBtn.dataset.connecting === '1') {
+    flagText = 'DIALING';
+    flagCls = 'connecting';
+    txt = `Dialing ${status.address}…`;
+    netActionBtn.hidden = true;
+    netStopBtn.hidden = false;
+    netStopBtn.textContent = 'Cancel';
+  } else {
+    flagText = 'IDLE';
+    flagCls = '';
+    txt = role ? `Idle. Press the action button to start.` : `Pick a role and start.`;
+    netActionBtn.hidden = false;
+    netStopBtn.hidden = true;
+  }
+  netFlag.textContent = flagText;
+  netFlag.className = 'status-flag' + (flagCls ? ' ' + flagCls : '');
+  netStatusEl.textContent = txt;
+}
+
+async function persistNet(patch) {
+  netCfg = { ...(netCfg || {}), ...patch };
+  await window.api.setNetworkConfig(patch);
+}
+
+[roleSpeaker, roleSupporter].forEach(el => {
+  el.addEventListener('change', async () => {
+    if (!el.checked) return;
+    const role = el.value;
+    if (netActionBtn && !netActionBtn.hidden) {
+      // Just update the choice; user clicks action button to actually start
+      await persistNet({ role });
+      teardownPeers();
+      updateRoleVisibility();
+      const status = await window.api.getNetworkStatus();
+      renderNetStatus(status);
+    } else {
+      // Mid-session role change — confirm and stop everything
+      if (!window.confirm('Switching role will disconnect the current session. Continue?')) {
+        roleSpeaker.checked = netCfg.role === 'speaker';
+        roleSupporter.checked = netCfg.role === 'supporter';
+        return;
+      }
+      await window.api.stopNetwork();
+      await persistNet({ role });
+      teardownPeers();
+      updateRoleVisibility();
+    }
+  });
+});
+
+netActionBtn.addEventListener('click', async () => {
+  if (!netCfg || !netCfg.role) return;
+  const role = netCfg.role;
+  const addr = netAddressEl.value.trim();
+  if (!addr) { window.alert('Enter an address first.'); return; }
+  await persistNet({ address: addr });
+  const msg = role === 'speaker'
+    ? `Start hosting on ${addr}?\n\nThis will:\n  • Bind a WebSocket server on the port\n  • Capture your microphone + system audio when a supporter connects\n  • Stream audio to up to ${netCfg.maxSupporters || 1} supporter(s)`
+    : `Connect to ${addr}?\n\nThis will:\n  • Open a WebSocket connection to the speaker\n  • Receive their microphone + system audio\n  • Auto-reconnect every 5s if dropped`;
+  if (!window.confirm(msg)) return;
+  if (role === 'supporter') netActionBtn.dataset.connecting = '1';
+  await window.api.startNetwork();
+  const status = await window.api.getNetworkStatus();
+  renderNetStatus(status);
+});
+
+netStopBtn.addEventListener('click', async () => {
+  await window.api.stopNetwork();
+  teardownPeers();
+  delete netActionBtn.dataset.connecting;
+  const status = await window.api.getNetworkStatus();
+  renderNetStatus(status);
+});
+
+if (muteToggleBtn) muteToggleBtn.addEventListener('click', () => toggleMicMute());
+
+netAddressEl.addEventListener('change', () => persistNet({ address: netAddressEl.value.trim() }));
+if (netPortEl) netPortEl.addEventListener('change', () => {
+  const port = parseInt(netPortEl.value, 10);
+  if (!Number.isFinite(port) || port < 1 || port > 65535) return;
+  const host = parseHost(netCfg && netCfg.address) || '0.0.0.0';
+  persistNet({ address: `${host}:${port}` });
+  netAddressEl.value = `${host}:${port}`;
+});
+maxSupportersEl.addEventListener('change', () => {
+  const n = parseInt(maxSupportersEl.value, 10);
+  if (Number.isFinite(n) && n >= 1) persistNet({ maxSupporters: n });
+});
+twoWayEl.addEventListener('change', () => persistNet({ twoWay: twoWayEl.checked }));
+
+incomingVolumeEl.addEventListener('input', () => {
+  const v = Math.min(100, parseInt(incomingVolumeEl.value, 10)) / 100;
+  incomingVolumeVal.textContent = Math.round(v * 100) + '%';
+  applyIncomingVolume(v);
+  persistNet({ incomingVolume: v });
+});
+
+window.api.onNetworkStatus((status) => renderNetStatus(status));
+window.api.onNetworkError((msg) => {
+  log('Network: ' + msg, 'err');
+  if (netStatusEl) {
+    netStatusEl.textContent = 'Status: ' + msg;
+    netStatusEl.classList.remove('live');
+    netStatusEl.classList.add('error');
+  }
+});
+
+const RTC_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+const speakerPeers = new Map();
+let supporterPeer = null;
+let speakerLocalStream = null;
+let supporterMicStream = null;
+let supporterMicTrack = null;
+const SimplePeerLib = window.SimplePeer;
+
+function applyIncomingVolume(v) {
+  const clamped = Math.min(1, Math.max(0, v));
+  if (remoteAudioEl) remoteAudioEl.volume = clamped;
+  if (speakerInAudioEl) speakerInAudioEl.volume = clamped;
+}
+
+let levelCtx = null;
+let levelAnalyser = null;
+let levelTickHandle = null;
+let levelSourceStream = null;
+
+function startLevelMeter(stream) {
+  if (levelSourceStream === stream) return;
+  stopLevelMeter();
+  try {
+    if (!levelCtx) levelCtx = new AudioContext();
+    if (levelCtx.state === 'suspended') levelCtx.resume().catch(() => {});
+    const src = levelCtx.createMediaStreamSource(stream);
+    levelAnalyser = levelCtx.createAnalyser();
+    levelAnalyser.fftSize = 512;
+    levelAnalyser.smoothingTimeConstant = 0.6;
+    src.connect(levelAnalyser);
+    levelSourceStream = stream;
+    const data = new Uint8Array(levelAnalyser.fftSize);
+    const tick = () => {
+      if (!levelAnalyser) return;
+      levelAnalyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) {
+        const v = (data[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / data.length);
+      const pct = Math.min(100, Math.round(rms * 250));
+      if (incomingLevelFill) incomingLevelFill.style.width = pct + '%';
+      levelTickHandle = requestAnimationFrame(tick);
+    };
+    tick();
+  } catch (e) {
+    log('Level meter setup failed: ' + e.message, 'err');
+  }
+}
+
+function stopLevelMeter() {
+  if (levelTickHandle) { cancelAnimationFrame(levelTickHandle); levelTickHandle = null; }
+  levelAnalyser = null;
+  levelSourceStream = null;
+  if (incomingLevelFill) incomingLevelFill.style.width = '0%';
+}
+
+function setPttStatus(active) {
+  if (!pttStatusEl) return;
+  pttStatusEl.textContent = active ? 'Mic: ACTIVE (transmitting)' : 'Mic: MUTED';
+  pttStatusEl.classList.toggle('on', active);
+  if (muteToggleBtn) muteToggleBtn.textContent = active ? 'Mute' : 'Unmute';
+}
+
+function toggleMicMute() {
+  if (!supporterMicTrack) {
+    log('Mute toggle: two-way not active or mic not captured yet', 'info');
+    return;
+  }
+  supporterMicTrack.enabled = !supporterMicTrack.enabled;
+  setPttStatus(supporterMicTrack.enabled);
+}
+
+window.api.onTogglePtt(() => toggleMicMute());
+
+async function captureSpeakerStream() {
+  if (speakerLocalStream) return speakerLocalStream;
+  const tracks = [];
+  let micOk = false, sysOk = false;
+  try {
+    const mic = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+    });
+    mic.getAudioTracks().forEach(t => tracks.push(t));
+    micOk = tracks.length > 0;
+  } catch (e) { log('Speaker mic capture failed: ' + e.message, 'err'); }
+  try {
+    const sys = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    sys.getVideoTracks().forEach(t => t.stop());
+    const sysAudio = sys.getAudioTracks();
+    if (sysAudio.length > 0) {
+      sysAudio.forEach(t => tracks.push(t));
+      sysOk = true;
+    } else {
+      log('Speaker: getDisplayMedia returned no audio track (system loopback unavailable)', 'err');
+    }
+  } catch (e) { log('Speaker system capture failed: ' + e.message, 'err'); }
+  if (tracks.length === 0) return null;
+  speakerLocalStream = new MediaStream(tracks);
+  log(`Speaker capture ready (mic:${micOk ? 'ok' : 'no'}, system:${sysOk ? 'ok' : 'no'}, ${tracks.length} track(s) sending)`, 'info');
+  return speakerLocalStream;
+}
+
+function teardownPeers() {
+  speakerPeers.forEach(entry => { try { entry.peer.destroy(); } catch {} });
+  speakerPeers.clear();
+  if (supporterPeer) { try { supporterPeer.destroy(); } catch {} supporterPeer = null; }
+  if (speakerLocalStream) { speakerLocalStream.getTracks().forEach(t => t.stop()); speakerLocalStream = null; }
+  if (supporterMicStream) { supporterMicStream.getTracks().forEach(t => t.stop()); supporterMicStream = null; }
+  supporterMicTrack = null;
+  setPttStatus(false);
+  if (remoteAudioEl) { try { remoteAudioEl.srcObject = null; } catch {} }
+  if (speakerInAudioEl) { try { speakerInAudioEl.srcObject = null; } catch {} }
+  stopLevelMeter();
+}
+
+async function speakerHandleOpened(connId) {
+  if (!SimplePeerLib) { log('SimplePeer not loaded', 'err'); return; }
+  const stream = await captureSpeakerStream();
+  if (!stream) {
+    log('Speaker: nothing to stream — aborting connection ' + connId, 'err');
+    return;
+  }
+  const tracks = stream.getTracks();
+  log(`Speaker[${connId}]: streaming ${tracks.length} track(s)`, 'info');
+
+  const peer = new SimplePeerLib({
+    initiator: true,
+    stream,
+    trickle: true,
+    config: RTC_CONFIG,
+  });
+  speakerPeers.set(connId, { peer });
+
+  peer.on('signal', (sig) => {
+    window.api.sendSignaling({ connId, type: 'signal', payload: sig });
+  });
+  peer.on('connect', () => log(`Speaker[${connId}]: P2P connected`, 'info'));
+  peer.on('stream', (remote) => {
+    log(`Speaker[${connId}]: receiving supporter audio (${remote.getAudioTracks().length} track)`, 'info');
+    speakerInAudioEl.srcObject = remote;
+    speakerInAudioEl.volume = Math.min(1, (netCfg && netCfg.incomingVolume) ?? 1);
+    startLevelMeter(remote);
+  });
+  peer.on('error', (err) => log(`Speaker[${connId}] peer error: ${err.message}`, 'err'));
+  peer.on('close', () => {
+    log(`Speaker[${connId}]: peer closed`, 'info');
+    speakerPeers.delete(connId);
+  });
+}
+
+function speakerHandleSignal(connId, payload) {
+  const entry = speakerPeers.get(connId);
+  if (!entry) return;
+  try { entry.peer.signal(payload); }
+  catch (e) { log(`Speaker[${connId}] signal err: ${e.message}`, 'err'); }
+}
+
+function speakerHandleClosed(connId) {
+  const entry = speakerPeers.get(connId);
+  if (entry) {
+    try { entry.peer.destroy(); } catch {}
+    speakerPeers.delete(connId);
+  }
+}
+
+async function ensureSupporterMic() {
+  if (!netCfg || !netCfg.twoWay) return null;
+  if (supporterMicTrack) return supporterMicTrack;
+  try {
+    supporterMicStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+    });
+    supporterMicTrack = supporterMicStream.getAudioTracks()[0];
+    supporterMicTrack.enabled = true;
+    setPttStatus(true);
+    log('Supporter mic active (transmitting to speaker)', 'info');
+    return supporterMicTrack;
+  } catch (e) {
+    log('Supporter mic capture failed: ' + e.message, 'err');
+    return null;
+  }
+}
+
+async function ensureSupporterPeer() {
+  if (supporterPeer) return supporterPeer;
+  if (!SimplePeerLib) { log('SimplePeer not loaded', 'err'); return null; }
+  const micTrack = await ensureSupporterMic();
+  const localStream = micTrack ? supporterMicStream : undefined;
+
+  supporterPeer = new SimplePeerLib({
+    initiator: false,
+    trickle: true,
+    stream: localStream,
+    config: RTC_CONFIG,
+  });
+
+  supporterPeer.on('signal', (sig) => {
+    window.api.sendSignaling({ type: 'signal', payload: sig });
+  });
+  supporterPeer.on('connect', () => log('Supporter: P2P connected', 'info'));
+  supporterPeer.on('stream', (remote) => {
+    log(`Supporter: received remote stream (${remote.getAudioTracks().length} audio track)`, 'info');
+    remoteAudioEl.srcObject = remote;
+    remoteAudioEl.volume = Math.min(1, (netCfg && netCfg.incomingVolume) ?? 1);
+    startLevelMeter(remote);
+  });
+  supporterPeer.on('error', (err) => log('Supporter peer error: ' + err.message, 'err'));
+  supporterPeer.on('close', () => {
+    log('Supporter: peer closed', 'info');
+    supporterPeer = null;
+    stopLevelMeter();
+  });
+
+  remoteAudioEl.onplaying = () => log('Supporter: <audio> is playing', 'info');
+  remoteAudioEl.oncanplay = () => log('Supporter: <audio> canplay', 'info');
+  remoteAudioEl.onerror = () => log('Supporter: <audio> error: ' + (remoteAudioEl.error?.message || 'unknown'), 'err');
+
+  return supporterPeer;
+}
+
+function supporterHandleSignal(payload) {
+  ensureSupporterPeer().then(peer => {
+    if (!peer) return;
+    try { peer.signal(payload); }
+    catch (e) { log('Supporter signal err: ' + e.message, 'err'); }
+  });
+}
+
+window.api.onSignaling((msg) => {
+  const type = msg.type;
+  if (type === 'opened') {
+    if (netCfg && netCfg.role === 'speaker') speakerHandleOpened(msg.connId);
+  } else if (type === 'closed') {
+    if (netCfg && netCfg.role === 'speaker' && msg.connId) speakerHandleClosed(msg.connId);
+    else if (netCfg && netCfg.role === 'supporter') {
+      if (supporterPeer) { try { supporterPeer.destroy(); } catch {} supporterPeer = null; }
+      if (remoteAudioEl) { try { remoteAudioEl.srcObject = null; } catch {} }
+      stopLevelMeter();
+    }
+  } else if (type === 'signal') {
+    if (netCfg && netCfg.role === 'speaker') speakerHandleSignal(msg.connId, msg.payload);
+    else if (netCfg && netCfg.role === 'supporter') supporterHandleSignal(msg.payload);
+  } else if (type === 'reject') {
+    log('Network: rejected (' + (msg.reason || 'unknown') + ')', 'err');
+  } else if (type === 'hello') {
+    log('Network: connected as supporter (peer id ' + msg.id + ')', 'info');
+  }
+});
 
 function encodeWav(samples, sampleRate) {
   const buffer = new ArrayBuffer(44 + samples.length * 2);

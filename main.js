@@ -6,9 +6,14 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
+const WebSocket = require('ws');
 
 const STATE_FILE = path.join(app.getPath('userData'), 'state.json');
-const CAPTURE_EXE = path.join(__dirname, 'caption2text', 'Capture2Text_CLI.exe');
+const CAPTURE_EXE = path.join(
+  app.isPackaged ? process.resourcesPath : __dirname,
+  'caption2text',
+  'Capture2Text_CLI.exe'
+);
 
 const HOTKEY_DEFAULTS = {
   toggleVisibility: 'Ctrl+Alt+H',
@@ -24,13 +29,14 @@ const HOTKEY_DEFAULTS = {
   reloadSite: '',
   toggleStealth: '',
   toggleRecording: '',
+  pushToTalk: '',
 };
 
 const DEFAULT_STATE = {
   x: null, y: null, width: 400, height: 700,
   opacity: 1.0, stealth: true,
   urls: [], currentUrlIndex: 0,
-  mode: 'voice',
+  mode: 'caption',
   transcription: {
     engine: 'openai',
     openaiApiKey: '',
@@ -46,6 +52,14 @@ const DEFAULT_STATE = {
     rect: null,
     language: 'English',
     pollMs: 700,
+  },
+  network: {
+    role: '',
+    address: '172.16.98.11:2000',
+    twoWay: true,
+    maxSupporters: 1,
+    incomingVolume: 1.0,
+    outgoingVolume: 1.0,
   },
   hotkeys: { ...HOTKEY_DEFAULTS },
 };
@@ -124,13 +138,16 @@ function loadState() {
       ...raw,
       transcription: { ...DEFAULT_STATE.transcription, ...(raw.transcription || {}) },
       capture: { ...DEFAULT_STATE.capture, ...(raw.capture || {}) },
+      network: { ...DEFAULT_STATE.network, ...(raw.network || {}) },
       hotkeys: { ...HOTKEY_DEFAULTS, ...(raw.hotkeys || {}) },
     };
+    state.network.role = '';
   } catch {
     state = {
       ...DEFAULT_STATE,
       transcription: { ...DEFAULT_STATE.transcription },
       capture: { ...DEFAULT_STATE.capture },
+      network: { ...DEFAULT_STATE.network },
       hotkeys: { ...HOTKEY_DEFAULTS },
     };
   }
@@ -184,6 +201,7 @@ function ensureWebView() {
     webView.webContents.getUserAgent().replace(/\s?Electron\/\S+/, '')
   );
   win.contentView.addChildView(webView);
+  webView.setVisible(false);
   layoutWebView();
   loadCurrentUrl();
 }
@@ -218,6 +236,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      autoplayPolicy: 'no-user-gesture-required',
     },
   });
 
@@ -325,8 +344,16 @@ function pasteToForeground(text) {
   return pasteQueue;
 }
 
+let lastInjectError = '';
 async function injectIntoChat(text) {
-  if (!webView || !text) return false;
+  if (!webView) {
+    if (lastInjectError !== 'no-webview' && win) {
+      win.webContents.send('capture-error', 'No webview to inject into');
+      lastInjectError = 'no-webview';
+    }
+    return false;
+  }
+  if (!text) return false;
   const code = `(function(text){
     const selectors=[
       '#prompt-textarea',
@@ -367,8 +394,22 @@ async function injectIntoChat(text) {
   })(${JSON.stringify(text)});`;
   try {
     const r = await webView.webContents.executeJavaScript(code);
-    return r !== 'no-input';
+    if (r === 'no-input') {
+      const msg = 'No chat input found. Load ChatGPT/Claude and make sure the chat input is in view.';
+      if (lastInjectError !== msg && win) {
+        win.webContents.send('capture-error', msg);
+        lastInjectError = msg;
+      }
+      return false;
+    }
+    if (lastInjectError) lastInjectError = '';
+    return true;
   } catch (e) {
+    const msg = 'Inject error: ' + e.message;
+    if (lastInjectError !== msg && win) {
+      win.webContents.send('capture-error', msg);
+      lastInjectError = msg;
+    }
     return false;
   }
 }
@@ -474,6 +515,8 @@ function runOcr(rect, language) {
 }
 
 let ocrInFlight = false;
+let firstOcrLogged = false;
+let lastOcrEmptyAt = 0;
 async function captureTick() {
   if (ocrInFlight) return;
   const cfg = state.capture;
@@ -481,16 +524,26 @@ async function captureTick() {
   ocrInFlight = true;
   try {
     const text = await runOcr(cfg.rect, cfg.language);
-    if (text) {
-      const newPart = smartDiff(text);
-      const trimmed = newPart.trim();
-      if (trimmed) {
-        await injectIntoChat(newPart);
-        if (win) win.webContents.send('capture-text', trimmed);
+    if (!firstOcrLogged) {
+      firstOcrLogged = true;
+      if (win) win.webContents.send('capture-text', `[OCR running — first read: ${text.length} chars]`);
+    }
+    if (!text || !text.trim()) {
+      const now = Date.now();
+      if (now - lastOcrEmptyAt > 8000) {
+        lastOcrEmptyAt = now;
+        if (win) win.webContents.send('capture-error', 'OCR returned no text. Check capture area, language, and screen contrast.');
       }
+      return;
+    }
+    const newPart = smartDiff(text);
+    const trimmed = newPart.trim();
+    if (trimmed) {
+      await injectIntoChat(newPart);
+      if (win) win.webContents.send('capture-text', trimmed);
     }
   } catch (e) {
-    if (win) win.webContents.send('capture-error', e.message);
+    if (win) win.webContents.send('capture-error', 'OCR exec error: ' + e.message);
   } finally {
     ocrInFlight = false;
   }
@@ -503,6 +556,9 @@ function startCaptureLoop() {
     return;
   }
   pastedHistory = [];
+  firstOcrLogged = false;
+  lastOcrEmptyAt = 0;
+  lastInjectError = '';
   const period = Math.max(200, state.capture.pollMs || 700);
   captureLoop = setInterval(captureTick, period);
   captureTick();
@@ -610,7 +666,170 @@ const HOTKEY_HANDLERS = {
   reloadSite: () => reloadWebView(),
   toggleStealth: () => setStealth(!state.stealth),
   toggleRecording: () => { if (win) win.webContents.send('toggle-recording'); },
+  pushToTalk: () => { if (win) win.webContents.send('toggle-ptt'); },
 };
+
+let wsServer = null;
+let wsClient = null;
+let wsReconnectTimer = null;
+let nextConnId = 1;
+const supporterConns = new Map();
+
+function broadcastNetworkStatus() {
+  if (!win) return;
+  const status = {
+    role: state.network.role,
+    address: state.network.address,
+    bound: !!wsServer,
+    connected: wsClient ? wsClient.readyState === WebSocket.OPEN : false,
+    supporters: Array.from(supporterConns.keys()),
+    maxSupporters: state.network.maxSupporters,
+  };
+  win.webContents.send('network-status', status);
+}
+
+function parseAddress(addr) {
+  const m = String(addr || '').match(/^([^:]+):(\d+)$/);
+  if (!m) return null;
+  return { host: m[1], port: parseInt(m[2], 10) };
+}
+
+function stopSignalingServer() {
+  for (const ws of supporterConns.values()) {
+    try { ws.close(); } catch {}
+  }
+  supporterConns.clear();
+  if (wsServer) {
+    try { wsServer.close(); } catch {}
+    wsServer = null;
+  }
+  broadcastNetworkStatus();
+}
+
+function startSignalingServer() {
+  stopSignalingServer();
+  const addr = parseAddress(state.network.address);
+  if (!addr) {
+    if (win) win.webContents.send('network-error', 'Invalid address: ' + state.network.address);
+    return;
+  }
+  try {
+    wsServer = new WebSocket.Server({ port: addr.port, host: '0.0.0.0' });
+  } catch (e) {
+    if (win) win.webContents.send('network-error', 'Bind failed: ' + e.message);
+    wsServer = null;
+    broadcastNetworkStatus();
+    return;
+  }
+  wsServer.on('connection', (ws) => {
+    if (supporterConns.size >= (state.network.maxSupporters || 1)) {
+      try {
+        ws.send(JSON.stringify({ type: 'reject', reason: 'capacity' }));
+        ws.close();
+      } catch {}
+      return;
+    }
+    const id = String(nextConnId++);
+    supporterConns.set(id, ws);
+    try { ws.send(JSON.stringify({ type: 'hello', id })); } catch {}
+    if (win) win.webContents.send('signaling-in', { connId: id, type: 'opened' });
+    broadcastNetworkStatus();
+    ws.on('message', (data) => {
+      let msg;
+      try { msg = JSON.parse(data.toString()); } catch { return; }
+      if (win) win.webContents.send('signaling-in', { connId: id, ...msg });
+    });
+    ws.on('close', () => {
+      supporterConns.delete(id);
+      if (win) win.webContents.send('signaling-in', { connId: id, type: 'closed' });
+      broadcastNetworkStatus();
+    });
+    ws.on('error', () => {});
+  });
+  wsServer.on('error', (e) => {
+    if (win) win.webContents.send('network-error', 'Server error: ' + e.message);
+  });
+  broadcastNetworkStatus();
+}
+
+function disconnectSignalingClient() {
+  if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+  if (wsClient) {
+    try { wsClient.close(); } catch {}
+    wsClient = null;
+  }
+  broadcastNetworkStatus();
+}
+
+function connectSignalingClient() {
+  disconnectSignalingClient();
+  const addr = parseAddress(state.network.address);
+  if (!addr) {
+    if (win) win.webContents.send('network-error', 'Invalid address: ' + state.network.address);
+    return;
+  }
+  const url = `ws://${addr.host}:${addr.port}`;
+  let ws;
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    if (win) win.webContents.send('network-error', 'Connect failed: ' + e.message);
+    return;
+  }
+  wsClient = ws;
+  ws.on('open', () => {
+    if (win) win.webContents.send('signaling-in', { type: 'opened' });
+    broadcastNetworkStatus();
+  });
+  ws.on('message', (data) => {
+    let msg;
+    try { msg = JSON.parse(data.toString()); } catch { return; }
+    if (win) win.webContents.send('signaling-in', msg);
+  });
+  ws.on('close', () => {
+    if (win) win.webContents.send('signaling-in', { type: 'closed' });
+    if (wsClient === ws) wsClient = null;
+    broadcastNetworkStatus();
+    if (state.network.role === 'supporter') {
+      wsReconnectTimer = setTimeout(connectSignalingClient, 5000);
+    }
+  });
+  ws.on('error', (e) => {
+    if (win) win.webContents.send('network-error', 'WS error: ' + e.message);
+  });
+  broadcastNetworkStatus();
+}
+
+function sendSignaling(msg) {
+  if (state.network.role === 'speaker') {
+    const id = msg.connId;
+    const ws = id ? supporterConns.get(id) : null;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      const out = { ...msg };
+      delete out.connId;
+      try { ws.send(JSON.stringify(out)); } catch {}
+    }
+  } else if (state.network.role === 'supporter') {
+    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+      try { wsClient.send(JSON.stringify(msg)); } catch {}
+    }
+  }
+}
+
+function startNetwork() {
+  if (state.network.role === 'speaker') {
+    disconnectSignalingClient();
+    startSignalingServer();
+  } else if (state.network.role === 'supporter') {
+    stopSignalingServer();
+    connectSignalingClient();
+  }
+}
+
+function stopNetwork() {
+  stopSignalingServer();
+  disconnectSignalingClient();
+}
 
 const hotkeyFailures = {};
 function registerHotkeys() {
@@ -713,8 +932,30 @@ ipcMain.handle('reset-all-hotkeys', () => {
   registerHotkeys();
 });
 
+ipcMain.handle('get-network-config', () => ({ ...state.network }));
+ipcMain.handle('set-network-config', (_e, cfg) => {
+  state.network = { ...state.network, ...(cfg || {}) };
+  saveState();
+  broadcastNetworkStatus();
+});
+ipcMain.handle('start-network', () => { startNetwork(); });
+ipcMain.handle('stop-network', () => { stopNetwork(); });
+ipcMain.handle('get-network-status', () => {
+  return {
+    role: state.network.role,
+    address: state.network.address,
+    bound: !!wsServer,
+    connected: wsClient ? wsClient.readyState === WebSocket.OPEN : false,
+    supporters: Array.from(supporterConns.keys()),
+    maxSupporters: state.network.maxSupporters,
+  };
+});
+ipcMain.on('signaling-out', (_e, msg) => sendSignaling(msg));
+
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   stopCaptureLoop();
+  stopSignalingServer();
+  disconnectSignalingClient();
 });
 app.on('window-all-closed', () => app.quit());

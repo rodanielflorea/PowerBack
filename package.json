@@ -4,9 +4,49 @@
   "description": "Stealth always-on-top assistant window",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "build": "electron-builder --win portable",
+    "build:installer": "electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "com.stealthsupport.app",
+    "productName": "Stealth Support",
+    "files": [
+      "main.js",
+      "preload.js",
+      "preload-selector.js",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "caption2text",
+        "to": "caption2text",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    }
+  },
+  "dependencies": {
+    "simple-peer": "^9.11.1",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
-    "electron": "^41.4.0"
+    "electron": "^41.4.0",
+    "electron-builder": "^25.0.0"
   }
 }
