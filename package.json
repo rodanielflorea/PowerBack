@@ -1,13 +1,14 @@
 {
   "name": "stealth-support",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "description": "Stealth always-on-top assistant window",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "pack": "electron-builder --dir",
-    "build": "electron-builder --win portable",
-    "build:installer": "electron-builder --win nsis"
+    "icon": "node scripts/generate-icon.js",
+    "pack": "npm run icon && electron-builder --dir",
+    "build": "npm run icon && electron-builder --win portable",
+    "build:installer": "npm run icon && electron-builder --win nsis"
   },
   "build": {
     "appId": "com.stealthsupport.app",
@@ -17,6 +18,8 @@
       "preload.js",
       "preload-selector.js",
       "renderer/**/*",
+      "build/icon.png",
+      "build/icon.ico",
       "package.json"
     ],
     "extraResources": [
@@ -31,10 +34,18 @@
     "directories": {
       "output": "dist"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "YOUR_GITHUB_USERNAME",
+        "repo": "stealth-support"
+      }
+    ],
     "win": {
       "target": [
         "portable"
       ],
+      "icon": "build/icon.ico",
       "artifactName": "${productName}-${version}-portable.${ext}"
     },
     "portable": {
@@ -42,11 +53,14 @@
     }
   },
   "dependencies": {
+    "electron-updater": "^6.8.3",
     "simple-peer": "^9.11.1",
     "ws": "^8.20.0"
   },
   "devDependencies": {
     "electron": "^41.4.0",
-    "electron-builder": "^25.0.0"
+    "electron-builder": "^25.0.0",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.5"
   }
 }

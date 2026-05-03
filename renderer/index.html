@@ -66,6 +66,16 @@
             <button id="urlAddBtn">Add</button>
           </div>
         </section>
+
+        <section class="settings-section">
+          <h3>App version</h3>
+          <div class="updater-row">
+            <span class="updater-version" id="updaterVersion">version &mdash;</span>
+            <button id="updaterCheckBtn">Check for updates</button>
+            <button id="updaterInstallBtn" hidden>Restart &amp; install</button>
+          </div>
+          <div class="updater-status" id="updaterStatus">Idle.</div>
+        </section>
       </div>
 
       <div class="settings-tab" data-tab="voice" hidden>
@@ -170,6 +180,18 @@
 
       <div class="settings-tab" data-tab="network" hidden>
         <section class="settings-section">
+          <h3>Connection</h3>
+          <div class="status-row">
+            <span class="status-flag" id="netFlag">IDLE</span>
+            <span class="net-status-text" id="netStatus">Pick a role and start.</span>
+          </div>
+          <div class="supporters-block" id="supportersBlock" hidden>
+            <div class="supporters-header">Connected supporters</div>
+            <div class="supporters-list" id="supportersList"></div>
+          </div>
+        </section>
+
+        <section class="settings-section setup-only">
           <h3>Role</h3>
           <p class="hint">Pick a role, then press the action button. You'll be asked to confirm.</p>
           <div class="field-row">
@@ -191,10 +213,6 @@
           <div class="field">
             <button class="action-btn" id="netActionBtn">Start hosting</button>
             <button class="action-btn-secondary" id="netStopBtn" hidden>Stop</button>
-          </div>
-          <div class="status-row">
-            <span class="status-flag" id="netFlag">IDLE</span>
-            <span class="net-status-text" id="netStatus">Pick a role and start.</span>
           </div>
         </section>
 
@@ -239,6 +257,11 @@
             <div class="log-header">Voice transcription &middot; OCR captions &middot; errors</div>
             <div class="log-body" id="logBody"></div>
           </div>
+          <div class="log-actions">
+            <button id="logOpenBtn" title="Open the persisted log file in your text editor">Open log file</button>
+            <button id="logClearBtn" title="Clear the persisted log">Clear log</button>
+          </div>
+          <p class="hint" style="margin-top:6px">Log persists to <code>activity.log</code> in app data. Last 500 lines are loaded when this tab opens.</p>
         </section>
       </div>
 

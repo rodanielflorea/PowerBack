@@ -423,6 +423,64 @@ body:not(.in-interview) .iv-btn { display: none !important; }
 .log-err { color: var(--rec-on); }
 .log-info { color: var(--muted); }
 
+.log-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.log-actions button {
+  -webkit-app-region: no-drag;
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.log-actions button:hover { background: var(--header-bg); color: var(--text); }
+
+.updater-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.updater-version {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  flex: 1;
+}
+
+.updater-row button {
+  -webkit-app-region: no-drag;
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.updater-row button:hover { background: var(--header-bg); color: var(--text); }
+
+#updaterInstallBtn { color: #fff; background: #16a34a; border-color: #15803d; }
+#updaterInstallBtn:hover { filter: brightness(1.1); background: #16a34a; color: #fff; }
+
+.updater-status {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: var(--header-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  color: var(--text);
+}
+
 .hotkey-list {
   display: flex;
   flex-direction: column;
@@ -652,6 +710,88 @@ body:not(.in-interview) .iv-btn { display: none !important; }
 
 .action-btn-secondary:hover { background: rgba(220, 38, 38, 0.08); }
 
+.supporters-block {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--header-bg);
+  overflow: hidden;
+}
+
+.supporters-header {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  font-weight: 600;
+}
+
+.supporters-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.supporter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.supporter-row:last-child { border-bottom: none; }
+
+.supporter-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #16a34a;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.2);
+  flex-shrink: 0;
+}
+
+.supporter-label {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.supporter-ip {
+  flex: 1;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.supporter-ip.unknown { color: var(--muted); font-style: italic; }
+
+.supporter-kick {
+  -webkit-app-region: no-drag;
+  background: transparent;
+  border: 1px solid var(--rec-on);
+  color: var(--rec-on);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  letter-spacing: 0.4px;
+}
+
+.supporter-kick:hover { background: var(--rec-on); color: white; }
+
+.supporters-empty {
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
 .end-btn {
   width: auto;
   height: 20px;
@@ -812,11 +952,10 @@ body.in-interview .end-btn.live::before {
 
 body.in-interview .tab-btn[data-tab="general"],
 body.in-interview .tab-btn[data-tab="voice"],
-body.in-interview .tab-btn[data-tab="network"],
 body.in-interview .settings-tab[data-tab="general"],
 body.in-interview .settings-tab[data-tab="voice"],
-body.in-interview .settings-tab[data-tab="network"],
-body.in-interview .caption-options-block {
+body.in-interview .caption-options-block,
+body.in-interview .setup-only {
   display: none !important;
 }
 

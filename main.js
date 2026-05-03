@@ -7,8 +7,12 @@ const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
+let autoUpdater = null;
+try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
 
 const STATE_FILE = path.join(app.getPath('userData'), 'state.json');
+const LOG_FILE = path.join(app.getPath('userData'), 'activity.log');
+const LOG_MAX_LINES_RETURNED = 500;
 const CAPTURE_EXE = path.join(
   app.isPackaged ? process.resourcesPath : __dirname,
   'caption2text',
@@ -237,6 +241,7 @@ function createWindow() {
     alwaysOnTop: true,
     resizable: true,
     show: false,
+    icon: path.join(__dirname, 'build', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -680,6 +685,13 @@ let wsReconnectTimer = null;
 let nextConnId = 1;
 const supporterConns = new Map();
 
+function supporterListSnapshot() {
+  return Array.from(supporterConns.entries()).map(([id, entry]) => ({
+    id,
+    ip: (entry && entry.ip) || null,
+  }));
+}
+
 function broadcastNetworkStatus() {
   if (!win) return;
   const status = {
@@ -687,7 +699,7 @@ function broadcastNetworkStatus() {
     address: state.network.address,
     bound: !!wsServer,
     connected: wsClient ? wsClient.readyState === WebSocket.OPEN : false,
-    supporters: Array.from(supporterConns.keys()),
+    supporters: supporterListSnapshot(),
     maxSupporters: state.network.maxSupporters,
   };
   win.webContents.send('network-status', status);
@@ -700,8 +712,8 @@ function parseAddress(addr) {
 }
 
 function stopSignalingServer() {
-  for (const ws of supporterConns.values()) {
-    try { ws.close(); } catch {}
+  for (const entry of supporterConns.values()) {
+    try { entry.ws.close(); } catch {}
   }
   supporterConns.clear();
   if (wsServer) {
@@ -726,7 +738,7 @@ function startSignalingServer() {
     broadcastNetworkStatus();
     return;
   }
-  wsServer.on('connection', (ws) => {
+  wsServer.on('connection', (ws, req) => {
     if (supporterConns.size >= (state.network.maxSupporters || 1)) {
       try {
         ws.send(JSON.stringify({ type: 'reject', reason: 'capacity' }));
@@ -734,10 +746,13 @@ function startSignalingServer() {
       } catch {}
       return;
     }
+    let ip = (req && req.socket && req.socket.remoteAddress) || '';
+    if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+    if (ip === '::1') ip = '127.0.0.1';
     const id = String(nextConnId++);
-    supporterConns.set(id, ws);
+    supporterConns.set(id, { ws, ip });
     try { ws.send(JSON.stringify({ type: 'hello', id })); } catch {}
-    if (win) win.webContents.send('signaling-in', { connId: id, type: 'opened' });
+    if (win) win.webContents.send('signaling-in', { connId: id, type: 'opened', ip });
     broadcastNetworkStatus();
     ws.on('message', (data) => {
       let msg;
@@ -808,11 +823,11 @@ function connectSignalingClient() {
 function sendSignaling(msg) {
   if (state.network.role === 'speaker') {
     const id = msg.connId;
-    const ws = id ? supporterConns.get(id) : null;
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    const entry = id ? supporterConns.get(id) : null;
+    if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
       const out = { ...msg };
       delete out.connId;
-      try { ws.send(JSON.stringify(out)); } catch {}
+      try { entry.ws.send(JSON.stringify(out)); } catch {}
     }
   } else if (state.network.role === 'supporter') {
     if (wsClient && wsClient.readyState === WebSocket.OPEN) {
@@ -853,9 +868,54 @@ function registerHotkeys() {
   if (win) win.webContents.send('hotkeys-changed', { current: { ...state.hotkeys }, failures: { ...hotkeyFailures } });
 }
 
+function setupAutoUpdater() {
+  if (!autoUpdater) return;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('checking-for-update', () => {
+    if (win) win.webContents.send('updater-status', { state: 'checking' });
+  });
+  autoUpdater.on('update-available', (info) => {
+    if (win) win.webContents.send('updater-status', { state: 'available', version: info?.version });
+  });
+  autoUpdater.on('update-not-available', () => {
+    if (win) win.webContents.send('updater-status', { state: 'up-to-date' });
+  });
+  autoUpdater.on('download-progress', (p) => {
+    if (win) win.webContents.send('updater-status', { state: 'downloading', percent: Math.round(p.percent || 0) });
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    if (win) win.webContents.send('updater-status', { state: 'downloaded', version: info?.version });
+  });
+  autoUpdater.on('error', (err) => {
+    if (win) win.webContents.send('updater-status', { state: 'error', message: err?.message || String(err) });
+  });
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+  }
+}
+
+ipcMain.handle('check-for-updates', async () => {
+  if (!autoUpdater) return { ok: false, message: 'electron-updater not installed' };
+  try {
+    const r = await autoUpdater.checkForUpdates();
+    return { ok: true, version: r?.updateInfo?.version };
+  } catch (e) {
+    return { ok: false, message: e.message };
+  }
+});
+
+ipcMain.handle('install-update-now', () => {
+  if (!autoUpdater) return false;
+  try { autoUpdater.quitAndInstall(); return true; } catch { return false; }
+});
+
+ipcMain.handle('get-app-version', () => app.getVersion());
+
 app.whenReady().then(() => {
   createWindow();
   registerHotkeys();
+  setupAutoUpdater();
 });
 
 ipcMain.handle('set-opacity', (_e, value) => setOpacity(value));
@@ -950,13 +1010,52 @@ ipcMain.handle('set-network-config', (_e, cfg) => {
 });
 ipcMain.handle('start-network', () => { startNetwork(); });
 ipcMain.handle('stop-network', () => { stopNetwork(); });
+ipcMain.handle('kick-supporter', (_e, id) => {
+  const entry = supporterConns.get(String(id));
+  if (entry) {
+    try { entry.ws.close(); } catch {}
+    supporterConns.delete(String(id));
+    broadcastNetworkStatus();
+    return true;
+  }
+  return false;
+});
+
+let logWriteQueue = Promise.resolve();
+function appendLogLine(line) {
+  const ts = new Date().toISOString();
+  const out = `[${ts}] ${line}\n`;
+  logWriteQueue = logWriteQueue.then(() => fs.promises.appendFile(LOG_FILE, out, 'utf8').catch(() => {}));
+  return logWriteQueue;
+}
+
+ipcMain.handle('log-append', (_e, line) => appendLogLine(String(line || '')));
+ipcMain.handle('log-recent', async () => {
+  try {
+    const buf = await fs.promises.readFile(LOG_FILE, 'utf8');
+    const lines = buf.split(/\r?\n/).filter(Boolean);
+    return lines.slice(-LOG_MAX_LINES_RETURNED);
+  } catch { return []; }
+});
+ipcMain.handle('log-clear', async () => {
+  try { await fs.promises.writeFile(LOG_FILE, '', 'utf8'); } catch {}
+});
+ipcMain.handle('log-open', async () => {
+  try {
+    await fs.promises.access(LOG_FILE);
+  } catch {
+    try { await fs.promises.writeFile(LOG_FILE, '', 'utf8'); } catch {}
+  }
+  const { shell } = require('electron');
+  shell.openPath(LOG_FILE);
+});
 ipcMain.handle('get-network-status', () => {
   return {
     role: state.network.role,
     address: state.network.address,
     bound: !!wsServer,
     connected: wsClient ? wsClient.readyState === WebSocket.OPEN : false,
-    supporters: Array.from(supporterConns.keys()),
+    supporters: supporterListSnapshot(),
     maxSupporters: state.network.maxSupporters,
   };
 });

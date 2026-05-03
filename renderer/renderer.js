@@ -83,6 +83,8 @@ const netPortEl = document.getElementById('netPort');
 const netAddressField = document.getElementById('netAddressField');
 const netActionBtn = document.getElementById('netActionBtn');
 const netStopBtn = document.getElementById('netStopBtn');
+const supportersBlock = document.getElementById('supportersBlock');
+const supportersList = document.getElementById('supportersList');
 const netFlag = document.getElementById('netFlag');
 const netStatusEl = document.getElementById('netStatus');
 const incomingVolumeEl = document.getElementById('incomingVolume');
@@ -537,7 +539,54 @@ function activateTab(name) {
   tabPanels.forEach(p => { p.hidden = p.dataset.tab !== name; });
 }
 
-tabBtns.forEach(btn => btn.addEventListener('click', () => activateTab(btn.dataset.tab)));
+tabBtns.forEach(btn => btn.addEventListener('click', () => {
+  activateTab(btn.dataset.tab);
+  if (btn.dataset.tab === 'log') loadPersistedLog();
+}));
+
+const logOpenBtn = document.getElementById('logOpenBtn');
+const logClearBtn = document.getElementById('logClearBtn');
+const updaterVersionEl = document.getElementById('updaterVersion');
+const updaterCheckBtn = document.getElementById('updaterCheckBtn');
+const updaterInstallBtn = document.getElementById('updaterInstallBtn');
+const updaterStatusEl = document.getElementById('updaterStatus');
+
+if (window.api && window.api.getAppVersion) {
+  window.api.getAppVersion().then((v) => {
+    if (updaterVersionEl) updaterVersionEl.textContent = `version ${v}`;
+  });
+}
+
+if (updaterCheckBtn) updaterCheckBtn.addEventListener('click', async () => {
+  if (!updaterStatusEl) return;
+  updaterStatusEl.textContent = 'Checking…';
+  const r = await window.api.checkForUpdates();
+  if (!r.ok) updaterStatusEl.textContent = 'Error: ' + (r.message || 'check failed');
+});
+
+if (updaterInstallBtn) updaterInstallBtn.addEventListener('click', () => window.api.installUpdateNow());
+
+if (window.api && window.api.onUpdaterStatus) {
+  window.api.onUpdaterStatus((s) => {
+    if (!updaterStatusEl) return;
+    if (s.state === 'checking') updaterStatusEl.textContent = 'Checking for updates…';
+    else if (s.state === 'available') updaterStatusEl.textContent = `Update available: v${s.version}. Downloading…`;
+    else if (s.state === 'up-to-date') updaterStatusEl.textContent = 'Up to date.';
+    else if (s.state === 'downloading') updaterStatusEl.textContent = `Downloading update… ${s.percent}%`;
+    else if (s.state === 'downloaded') {
+      updaterStatusEl.textContent = `Update v${s.version} ready. Restart to install.`;
+      if (updaterInstallBtn) updaterInstallBtn.hidden = false;
+    } else if (s.state === 'error') updaterStatusEl.textContent = 'Updater error: ' + s.message;
+  });
+}
+
+if (logOpenBtn) logOpenBtn.addEventListener('click', () => window.api.logOpen());
+if (logClearBtn) logClearBtn.addEventListener('click', async () => {
+  if (!window.confirm('Clear the activity log file?')) return;
+  await window.api.logClear();
+  logBody.innerHTML = '';
+  log('Log cleared', 'info');
+});
 
 function openSettings() {
   settingsOverlay.hidden = false;
@@ -567,8 +616,27 @@ function log(msg, kind = '') {
   const ts = new Date().toLocaleTimeString();
   line.textContent = `[${ts}] ${msg}`;
   logBody.appendChild(line);
-  while (logBody.childElementCount > 200) logBody.removeChild(logBody.firstChild);
+  while (logBody.childElementCount > 500) logBody.removeChild(logBody.firstChild);
   logBody.scrollTop = logBody.scrollHeight;
+  if (window.api && window.api.logAppend) {
+    window.api.logAppend(`${kind ? '[' + kind + '] ' : ''}${msg}`).catch(() => {});
+  }
+}
+
+async function loadPersistedLog() {
+  if (!window.api || !window.api.logRecent) return;
+  try {
+    const lines = await window.api.logRecent();
+    if (!lines || lines.length === 0) return;
+    if (logBody.childElementCount > 0) return;
+    for (const raw of lines) {
+      const div = document.createElement('div');
+      div.className = 'log-line log-info';
+      div.textContent = raw;
+      logBody.appendChild(div);
+    }
+    logBody.scrollTop = logBody.scrollHeight;
+  } catch {}
 }
 
 async function refreshModeUI() {
@@ -1074,6 +1142,56 @@ function updateRoleVisibility() {
   }
 }
 
+function renderSupportersList(status) {
+  if (!supportersBlock || !supportersList) return;
+  const role = (netCfg && netCfg.role) || status.role;
+  const isSpeaker = role === 'speaker' && status.bound;
+  if (!isSpeaker) {
+    supportersBlock.hidden = true;
+    return;
+  }
+  supportersBlock.hidden = false;
+  supportersList.innerHTML = '';
+  const ids = status.supporters || [];
+  if (ids.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'supporters-empty';
+    empty.textContent = 'Waiting for supporters…';
+    supportersList.appendChild(empty);
+    return;
+  }
+  ids.forEach((entry) => {
+    const id = typeof entry === 'object' ? entry.id : entry;
+    const ip = (typeof entry === 'object' && entry.ip) ? entry.ip : null;
+    const row = document.createElement('div');
+    row.className = 'supporter-row';
+    const dot = document.createElement('span');
+    dot.className = 'supporter-dot';
+    const label = document.createElement('span');
+    label.className = 'supporter-label';
+    label.textContent = `#${id}`;
+    const ipEl = document.createElement('span');
+    ipEl.className = 'supporter-ip';
+    ipEl.textContent = ip || 'unknown IP';
+    if (!ip) ipEl.classList.add('unknown');
+    const kick = document.createElement('button');
+    kick.className = 'supporter-kick';
+    kick.textContent = 'Kick';
+    kick.title = ip ? `Disconnect ${ip}` : 'Disconnect this supporter';
+    kick.addEventListener('click', async () => {
+      const who = ip ? `Supporter #${id} (${ip})` : `Supporter #${id}`;
+      if (!window.confirm(`Disconnect ${who}?`)) return;
+      await window.api.kickSupporter(id);
+      log(`Kicked ${who}`, 'info');
+    });
+    row.appendChild(dot);
+    row.appendChild(label);
+    row.appendChild(ipEl);
+    row.appendChild(kick);
+    supportersList.appendChild(row);
+  });
+}
+
 function renderNetStatus(status) {
   if (!netStatusEl || !netFlag) return;
   let flagText = 'IDLE';
@@ -1112,6 +1230,7 @@ function renderNetStatus(status) {
   netFlag.textContent = flagText;
   netFlag.className = 'status-flag' + (flagCls ? ' ' + flagCls : '');
   netStatusEl.textContent = txt;
+  renderSupportersList(status);
 }
 
 async function persistNet(patch) {
