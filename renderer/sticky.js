@@ -61,7 +61,9 @@ window.sticky.onMessage((msg) => renderMessage(msg));
 
 stickyClose.addEventListener('click', () => window.sticky.close());
 stickyClear.addEventListener('click', () => {
-  if (window.confirm('Clear all messages?')) window.sticky.clear();
+  renderHistory([]);
+  window.__stickyHistory = [];
+  try { window.sticky.clear(); } catch {}
 });
 
 if (window.__stickyHistory && Array.isArray(window.__stickyHistory)) {

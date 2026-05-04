@@ -59,17 +59,19 @@ const DEFAULT_STATE = {
     rect: null,
     language: 'English',
     pollMs: 700,
+    showOverlay: false,
   },
   network: {
     role: '',
     address: '172.16.98.11:2000',
     speakerPort: 2000,
     supporterAddress: '172.16.98.11:2000',
-    twoWay: true,
-    maxSupporters: 1,
     incomingVolume: 1.0,
     outgoingVolume: 1.0,
+    virtualCableId: '',
   },
+  welcomeSeen: false,
+  stickyPos: null,
   hotkeys: { ...HOTKEY_DEFAULTS },
 };
 
@@ -88,6 +90,7 @@ let stickyWantOpen = false;
 let stickyReady = false;
 let chatHistory = [];
 const CHAT_HISTORY_MAX = 200;
+let captureOverlayWin = null;
 let captureLoop = null;
 let pastedHistory = [];
 let pendingRestart = false;
@@ -309,12 +312,16 @@ function setStealth(value) {
   win.webContents.send('stealth-changed', state.stealth);
 }
 
-function syncStickyPosition() {
+function syncStickyPosition(force) {
   if (!stickyWin || stickyWin.isDestroyed() || !win) return;
-  const [mx, my] = win.getPosition();
   const [mainW, mainH] = win.getSize();
   const stickyW = mainW;
   const stickyH = Math.max(160, Math.floor(mainH / 2));
+  if (state.stickyPos && !force) {
+    try { stickyWin.setBounds({ x: state.stickyPos.x, y: state.stickyPos.y, width: stickyW, height: stickyH }); } catch {}
+    return;
+  }
+  const [mx, my] = win.getPosition();
   const display = screen.getDisplayMatching(win.getBounds());
   const work = display.workArea;
   const gap = 6;
@@ -373,6 +380,12 @@ function createStickyWindow() {
   stickyReady = false;
   stickyWin.loadFile(path.join(__dirname, 'renderer', 'sticky.html'));
   stickyWin.on('closed', () => { stickyWin = null; stickyReady = false; });
+  stickyWin.on('move', () => {
+    if (!stickyWin || stickyWin.isDestroyed()) return;
+    const [x, y] = stickyWin.getPosition();
+    state.stickyPos = { x, y };
+    saveState();
+  });
   stickyWin.webContents.once('did-finish-load', () => {
     if (!stickyWin || stickyWin.isDestroyed()) return;
     stickyReady = true;
@@ -691,6 +704,7 @@ function startCaptureLoop() {
   captureLoop = setInterval(captureTick, period);
   captureTick();
   if (win) win.webContents.send('capture-state', true);
+  if (state.capture.showOverlay) showCaptureOverlay();
 }
 
 function triggerResetCaptureArea() {
@@ -706,6 +720,47 @@ function stopCaptureLoop() {
   if (captureLoop) clearInterval(captureLoop);
   captureLoop = null;
   if (win) win.webContents.send('capture-state', false);
+  hideCaptureOverlay();
+}
+
+function showCaptureOverlay() {
+  const r = state.capture.rect;
+  if (!r) return;
+  const sf = r.scaleFactor || 1;
+  const x = Math.round(r.x1);
+  const y = Math.round(r.y1);
+  const w = Math.max(20, Math.round(r.x2 - r.x1));
+  const h = Math.max(20, Math.round(r.y2 - r.y1));
+  if (captureOverlayWin && !captureOverlayWin.isDestroyed()) {
+    try { captureOverlayWin.setBounds({ x, y, width: w, height: h }); captureOverlayWin.showInactive(); } catch {}
+    return;
+  }
+  captureOverlayWin = new BrowserWindow({
+    x, y, width: w, height: h,
+    frame: false,
+    transparent: true,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    resizable: false,
+    movable: false,
+    focusable: false,
+    hasShadow: false,
+    show: false,
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  captureOverlayWin.setIgnoreMouseEvents(true);
+  captureOverlayWin.setAlwaysOnTop(true, 'screen-saver');
+  captureOverlayWin.setContentProtection(true);
+  captureOverlayWin.loadFile(path.join(__dirname, 'renderer', 'capture-overlay.html'));
+  captureOverlayWin.once('ready-to-show', () => captureOverlayWin.showInactive());
+  captureOverlayWin.on('closed', () => { captureOverlayWin = null; });
+}
+
+function hideCaptureOverlay() {
+  if (captureOverlayWin && !captureOverlayWin.isDestroyed()) {
+    try { captureOverlayWin.close(); } catch {}
+  }
+  captureOverlayWin = null;
 }
 
 function openAreaSelector() {
@@ -794,7 +849,7 @@ const HOTKEY_HANDLERS = {
   reloadSite: () => reloadWebView(),
   toggleStealth: () => setStealth(!state.stealth),
   toggleRecording: () => { if (win) win.webContents.send('toggle-recording'); },
-  pushToTalk: () => { if (win) win.webContents.send('toggle-ptt'); },
+  pushToTalk: () => cycleMicModeFromHotkey(),
   closeSticky: () => closeStickyWindow(),
   openSticky: () => openStickyWindow(),
   helpRequest: () => sendHelpRequest(),
@@ -824,11 +879,16 @@ let wsClient = null;
 let wsReconnectTimer = null;
 let nextConnId = 1;
 const supporterConns = new Map();
+let supporterOwnMicMode = 'aOnly';
+const MIC_MODES = ['mute', 'aOnly', 'aAndC'];
+function nextMicMode(m) { const i = MIC_MODES.indexOf(m); return MIC_MODES[(i + 1) % MIC_MODES.length] || 'aOnly'; }
 
 function supporterListSnapshot() {
   return Array.from(supporterConns.entries()).map(([id, entry]) => ({
     id,
     ip: (entry && entry.ip) || null,
+    port: (entry && entry.port) || null,
+    micMode: (entry && entry.micMode) || 'aOnly',
   }));
 }
 
@@ -840,9 +900,23 @@ function broadcastNetworkStatus() {
     bound: !!wsServer,
     connected: wsClient ? wsClient.readyState === WebSocket.OPEN : false,
     supporters: supporterListSnapshot(),
-    maxSupporters: state.network.maxSupporters,
+    maxSupporters: 1,
   };
   win.webContents.send('network-status', status);
+}
+
+function setSupporterMicMode(id, mode) {
+  if (!MIC_MODES.includes(mode)) return false;
+  const entry = supporterConns.get(id);
+  if (!entry) return false;
+  if (entry.micMode === mode) return true;
+  entry.micMode = mode;
+  if (entry.ws && entry.ws.readyState === WebSocket.OPEN) {
+    try { entry.ws.send(JSON.stringify({ type: 'mic-mode', mode })); } catch {}
+  }
+  if (win) win.webContents.send('mic-mode-changed', { id, mode, source: 'self' });
+  broadcastNetworkStatus();
+  return true;
 }
 
 function parseAddress(addr) {
@@ -879,24 +953,39 @@ function startSignalingServer() {
     return;
   }
   wsServer.on('connection', (ws, req) => {
-    if (supporterConns.size >= (state.network.maxSupporters || 1)) {
-      try {
-        ws.send(JSON.stringify({ type: 'reject', reason: 'capacity' }));
-        ws.close();
-      } catch {}
-      return;
-    }
     let ip = (req && req.socket && req.socket.remoteAddress) || '';
     if (ip.startsWith('::ffff:')) ip = ip.slice(7);
     if (ip === '::1') ip = '127.0.0.1';
+    const port = (req && req.socket && req.socket.remotePort) || 0;
+    if (supporterConns.size >= 1) {
+      try {
+        ws.send(JSON.stringify({ type: 'reject', reason: 'capacity' }));
+        ws.close(4002, 'capacity');
+      } catch {}
+      return;
+    }
+    for (const e of supporterConns.values()) {
+      if (e && e.ip === ip && e.port === port) {
+        try {
+          ws.send(JSON.stringify({ type: 'reject', reason: 'duplicate' }));
+          ws.close(4003, 'duplicate');
+        } catch {}
+        return;
+      }
+    }
     const id = String(nextConnId++);
-    supporterConns.set(id, { ws, ip });
-    try { ws.send(JSON.stringify({ type: 'hello', id })); } catch {}
+    const initialMicMode = 'aOnly';
+    supporterConns.set(id, { ws, ip, port, micMode: initialMicMode });
+    try { ws.send(JSON.stringify({ type: 'hello', id, micMode: initialMicMode })); } catch {}
     if (win) win.webContents.send('signaling-in', { connId: id, type: 'opened', ip });
     broadcastNetworkStatus();
     ws.on('message', (data) => {
       let msg;
       try { msg = JSON.parse(data.toString()); } catch { return; }
+      if (msg && msg.type === 'request-mic-mode') {
+        setSupporterMicMode(id, msg.mode);
+        return;
+      }
       if (msg && (msg.type === 'chat-text' || msg.type === 'chat-image')) {
         if (win) win.webContents.send('capture-text', `[chat received from #${id}: ${msg.type}${msg.text ? ' "' + msg.text.slice(0,40) + '"' : ''}]`);
         pushChatToSticky({ ...msg, fromId: id, ts: msg.ts || Date.now() });
@@ -952,6 +1041,13 @@ function connectSignalingClient() {
     if (msg && msg.type === 'help-request') {
       if (win) win.webContents.send('help-request-received', msg);
       return;
+    }
+    if (msg && (msg.type === 'mic-mode' || (msg.type === 'hello' && msg.micMode))) {
+      const mode = MIC_MODES.includes(msg.micMode || msg.mode) ? (msg.micMode || msg.mode) : 'aOnly';
+      if (mode !== supporterOwnMicMode) {
+        supporterOwnMicMode = mode;
+        if (win) win.webContents.send('mic-mode-changed', { mode, source: 'speaker' });
+      }
     }
     if (win) win.webContents.send('signaling-in', msg);
   });
@@ -1221,6 +1317,58 @@ ipcMain.handle('set-network-config', (_e, cfg) => {
 });
 ipcMain.handle('start-network', () => { startNetwork(); });
 ipcMain.handle('stop-network', () => { stopNetwork(); });
+function cycleMicModeFromHotkey() {
+  if (state.network.role === 'speaker') {
+    const first = supporterConns.values().next().value;
+    const cur = first ? first.micMode : 'aOnly';
+    const next = nextMicMode(cur);
+    for (const id of supporterConns.keys()) setSupporterMicMode(id, next);
+  } else if (state.network.role === 'supporter') {
+    const next = nextMicMode(supporterOwnMicMode);
+    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+      try { wsClient.send(JSON.stringify({ type: 'request-mic-mode', mode: next })); } catch {}
+    }
+  }
+}
+
+ipcMain.handle('get-mic-mode', () => {
+  if (state.network.role === 'supporter') return supporterOwnMicMode;
+  if (state.network.role === 'speaker') {
+    const first = supporterConns.values().next().value;
+    return first ? first.micMode : 'aOnly';
+  }
+  return 'aOnly';
+});
+
+ipcMain.handle('set-mic-mode', (_e, mode) => {
+  if (!MIC_MODES.includes(mode)) return false;
+  if (state.network.role === 'speaker') {
+    let any = false;
+    for (const id of supporterConns.keys()) {
+      if (setSupporterMicMode(id, mode)) any = true;
+    }
+    return any;
+  }
+  if (state.network.role === 'supporter') {
+    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+      try { wsClient.send(JSON.stringify({ type: 'request-mic-mode', mode })); return true; } catch {}
+    }
+    return false;
+  }
+  return false;
+});
+
+ipcMain.handle('cycle-mic-mode', () => { cycleMicModeFromHotkey(); });
+
+ipcMain.handle('open-external', (_e, url) => {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return;
+  const { shell } = require('electron');
+  shell.openExternal(url).catch(() => {});
+});
+
+ipcMain.handle('get-welcome-seen', () => !!state.welcomeSeen);
+ipcMain.handle('set-welcome-seen', (_e, v) => { state.welcomeSeen = !!v; saveState(); });
+
 ipcMain.handle('kick-supporter', (_e, id) => {
   const entry = supporterConns.get(String(id));
   if (entry) {

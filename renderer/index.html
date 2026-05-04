@@ -6,8 +6,15 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <div class="cable-nudge iv-btn" id="cableNudge" hidden>
+    <span class="cable-nudge-text">&#128161; Install VB-Cable so the meeting can hear you</span>
+    <button class="cable-nudge-action" id="cableNudgeGet">Get VB-Cable</button>
+    <button class="cable-nudge-dismiss" id="cableNudgeDismiss" title="Dismiss">&times;</button>
+  </div>
+
   <header class="titlebar">
     <div class="drag"></div>
+    <span class="net-status-pill iv-btn" id="netStatusPill" title="Network connection state">--</span>
     <div class="slider" id="slider" title="Click and drag horizontally to change opacity">
       <div class="slider-fill" id="sliderFill"></div>
     </div>
@@ -25,6 +32,9 @@
         <path class="shield-check" d="M8.5 12.5 l2.5 2.5 l4.5 -5.5" />
         <path class="shield-slash" d="M7 7 l10 10" />
       </svg>
+    </button>
+    <button class="btn mic-pill iv-btn" id="micPill" title="Cycle B's mic mode: mute → A only → A+C">
+      <span class="mic-pill-icon" id="micPillIcon">🔒</span><span class="mic-pill-label" id="micPillLabel">TO A</span>
     </button>
     <button class="btn end-btn iv-btn" id="endBtn" title="End session — return to setup">End</button>
     <button class="btn" id="hideBtn" title="Hide (Ctrl+Alt+H)">&minus;</button>
@@ -174,6 +184,9 @@
               <input type="number" id="capturePollMs" min="200" max="5000" step="100" />
             </div>
           </div>
+          <div class="field-row" style="margin-top:6px">
+            <label class="checkbox"><input type="checkbox" id="captureShowOverlay" /> Show red border around the OCR area while capturing</label>
+          </div>
           <p class="hint">Before starting: pick the site in the rail dropdown, focus the chat input, then press the rail dot.</p>
         </section>
       </div>
@@ -228,13 +241,20 @@
             <div class="level-meter"><div class="level-fill" id="incomingLevelFill"></div></div>
             <div class="hint" style="margin:4px 0 0">Bar moves when audio is actually flowing from the peer.</div>
           </div>
-          <div class="field-row">
-            <label class="checkbox"><input type="checkbox" id="twoWay" /> Enable two-way mic (Supporter &rarr; Speaker)</label>
+          <p class="hint">Two-way audio is always on. The mic-mode pill in the header cycles B's mic between <b>🔇 Mute</b>, <b>🔒 Speaks to A only</b>, and <b>📢 Speaks to A + C (live)</b>. Either A or B can change it.</p>
+        </section>
+
+        <section class="settings-section">
+          <h3>Virtual mic output (relay to meeting app)</h3>
+          <p class="hint">For meeting apps like Zoom / Meet / Teams to hear A (or B in 📢 mode), install a virtual audio cable, pick "CABLE Input" here, and set the meeting's mic to "CABLE Output".</p>
+          <div class="field">
+            <label for="netVirtualCable">Output device</label>
+            <select id="netVirtualCable"></select>
           </div>
-          <p class="hint">When enabled, the supporter's mic is captured and sent to the speaker. Mic starts <b>active</b>. Click Mute to toggle, or bind <b>Push-to-talk</b> in Hotkeys for a hotkey toggle.</p>
-          <div class="ptt-row">
-            <div class="ptt-status" id="pttStatus">Mic: not active</div>
-            <button class="action-btn-secondary" id="muteToggleBtn">Mute</button>
+          <div class="net-cable-status" id="netCableStatus">Pick an output device above.</div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button class="action-btn-secondary" id="getVbCableBtn">Get VB-Cable</button>
+            <button class="action-btn-secondary" id="testCableBtn">Test cable (1s tone)</button>
           </div>
         </section>
       </div>
@@ -268,138 +288,203 @@
       <div class="settings-tab help-tab" data-tab="help" hidden>
 
         <section class="settings-section help-section">
-          <h3>Quick start</h3>
+          <h3>What this app does</h3>
+          <p>An always-on-top, screen-capture-invisible assistant window for live interviews / meetings. Two main use cases:</p>
+          <ul>
+            <li><b>Solo</b>: load ChatGPT/Claude in the window, transcribe what's being said into the chat input via Voice or Caption mode.</li>
+            <li><b>Speaker + Supporter</b>: two computers connected over LAN. Speaker (A) is in the meeting; Supporter (B) listens in and helps via voice + chat. Optional VB-Cable relay so the meeting peer (C) hears B speaking through A's mic.</li>
+          </ul>
+          <p class="hint">Glossary used below: <b>A</b> = speaker (you, in the meeting). <b>B</b> = supporter (helper on another machine). <b>C</b> = the remote person on Zoom/Meet/Teams/etc.</p>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>Quick start (solo)</h3>
           <ol class="help-steps">
-            <li>Open <b>General</b> tab &rarr; add a URL like <code>https://chatgpt.com</code> or <code>https://claude.ai</code>.</li>
-            <li>Click the <span class="kbd">&#9662;</span> on the left rail and pick the site.</li>
-            <li>Pick a mode (<b>Voice</b> or <b>Caption</b>) under <b>General &rarr; Active mode</b>.</li>
-            <li>Configure that mode's tab (engine + key for Voice; pick area for Caption).</li>
-            <li>Click the <b>&#9679;</b> dot on the rail to start. Click again to stop.</li>
+            <li>Setup &rarr; pick <b>Caption</b> or <b>Voice</b> mode.</li>
+            <li>If using Voice: <b>Voice</b> tab &rarr; choose engine (OpenAI Whisper API or local whisper.cpp) and provide key/paths.</li>
+            <li><b>Sites</b> tab &rarr; add <code>https://chatgpt.com</code> or <code>https://claude.ai</code>.</li>
+            <li>Click <b>Start</b>.</li>
+            <li>For Caption mode: a screen-area selector appears &mdash; drag a rectangle around the live caption strip you want to OCR.</li>
+            <li>Click the <b>&#9679;</b> rec dot in the header to begin / stop.</li>
           </ol>
         </section>
 
         <section class="settings-section help-section">
-          <h3>The window</h3>
-          <div class="help-figure">
-            <svg width="280" height="36" viewBox="0 0 280 36" xmlns="http://www.w3.org/2000/svg" aria-label="Header bar diagram">
-              <rect x="0" y="2" width="280" height="28" fill="#f4f4f5" stroke="#e4e4e7"/>
-              <text x="60" y="20" font-size="9" fill="#71717a" font-family="sans-serif">drag to move</text>
-              <rect x="140" y="12" width="60" height="8" rx="4" fill="#d4d4d8"/>
-              <rect x="140" y="12" width="40" height="8" rx="4" fill="#2563eb"/>
-              <text x="170" y="32" font-size="8" fill="#71717a" text-anchor="middle" font-family="sans-serif">opacity</text>
-              <circle cx="218" cy="16" r="5" fill="#16a34a" stroke="#15803d"/>
-              <text x="218" y="32" font-size="8" fill="#71717a" text-anchor="middle" font-family="sans-serif">stealth</text>
-              <text x="244" y="20" font-size="14" text-anchor="middle" font-family="sans-serif">&minus;</text>
-              <text x="244" y="32" font-size="8" fill="#71717a" text-anchor="middle" font-family="sans-serif">hide</text>
-              <text x="266" y="20" font-size="14" text-anchor="middle" font-family="sans-serif">&times;</text>
-              <text x="266" y="32" font-size="8" fill="#71717a" text-anchor="middle" font-family="sans-serif">quit</text>
-            </svg>
-          </div>
-          <ul>
-            <li><b>Drag</b> anywhere on the empty header to move the window.</li>
-            <li><b>Opacity slider</b>: hover and slide your cursor across it &mdash; <i>no clicking needed</i>. Cursor X position = opacity 0&ndash;100&#37;.</li>
-            <li><b>Stealth dot</b>: <span style="color:#16a34a">green</span> = invisible to screen capture / recorders / meeting share-screen. <span style="color:#dc2626">red</span> = visible. Click to toggle.</li>
-            <li><b>&minus;</b> hides the window (use the toggle hotkey to bring it back, default <span class="kbd">Ctrl+Alt+H</span>).</li>
-            <li><b>&times;</b> quits the app.</li>
-          </ul>
+          <h3>Quick start (speaker + supporter)</h3>
+          <p><b>On A's machine (Speaker):</b></p>
+          <ol class="help-steps">
+            <li>Setup &rarr; <b>Speaker (host)</b>, port <code>2000</code>, click <b>Start</b>.</li>
+            <li>For meeting relay: install <b>VB-Cable</b> (free, click <b>Get VB-Cable</b> in the Network tab), reboot, then pick <b>CABLE Input</b> in Network &rarr; Virtual mic output.</li>
+            <li>In your meeting app (Zoom/Meet/etc.) set the microphone to <b>CABLE Output</b>.</li>
+          </ol>
+          <p><b>On B's machine (Supporter):</b></p>
+          <ol class="help-steps">
+            <li>Setup &rarr; <b>Supporter (client)</b>, address <code>A's-IP:2000</code>, click <b>Start</b>.</li>
+            <li>The chat panel becomes the main view. Speak, type messages, drop images.</li>
+          </ol>
         </section>
 
         <section class="settings-section help-section">
-          <h3>The rail (left side)</h3>
-          <div class="help-figure">
-            <svg width="32" height="140" viewBox="0 0 32 140" xmlns="http://www.w3.org/2000/svg" aria-label="Rail buttons diagram">
-              <rect width="32" height="140" fill="#f4f4f5" stroke="#e4e4e7"/>
-              <text x="16" y="22" text-anchor="middle" font-size="14" font-family="sans-serif">&#9662;</text>
-              <text x="16" y="50" text-anchor="middle" font-size="14" font-family="sans-serif">&#8635;</text>
-              <text x="16" y="78" text-anchor="middle" font-size="14" font-family="sans-serif">&#9881;</text>
-              <circle cx="16" cy="106" r="6" fill="#dc2626" stroke="#b91c1c"/>
-            </svg>
-            <div class="help-figure-caption">
-              <div><span class="kbd">&#9662;</span> &mdash; switch site (preset URL dropdown)</div>
-              <div><span class="kbd">&#8635;</span> &mdash; reload the loaded site (also force-shows the webview if it ever gets stuck hidden)</div>
-              <div><span class="kbd">&#9881;</span> &mdash; settings (this dialog)</div>
-              <div><span class="kbd">&#9679;</span> &mdash; start/stop the active mode (gray = idle, pulsing red = running)</div>
-            </div>
-          </div>
+          <h3>The header bar</h3>
+          <p>Everything you need during a session lives in the thin header. Reading left to right:</p>
+          <ul>
+            <li><b>Network pill</b> (e.g. <span class="kbd">LIVE</span>, <span class="kbd">CONNECTING</span>, <span class="kbd">--</span>): current connection state. Green = connected; amber = trying; gray = idle.</li>
+            <li><b>Opacity slider</b>: hover and drag horizontally to fade the window 0&ndash;100&#37;. Useful for one-handed peeking. Hotkeys <span class="kbd">Ctrl+Alt+]</span> / <span class="kbd">Ctrl+Alt+[</span> also work.</li>
+            <li><b>&#9662;</b> &mdash; switch site (preset URL dropdown).</li>
+            <li><b>&#8635;</b> &mdash; reload the loaded site. Also force-shows the webview if it ever gets stuck hidden.</li>
+            <li><b>&#9881;</b> &mdash; open Settings.</li>
+            <li><b>&#9679;</b> rec dot &mdash; start/stop the active mode (Voice or Caption). Pulsing red = running.</li>
+            <li><b>Stealth shield</b> &mdash; <span style="color:#16a34a">green check</span> = invisible to screen capture; <span style="color:#dc2626">red slash</span> = visible. Click to toggle.</li>
+            <li><b>Mic pill</b> (Supporter only) &mdash; cycles B's mic between <b>&#128263; MUTE</b>, <b>&#128274; TO A</b>, <b>&#128226; TO A+C</b>. See "Mic modes" below.</li>
+            <li><b>End</b> &mdash; stops the session and returns to Setup. Confirms first.</li>
+            <li><b>&minus;</b> hides the window (bring it back with <span class="kbd">Ctrl+Alt+H</span>).</li>
+            <li><b>&times;</b> quits the app entirely.</li>
+          </ul>
+          <p class="hint">Drag the empty area between header items to move the window. Header items have <code>-webkit-app-region: no-drag</code> so they stay clickable.</p>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>Setup screen</h3>
+          <p>Before each session, the Setup overlay walks through the five tabs:</p>
+          <ul>
+            <li><b>Essentials</b> &mdash; pick active mode (Caption / Voice) and network role (Speaker / Supporter). Speaker shows the port; Supporter shows the address. Use <b>Save default</b> to remember the value across launches.</li>
+            <li><b>Sites</b> &mdash; URLs that appear in the rail dropdown during the session. Add ChatGPT, Claude, etc.</li>
+            <li><b>Caption</b> &mdash; OCR language and poll interval. The capture area itself is picked after Start.</li>
+            <li><b>Voice</b> &mdash; transcription engine + mic + system audio sources.</li>
+            <li><b>Network</b> &mdash; max supporters cap (Speaker only).</li>
+          </ul>
+          <p>Click <b>Start</b> to enter the live session. Click <b>End</b> in the header to come back here.</p>
         </section>
 
         <section class="settings-section help-section">
           <h3>Voice mode</h3>
-          <p>Listens to your microphone and/or system audio, transcribes in ~5-second chunks, and pastes the text into <b>whichever app is foreground</b> via clipboard + Ctrl+V. Useful for relaying spoken meeting content into a chat editor in another app.</p>
-          <h4>Setup (Voice tab)</h4>
+          <p>Captures your mic and/or system audio, chunks it ~5 s at a time, transcribes via Whisper (cloud or local), and pastes the result into <b>whichever app is foreground</b> via clipboard + Ctrl+V. Use it for relaying spoken meeting content into a chat editor in another app.</p>
+          <h4>Setup</h4>
           <ol class="help-steps">
-            <li><b>Audio capture</b>: pick a microphone and choose which sources to capture (mic + system loopback by default).</li>
-            <li><b>Transcription engine</b>:
+            <li><b>Voice</b> tab &rarr; pick microphone, toggle "Capture mic" / "Capture system audio".</li>
+            <li>Pick engine:
               <ul>
-                <li><b>OpenAI Whisper API</b> &mdash; needs an API key. Easy, accurate, audio leaves your machine.</li>
-                <li><b>Local whisper.cpp</b> &mdash; needs <code>whisper-cli.exe</code> and a model file (<code>ggml-base.bin</code> etc). Fully offline. Slower without GPU.</li>
+                <li><b>OpenAI Whisper API</b> &mdash; paste API key. Easy, fast, audio leaves your machine.</li>
+                <li><b>Local whisper.cpp</b> &mdash; browse to <code>whisper-cli.exe</code> and a model (<code>ggml-base.bin</code> etc.). Fully offline; slower without GPU.</li>
               </ul>
             </li>
-            <li>Pick a language or leave on Auto-detect.</li>
+            <li>Pick language or leave on Auto-detect.</li>
           </ol>
           <h4>Use it</h4>
           <ol class="help-steps">
-            <li>Switch to <b>Voice</b> mode under General &rarr; Active mode.</li>
-            <li>Click into the target app's input box (Notepad, chat, editor &mdash; anything that accepts paste).</li>
-            <li>Click the <b>&#9679;</b> dot. After ~5&ndash;8 s, transcribed text appears in your target.</li>
+            <li>Click into the target app's input box first (chat, editor, anything that takes paste).</li>
+            <li>Press <span class="kbd">Alt+C</span> or click the <b>&#9679;</b> dot. After ~5&ndash;8 s the transcript appears in your target app.</li>
           </ol>
-          <p class="hint">&#9888; While running, do <b>not</b> click into this app or the paste will land here.</p>
+          <p class="hint">&#9888; While running, don't click into this app or the paste will land here. Stealth shield does not block the paste mechanism &mdash; the foreground window is whatever you click last.</p>
         </section>
 
         <section class="settings-section help-section">
-          <h3>Caption mode</h3>
-          <p>OCRs a screen rectangle (e.g. video captions in a browser), removes already-pasted text via word-level diffing, and inserts the new portion directly into the chat input of the loaded site (ChatGPT / Claude). No clipboard, no foreground stealing.</p>
-          <h4>Setup (Caption tab)</h4>
+          <h3>Caption mode (OCR)</h3>
+          <p>OCRs a screen rectangle (live video captions, embedded subtitles, anything text-shaped), word-diffs against what was already sent, and types the new portion directly into the chat input of the loaded AI site &mdash; no clipboard, no focus theft.</p>
+          <h4>Setup</h4>
           <ol class="help-steps">
-            <li>Click <b>Select</b> next to "Capture area".</li>
-            <li>The window hides &rarr; a transparent overlay covers your screen.</li>
-            <li>Drag a rectangle around the caption area.</li>
-            <li>Pick OCR language and poll interval (700&nbsp;ms is a good default).</li>
+            <li>Set Active mode to <b>Caption</b>.</li>
+            <li>Set OCR language and poll interval (700&nbsp;ms default is a good balance).</li>
+            <li>Optionally enable <b>Show red border around the OCR area while capturing</b> &mdash; a thin pulsing red frame appears over the captured rectangle. Off by default to stay subtle; the frame itself is screen-capture-invisible.</li>
+            <li>Click <b>Start</b>. The window hides briefly &mdash; drag a rectangle around the caption area you want to OCR.</li>
+            <li>Press <span class="kbd">Alt+C</span> or click the <b>&#9679;</b> dot to begin streaming.</li>
+            <li>Press <span class="kbd">Ctrl+Q</span> any time to re-pick the area without stopping the session.</li>
           </ol>
-          <div class="help-figure">
-            <svg width="280" height="120" viewBox="0 0 280 120" xmlns="http://www.w3.org/2000/svg" aria-label="Drag to select diagram">
-              <rect width="280" height="120" fill="#1a1a1a" opacity="0.85"/>
-              <rect x="60" y="70" width="160" height="32" fill="#000" opacity="0.5"/>
-              <text x="140" y="92" text-anchor="middle" font-size="11" fill="#fff" font-family="sans-serif">live captions go here</text>
-              <rect x="56" y="66" width="168" height="40" fill="rgba(37,99,235,0.18)" stroke="#2563eb" stroke-width="2" stroke-dasharray="4 2"/>
-              <text x="140" y="20" text-anchor="middle" font-size="10" fill="#fff" font-family="sans-serif">drag to draw the capture rectangle</text>
-            </svg>
-          </div>
-          <h4>Use it</h4>
+          <p class="hint">Smaller, tighter rectangles produce cleaner OCR. Avoid backgrounds with similar-color text. The diff includes a smart cleanup pass that strips repeated phrases and OCR artefacts like <code>&lt;Error&gt;</code>.</p>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>Speaker + Supporter mode</h3>
+          <p>Two computers connected over LAN. <b>A</b> (Speaker) is the one in the meeting. <b>B</b> (Supporter) listens in and helps. <b>C</b> is the remote person on the meeting platform.</p>
+          <h4>What's shared automatically</h4>
+          <ul>
+            <li><b>A's mic + system audio</b> &rarr; B (so B can hear what A and C are saying).</li>
+            <li><b>B's mic</b> &rarr; A (so A hears B's whispered guidance through their own headset).</li>
+            <li><b>Two-way audio is always on</b> &mdash; there's no toggle to disable it.</li>
+          </ul>
+          <h4>Chat panel (B's main view)</h4>
+          <p>When B connects, the AI website is hidden and the chat panel takes over. B can:</p>
+          <ul>
+            <li>Type messages and press Enter to send.</li>
+            <li>Drag-drop or paste images (auto-resized, &gt;5&nbsp;MB warns).</li>
+            <li>Click the &#128206; attach button to pick a file.</li>
+          </ul>
+          <p>Everything B sends shows up on A's <b>Sticky note</b> window.</p>
+          <h4>Sticky note (A's helper window)</h4>
+          <p>A small white window with a yellow header that floats next to the main window on A's machine. It receives every chat message from B (text and images), preserves history, and:</p>
+          <ul>
+            <li>Has the same stealth + opacity behavior as the main window.</li>
+            <li>Hide / show with <span class="kbd">Ctrl+Left</span> / <span class="kbd">Ctrl+Right</span>.</li>
+            <li>Position is remembered across launches.</li>
+            <li><b>CLEAR</b> button wipes the visible history (local + remote).</li>
+          </ul>
+          <h4>1:1 supporter limit</h4>
+          <p>Only one B can be connected at a time per Speaker. Additional connection attempts are rejected (close code 4002 = capacity, 4003 = duplicate IP). The Network tab shows the connected supporter and a <b>Kick</b> button (close code 4000 &mdash; kicked clients won't auto-reconnect).</p>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>Mic modes (B's microphone routing)</h3>
+          <p>The mic pill in B's header cycles through three states. The currently active state is also shown as a colored banner above the chat panel.</p>
+          <table class="help-table">
+            <thead><tr><th>Mode</th><th>A hears B?</th><th>C hears B?</th><th>When to use</th></tr></thead>
+            <tbody>
+              <tr><td><b>&#128263; MUTE</b></td><td>No</td><td>No</td><td>Coughing, side conversation, getting coffee.</td></tr>
+              <tr><td><b>&#128274; TO A</b></td><td>Yes (via headset)</td><td>No</td><td>Default. Whisper guidance to A. Safe.</td></tr>
+              <tr><td><b>&#128226; TO A+C</b></td><td>Yes</td><td>Yes (via VB-Cable relay)</td><td>B answers C directly. <b>C will hear B's voice through A's mic line.</b></td></tr>
+            </tbody>
+          </table>
+          <p>Either A or B can change the mode &mdash; both sides see banners and toasts when it changes. Cycle with <span class="kbd">Ctrl+B</span> or click the pill.</p>
+          <p class="hint">&#9888; In <b>TO A+C</b>, the meeting peer hears B's voice as if it came from A. Use deliberately. The pill turns red and the banner pulses to make this unmistakable.</p>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>VB-Cable setup (relay to meeting app)</h3>
+          <p>To make C hear A (or B in 📢 mode) through Zoom / Meet / Teams, you need a virtual audio cable that loops the app's audio output back as a virtual microphone input.</p>
           <ol class="help-steps">
-            <li>Switch to <b>Caption</b> mode under General &rarr; Active mode.</li>
-            <li>Pick the AI site in the rail dropdown <span class="kbd">&#9662;</span>.</li>
-            <li>The chat input is auto-focused; click it once if needed.</li>
-            <li>Click the <b>&#9679;</b> dot &mdash; new caption text streams into the chat input as it appears.</li>
-            <li>Press your <b>Reset capture area</b> hotkey (default <span class="kbd">Ctrl+Q</span>) anytime to re-pick the area without stopping.</li>
+            <li><b>Network tab</b> &rarr; click <b>Get VB-Cable</b>. Download &amp; install (free, restart required).</li>
+            <li>After reboot, <b>Network tab</b> &rarr; pick <b>CABLE Input (VB-Audio Virtual Cable)</b> in "Output device".</li>
+            <li>In your meeting app (Zoom / Meet / Teams), set the microphone to <b>CABLE Output (VB-Audio Virtual Cable)</b>.</li>
+            <li>Click <b>Test cable (1s tone)</b> &mdash; you should see the meeting app's mic level jump.</li>
           </ol>
+          <p>If you start a session without VB-Cable installed, a banner appears at the top of the window with a one-click installer link. Dismiss it once and it stays dismissed for the session.</p>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>HELP ME hotkey</h3>
+          <p>If A presses <span class="kbd">Win+Shift+/</span> (the default for "Help request"), B's machine pops up a full-screen <b>HELP ME!!!</b> alert with a 3-tone beep. Use this to grab B's attention if they wandered off mid-meeting.</p>
+          <p>Click the alert (or press the dismiss button) to clear it.</p>
         </section>
 
         <section class="settings-section help-section">
           <h3>Hotkeys</h3>
-          <p>Open the <b>Hotkeys</b> tab to view and rebind every shortcut. Click a binding, press a new key combo (or <span class="kbd">Esc</span> to cancel, <span class="kbd">Backspace</span> to disable). Per-row "reset" restores defaults. Failed registrations show in red &mdash; usually means another app already grabbed that combo.</p>
+          <p>Open the <b>Hotkeys</b> tab to view and rebind every shortcut. Click a binding, press a new key combo (or <span class="kbd">Esc</span> to cancel, <span class="kbd">Backspace</span> to disable). Per-row "reset" restores defaults. Failed registrations show in red &mdash; usually means another app already grabbed that combo system-wide.</p>
           <table class="help-table">
             <thead><tr><th>Action</th><th>Default</th></tr></thead>
             <tbody>
               <tr><td>Toggle window visibility</td><td><span class="kbd">Ctrl+Alt+H</span></td></tr>
-              <tr><td>Move window left / right / up / down</td><td><span class="kbd">Ctrl+Alt+&larr;</span> &hellip; <span class="kbd">Ctrl+Alt+&darr;</span></td></tr>
+              <tr><td>Toggle stealth</td><td><span class="kbd">Ctrl+H</span></td></tr>
+              <tr><td>Start / stop active mode</td><td><span class="kbd">Alt+C</span></td></tr>
+              <tr><td>Cycle B's mic mode (Mute &rarr; A &rarr; A+C)</td><td><span class="kbd">Ctrl+B</span></td></tr>
+              <tr><td>Reload site</td><td><span class="kbd">Ctrl+R</span></td></tr>
+              <tr><td>Reset capture area</td><td><span class="kbd">Ctrl+Q</span></td></tr>
+              <tr><td>Hide sticky note (A only)</td><td><span class="kbd">Ctrl+Left</span></td></tr>
+              <tr><td>Show sticky note (A only)</td><td><span class="kbd">Ctrl+Right</span></td></tr>
+              <tr><td>HELP ME alert (A &rarr; B)</td><td><span class="kbd">Win+Shift+/</span></td></tr>
+              <tr><td>Move window L / R / U / D</td><td><span class="kbd">Ctrl+Alt+&larr;</span> &hellip; <span class="kbd">Ctrl+Alt+&darr;</span></td></tr>
               <tr><td>Opacity up / down</td><td><span class="kbd">Ctrl+Alt+]</span> / <span class="kbd">Ctrl+Alt+[</span></td></tr>
               <tr><td>Scroll page up / down</td><td><span class="kbd">Ctrl+&uarr;</span> / <span class="kbd">Ctrl+&darr;</span></td></tr>
-              <tr><td>Reset capture area</td><td><span class="kbd">Ctrl+Q</span></td></tr>
-              <tr><td>Reload site</td><td>(unbound)</td></tr>
-              <tr><td>Toggle stealth</td><td>(unbound)</td></tr>
-              <tr><td>Start / stop voice or caption</td><td>(unbound)</td></tr>
             </tbody>
           </table>
         </section>
 
         <section class="settings-section help-section">
           <h3>Stealth from screen capture</h3>
-          <p>The green dot enables <code>setContentProtection</code>. On Windows this hides the window from:</p>
+          <p>The shield icon enables <code>setContentProtection</code>. On Windows this hides the window from:</p>
           <ul>
             <li>OBS / display capture in screen recorders</li>
             <li>Zoom / Teams / Meet share-screen</li>
             <li>Win+PrtScn and most screenshot tools</li>
+            <li>The capture-area red overlay (when enabled) is also stealth-protected</li>
           </ul>
           <p>It does <b>not</b> defeat:</p>
           <ul>
@@ -410,24 +495,44 @@
         </section>
 
         <section class="settings-section help-section">
-          <h3>Troubleshooting</h3>
-          <h4>I can't see the loaded website</h4>
-          <p>Click the <span class="kbd">&#8635;</span> reload button on the rail &mdash; it force-shows the webview and reloads the page. The webview gets hidden whenever Settings is open; if a flow ever leaves it hidden, reload fixes it.</p>
-          <h4>Voice mode pastes into the wrong app</h4>
-          <p>Click the target app's input field <i>before</i> starting Voice mode. While the dot is pulsing, don't click into this app.</p>
-          <h4>Caption mode duplicates text</h4>
-          <p>The diff is word-based and tolerant to OCR variations, but if the OCR engine produces wildly different text for the same speech, some duplication is unavoidable. Press your reset hotkey (<span class="kbd">Ctrl+Q</span>) to re-pick a tighter area &mdash; smaller and cleaner is better.</p>
-          <h4>OpenAI 401 / 429 errors</h4>
-          <p>Check the <b>Log</b> tab. 401 = bad API key. 429 = rate limit / out of credits.</p>
-          <h4>Local whisper exits with non-zero code</h4>
-          <p>Open a terminal and run the same command manually with <code>-f some.wav -m model.bin</code> to see the real error. Ensure the model and exe match the same whisper.cpp version.</p>
-          <h4>Hotkey shows red "register failed"</h4>
-          <p>Another app already owns that combo system-wide. Pick a different one.</p>
+          <h3>Toast notifications &amp; banners</h3>
+          <p>Brief slide-in messages in the bottom-right communicate state changes:</p>
+          <ul>
+            <li>Mic-mode changes (with color matching the new mode).</li>
+            <li>Network connect / disconnect / kick events.</li>
+            <li>VB-Cable warnings (file too large, device missing).</li>
+            <li>Errors that don't warrant a modal (transcription failures, OCR errors).</li>
+          </ul>
+          <p>Toasts auto-dismiss after a few seconds. The mic-mode banner above the chat panel is persistent &mdash; it's always showing the current mode.</p>
         </section>
 
         <section class="settings-section help-section">
-          <h3>Adding your own screenshots</h3>
-          <p>Drop PNG files into <code>renderer/help-images/</code> and edit this Help tab in <code>renderer/index.html</code> to insert <code>&lt;img&gt;</code> tags wherever you want them. Suggested filenames are listed in <code>renderer/help-images/README.txt</code>.</p>
+          <h3>Auto-update</h3>
+          <p>The app uses GitHub Releases for updates. Settings &rarr; <b>App version</b> &rarr; <b>Check for updates</b> manually, or wait for the on-launch check. When an update is downloaded, the <b>Restart &amp; install</b> button appears.</p>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>Troubleshooting</h3>
+          <h4>I can't see the loaded website</h4>
+          <p>Click <span class="kbd">&#8635;</span> in the header (or press <span class="kbd">Ctrl+R</span>) &mdash; it force-shows the webview and reloads the page. The webview gets hidden whenever Settings or Setup is open; if a flow ever leaves it hidden, reload fixes it.</p>
+          <h4>B can't hear A's mic / system audio</h4>
+          <p>Check that A's <b>Voice</b> tab has both "Capture mic" and "Capture system audio" enabled. Verify the network pill shows <b>LIVE</b> on both sides. On A's machine, the loopback capture sometimes needs Windows to re-enumerate devices &mdash; toggle the recording dot off/on.</p>
+          <h4>C (meeting peer) can't hear me</h4>
+          <p>Make sure VB-Cable is installed, "CABLE Input" is selected as Output device in Network tab, and the meeting app's mic is set to "CABLE Output". Click <b>Test cable</b> &mdash; if no level appears in the meeting, the routing is broken.</p>
+          <h4>Voice mode pastes into the wrong app</h4>
+          <p>Click the target app's input field <i>before</i> starting Voice mode. While the dot is pulsing, don't click into this app.</p>
+          <h4>Caption mode duplicates text</h4>
+          <p>The diff is word-based and tolerant to OCR variations, but if the OCR engine produces wildly different text for the same speech, some duplication is unavoidable. Press <span class="kbd">Ctrl+Q</span> to re-pick a tighter area &mdash; smaller and cleaner is better.</p>
+          <h4>OpenAI 401 / 429 errors</h4>
+          <p>Check the <b>Log</b> tab. 401 = bad API key. 429 = rate limit / out of credits.</p>
+          <h4>Local whisper exits with non-zero code</h4>
+          <p>Open a terminal and run the same command manually with <code>-f some.wav -m model.bin</code> to see the real error. Ensure the model and exe are from the same whisper.cpp version.</p>
+          <h4>Hotkey shows red "register failed"</h4>
+          <p>Another app already owns that combo system-wide. Pick a different one.</p>
+          <h4>Sticky note isn't appearing on A's screen</h4>
+          <p>Press <span class="kbd">Ctrl+Right</span> to force-open it. If it's off-screen (e.g. after a monitor change), the saved position may be invalid &mdash; close it and reopen, or move the main window then reopen sticky.</p>
+          <h4>Supporter keeps reconnecting after I kick them</h4>
+          <p>Kick uses close code 4000 which suppresses auto-reconnect on the client. If they reconnect anyway, they likely opened a fresh app instance &mdash; ban by IP isn't implemented, only by session.</p>
         </section>
 
       </div>
@@ -585,9 +690,7 @@
               <label for="setupMaxSupporters">Max supporters (Speaker only)</label>
               <input type="number" id="setupMaxSupporters" min="1" max="10" step="1" />
             </div>
-            <div class="field-row">
-              <label class="checkbox"><input type="checkbox" id="setupTwoWay" /> Enable two-way mic (Supporter &rarr; Speaker)</label>
-            </div>
+            <p class="hint" style="margin:0">Two-way audio is always on (supporter mic &rarr; speaker).</p>
           </div>
         </div>
 
@@ -615,6 +718,10 @@
   </div>
 
   <section class="chat-main" id="chatMain" hidden>
+    <div class="mic-mode-banner mode-aOnly" id="micModeBanner">
+      <span class="mic-mode-banner-icon" id="micModeBannerIcon">&#128274;</span>
+      <span class="mic-mode-banner-text" id="micModeBannerText">You speak to A only — C cannot hear you</span>
+    </div>
     <div class="chat-header">
       <span class="chat-header-title">&#128172; Chat &rarr; A</span>
       <span class="chat-header-status" id="chatHeaderStatus">Drop image, paste, or type</span>
@@ -635,6 +742,25 @@
     </div>
   </section>
 
+  <div class="toast-container" id="toastContainer"></div>
+
+  <div class="welcome-overlay" id="welcomeOverlay" hidden>
+    <div class="welcome-card">
+      <div class="welcome-icon">&#128075;</div>
+      <h2 class="welcome-title">Welcome to Stealth Support</h2>
+      <p class="welcome-subtitle">Quick orientation in 30 seconds</p>
+      <ul class="welcome-list">
+        <li><b>Two roles:</b> <b>Speaker</b> hosts on a port; <b>Supporter</b> dials in to help.</li>
+        <li><b>Two active modes:</b> <b>Caption</b> (OCRs a screen area into the chat input) or <b>Voice</b> (transcribes spoken audio into the focused app).</li>
+        <li><b>Stealth shield</b> in the header hides the window from screen-recording / meeting share-screen.</li>
+        <li><b>Opacity slider</b> in the header — click and drag to fade the window.</li>
+        <li><b>For meeting relay (A speaks to a Zoom/Meet/Teams call):</b> install the free VB-Cable driver and pick "CABLE Input" in Network settings.</li>
+        <li><b>Hotkeys</b> — see Settings &rarr; Hotkeys for the full list. Defaults: <code>Ctrl+Alt+H</code> hide, <code>Ctrl+H</code> stealth, <code>Alt+C</code> start/stop active mode.</li>
+      </ul>
+      <button class="welcome-dismiss" id="welcomeDismiss">Got it, let's go</button>
+    </div>
+  </div>
+
   <div class="help-alert" id="helpAlert" hidden>
     <div class="help-alert-card">
       <div class="help-alert-icon">!</div>
@@ -644,9 +770,9 @@
     </div>
   </div>
 
-  <audio id="remoteAudio" autoplay style="display:none"></audio>
-  <audio id="speakerInAudio" autoplay style="display:none"></audio>
-  <audio id="cableOutAudio" autoplay style="display:none"></audio>
+  <audio id="remoteAudio" autoplay playsinline style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none"></audio>
+  <audio id="speakerInAudio" autoplay playsinline style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none"></audio>
+  <audio id="cableOutAudio" autoplay playsinline style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none"></audio>
 
   <script src="lib/simplepeer.min.js"></script>
   <script src="renderer.js"></script>

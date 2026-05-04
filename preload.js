@@ -65,4 +65,11 @@ contextBridge.exposeInMainWorld('api', {
   sendChatImage: (dataUrl) => ipcRenderer.invoke('chat-send-image', dataUrl),
   onKickedBySpeaker: (cb) => ipcRenderer.on('kicked-by-speaker', () => cb()),
   onHelpRequestReceived: (cb) => ipcRenderer.on('help-request-received', (_e, v) => cb(v)),
+  getMicMode: () => ipcRenderer.invoke('get-mic-mode'),
+  setMicMode: (mode) => ipcRenderer.invoke('set-mic-mode', mode),
+  cycleMicMode: () => ipcRenderer.invoke('cycle-mic-mode'),
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
+  onMicModeChanged: (cb) => ipcRenderer.on('mic-mode-changed', (_e, v) => cb(v)),
+  getWelcomeSeen: () => ipcRenderer.invoke('get-welcome-seen'),
+  setWelcomeSeen: (v) => ipcRenderer.invoke('set-welcome-seen', v),
 });

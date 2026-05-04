@@ -69,6 +69,7 @@ const captureRectEl = document.getElementById('captureRect');
 const selectAreaBtn = document.getElementById('selectAreaBtn');
 const captureLanguageEl = document.getElementById('captureLanguage');
 const capturePollMsEl = document.getElementById('capturePollMs');
+const captureShowOverlayEl = document.getElementById('captureShowOverlay');
 
 const hotkeyList = document.getElementById('hotkeyList');
 const resetAllHotkeysBtn = document.getElementById('resetAllHotkeysBtn');
@@ -315,7 +316,7 @@ setupMaxSupporters.addEventListener('change', () => {
   const n = parseInt(setupMaxSupporters.value, 10);
   if (Number.isFinite(n) && n >= 1) window.api.setNetworkConfig({ maxSupporters: n });
 });
-setupTwoWay.addEventListener('change', () => window.api.setNetworkConfig({ twoWay: setupTwoWay.checked }));
+if (setupTwoWay) setupTwoWay.addEventListener('change', () => {});
 
 async function refreshSetupUI() {
   const m = await window.api.getMode();
@@ -330,7 +331,7 @@ async function refreshSetupUI() {
   setupPortEl.value = netC.speakerPort || parsePort(netC.address) || 2000;
   setupAddressEl.value = netC.supporterAddress || (netC.address && !netC.address.startsWith('0.0.0.0') ? netC.address : '172.16.98.11:2000');
   setupMaxSupporters.value = netC.maxSupporters || 1;
-  setupTwoWay.checked = netC.twoWay !== false;
+  if (setupTwoWay) setupTwoWay.checked = true;
   applySetupRoleVisibility();
 
   const data = await window.api.getUrls();
@@ -724,6 +725,7 @@ async function refreshCaptureUI() {
   capCfg = await window.api.getCaptureConfig();
   captureLanguageEl.value = capCfg.language || 'English';
   capturePollMsEl.value = capCfg.pollMs || 700;
+  if (captureShowOverlayEl) captureShowOverlayEl.checked = !!capCfg.showOverlay;
   renderCaptureRect(capCfg.rect);
 }
 
@@ -744,6 +746,7 @@ async function persistCap(patch) {
 }
 
 captureLanguageEl.addEventListener('change', () => persistCap({ language: captureLanguageEl.value }));
+if (captureShowOverlayEl) captureShowOverlayEl.addEventListener('change', () => persistCap({ showOverlay: captureShowOverlayEl.checked }));
 capturePollMsEl.addEventListener('change', () => {
   const v = parseInt(capturePollMsEl.value, 10);
   if (Number.isFinite(v) && v >= 200) persistCap({ pollMs: v });
@@ -1122,7 +1125,7 @@ async function refreshNetworkUI() {
   const port = parsePort(netCfg.address) || 2000;
   if (netPortEl) netPortEl.value = port;
   maxSupportersEl.value = netCfg.maxSupporters || 1;
-  twoWayEl.checked = !!netCfg.twoWay;
+  if (twoWayEl) twoWayEl.checked = true;
   const v = Math.round((netCfg.incomingVolume ?? 1) * 100);
   incomingVolumeEl.value = v;
   incomingVolumeVal.textContent = v + '%';
@@ -1316,7 +1319,7 @@ maxSupportersEl.addEventListener('change', () => {
   const n = parseInt(maxSupportersEl.value, 10);
   if (Number.isFinite(n) && n >= 1) persistNet({ maxSupporters: n });
 });
-twoWayEl.addEventListener('change', () => persistNet({ twoWay: twoWayEl.checked }));
+if (twoWayEl) twoWayEl.addEventListener('change', () => {});
 
 incomingVolumeEl.addEventListener('input', () => {
   const v = Math.min(100, parseInt(incomingVolumeEl.value, 10)) / 100;
@@ -1411,6 +1414,7 @@ function toggleMicMute() {
 
 window.api.onTogglePtt(() => toggleMicMute());
 
+let speakerMicOnlyStream = null;
 async function captureSpeakerStream() {
   if (speakerLocalStream) return speakerLocalStream;
   const tracks = [];
@@ -1423,6 +1427,7 @@ async function captureSpeakerStream() {
         autoGainControl: false,
       },
     });
+    speakerMicOnlyStream = mic;
     mic.getAudioTracks().forEach(t => tracks.push(t));
     micOk = tracks.length > 0;
   } catch (e) { log('Speaker mic capture failed: ' + e.message, 'err'); }
@@ -1440,6 +1445,9 @@ async function captureSpeakerStream() {
   if (tracks.length === 0) return null;
   speakerLocalStream = new MediaStream(tracks);
   log(`Speaker capture ready (mic:${micOk ? 'ok' : 'no'}, system:${sysOk ? 'ok' : 'no'}, ${tracks.length} track(s) sending)`, 'info');
+  if (netCfg && netCfg.virtualCableId && typeof ensureCableMixer === 'function') {
+    setTimeout(() => ensureCableMixer().catch(() => {}), 100);
+  }
   return speakerLocalStream;
 }
 
@@ -1448,12 +1456,20 @@ function teardownPeers() {
   speakerPeers.clear();
   if (supporterPeer) { try { supporterPeer.destroy(); } catch {} supporterPeer = null; }
   if (speakerLocalStream) { speakerLocalStream.getTracks().forEach(t => t.stop()); speakerLocalStream = null; }
+  speakerMicOnlyStream = null;
   if (supporterMicStream) { supporterMicStream.getTracks().forEach(t => t.stop()); supporterMicStream = null; }
   supporterMicTrack = null;
   setPttStatus(false);
   if (remoteAudioEl) { try { remoteAudioEl.srcObject = null; } catch {} }
   if (speakerInAudioEl) { try { speakerInAudioEl.srcObject = null; } catch {} }
   stopLevelMeter();
+  if (cableCtx) { try { cableCtx.close(); } catch {} cableCtx = null; }
+  cableAGain = null;
+  cableBGain = null;
+  cableDest = null;
+  if (bIncomingSrcNode) { try { bIncomingSrcNode.disconnect(); } catch {} bIncomingSrcNode = null; }
+  bIncomingForCable = null;
+  if (cableOutEl) { try { cableOutEl.srcObject = null; } catch {} }
 }
 
 async function speakerHandleOpened(connId) {
@@ -1481,8 +1497,13 @@ async function speakerHandleOpened(connId) {
   peer.on('stream', (remote) => {
     log(`Speaker[${connId}]: receiving supporter audio (${remote.getAudioTracks().length} track)`, 'info');
     speakerInAudioEl.srcObject = remote;
-    speakerInAudioEl.volume = Math.min(1, (netCfg && netCfg.incomingVolume) ?? 1);
+    const vol = Math.min(1, (netCfg && netCfg.incomingVolume != null) ? netCfg.incomingVolume : 1);
+    speakerInAudioEl.volume = vol;
+    speakerInAudioEl.muted = false;
+    const p = speakerInAudioEl.play();
+    if (p && p.catch) p.catch((err) => log('Speaker: <audio>.play() rejected: ' + err.message, 'err'));
     startLevelMeter(remote);
+    if (typeof attachBToCable === 'function') attachBToCable(remote);
   });
   peer.on('error', (err) => log(`Speaker[${connId}] peer error: ${err.message}`, 'err'));
   peer.on('close', () => {
@@ -1507,7 +1528,6 @@ function speakerHandleClosed(connId) {
 }
 
 async function ensureSupporterMic() {
-  if (!netCfg || !netCfg.twoWay) return null;
   if (supporterMicTrack) return supporterMicTrack;
   try {
     supporterMicStream = await navigator.mediaDevices.getUserMedia({
@@ -1548,7 +1568,12 @@ async function ensureSupporterPeer() {
   supporterPeer.on('stream', (remote) => {
     log(`Supporter: received remote stream (${remote.getAudioTracks().length} audio track)`, 'info');
     remoteAudioEl.srcObject = remote;
-    remoteAudioEl.volume = Math.min(1, (netCfg && netCfg.incomingVolume) ?? 1);
+    const vol = Math.min(1, (netCfg && netCfg.incomingVolume != null) ? netCfg.incomingVolume : 1);
+    remoteAudioEl.volume = vol;
+    remoteAudioEl.muted = false;
+    const p = remoteAudioEl.play();
+    if (p && p.catch) p.catch((err) => log('Supporter: <audio>.play() rejected: ' + err.message, 'err'));
+    log(`Supporter: <audio> attached (volume=${vol})`, 'info');
     startLevelMeter(remote);
   });
   supporterPeer.on('error', (err) => log('Supporter peer error: ' + err.message, 'err'));
@@ -1707,7 +1732,11 @@ async function chatSendFile(file) {
   if (!file) return;
   if (!file.type || !file.type.startsWith('image/')) {
     chatSetStatus('Only image files supported');
+    if (typeof toast === 'function') toast('Only image files are supported', 'warn');
     return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    if (typeof toast === 'function') toast(`Large image (${Math.round(file.size/1024/1024)} MB) — downscaling first…`, 'warn');
   }
   chatSetStatus('Encoding image…');
   const reader = new FileReader();
@@ -1817,3 +1846,341 @@ if (helpAlertDismissEl) helpAlertDismissEl.addEventListener('click', () => {
 });
 
 window.api.onHelpRequestReceived(() => showHelpAlert());
+
+// ── Mic mode pill + virtual cable mixer ─────────────────────────────────────
+const micPillEl = document.getElementById('micPill');
+const micPillIconEl = document.getElementById('micPillIcon');
+const micPillLabelEl = document.getElementById('micPillLabel');
+const netVirtualCableEl = document.getElementById('netVirtualCable');
+const netCableStatusEl = document.getElementById('netCableStatus');
+const getVbCableBtnEl = document.getElementById('getVbCableBtn');
+
+const MIC_MODE_LABELS = { mute: 'MUTE', aOnly: 'TO A', aAndC: 'TO A+C' };
+const MIC_MODE_ICONS = { mute: '\u{1F507}', aOnly: '\u{1F512}', aAndC: '\u{1F4E2}' };
+const MIC_MODES_R = ['mute', 'aOnly', 'aAndC'];
+let currentMicMode = 'aOnly';
+
+let cableCtx = null;
+let cableAGain = null;
+let cableBGain = null;
+let cableDest = null;
+let cableOutEl = null;
+// aMicForCable removed — cable mixer reuses speakerMicOnlyStream
+let bIncomingForCable = null;
+let bIncomingSrcNode = null;
+
+function updateMicPillUI(mode) {
+  if (!micPillEl) return;
+  const m = MIC_MODES_R.includes(mode) ? mode : 'aOnly';
+  if (micPillIconEl) micPillIconEl.textContent = MIC_MODE_ICONS[m];
+  if (micPillLabelEl) micPillLabelEl.textContent = MIC_MODE_LABELS[m];
+  micPillEl.classList.remove('mode-mute', 'mode-aOnly', 'mode-aAndC');
+  micPillEl.classList.add('mode-' + m);
+  const role = (netCfg && netCfg.role) || '';
+  micPillEl.disabled = !(role === 'speaker' || role === 'supporter');
+}
+
+function applyMicModeLocally(mode) {
+  currentMicMode = mode;
+  if (typeof supporterMicTrack !== 'undefined' && supporterMicTrack) {
+    supporterMicTrack.enabled = mode !== 'mute';
+  }
+  applyMicModeToCableMixer(mode);
+}
+
+function applyMicModeToCableMixer(mode) {
+  if (cableAGain) cableAGain.gain.value = mode === 'aAndC' ? 0 : 1;
+  if (cableBGain) cableBGain.gain.value = mode === 'aAndC' ? 1 : 0;
+}
+
+if (micPillEl) micPillEl.addEventListener('click', async () => {
+  if (micPillEl.disabled) return;
+  await window.api.cycleMicMode();
+});
+
+window.api.onMicModeChanged((info) => {
+  const mode = MIC_MODES_R.includes(info.mode) ? info.mode : 'aOnly';
+  applyMicModeLocally(mode);
+  updateMicPillUI(mode);
+  updateMicModeBanner(mode);
+  const role = (netCfg && netCfg.role) || '';
+  let icon = MIC_MODE_ICONS[mode] || '';
+  let msg;
+  if (mode === 'mute') msg = role === 'supporter' ? `${icon} You are MUTED — nobody hears you` : `${icon} Supporter is MUTED`;
+  else if (mode === 'aOnly') msg = role === 'supporter' ? `${icon} You speak to A only — C cannot hear you` : `${icon} Supporter is private (A only)`;
+  else if (mode === 'aAndC') msg = role === 'supporter' ? `${icon} You are LIVE — A + C hear you` : `${icon} Supporter is LIVE to A + C`;
+  toast(msg, mode);
+  log(msg, 'info');
+});
+
+function toast(message, kind) {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+  const el = document.createElement('div');
+  el.className = 'toast ' + (kind ? 'toast-' + kind : 'toast-info');
+  el.textContent = message;
+  container.appendChild(el);
+  setTimeout(() => el.classList.add('toast-out'), 2700);
+  setTimeout(() => { try { el.remove(); } catch {} }, 3000);
+}
+
+function updateMicModeBanner(mode) {
+  const banner = document.getElementById('micModeBanner');
+  const icon = document.getElementById('micModeBannerIcon');
+  const text = document.getElementById('micModeBannerText');
+  if (!banner || !icon || !text) return;
+  banner.classList.remove('mode-mute', 'mode-aOnly', 'mode-aAndC');
+  banner.classList.add('mode-' + mode);
+  icon.textContent = MIC_MODE_ICONS[mode] || '';
+  if (mode === 'mute') text.textContent = 'You are MUTED — nobody hears you';
+  else if (mode === 'aOnly') text.textContent = 'You speak to A only — C cannot hear you';
+  else if (mode === 'aAndC') text.textContent = 'You are LIVE — A + C hear you';
+}
+
+async function refreshMicPill() {
+  const mode = await window.api.getMicMode().catch(() => 'aOnly');
+  currentMicMode = mode;
+  updateMicPillUI(mode);
+  applyMicModeLocally(mode);
+}
+
+const CABLE_RE = /(cable input|vb-audio|voicemeeter input|virtual cable)/i;
+
+async function refreshCablePicker() {
+  if (!netVirtualCableEl) return;
+  try {
+    await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
+  } catch {}
+  let devs = [];
+  try {
+    devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audiooutput');
+  } catch {}
+  const current = (netCfg && netCfg.virtualCableId) || '';
+  netVirtualCableEl.innerHTML = '';
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = '-- None --';
+  netVirtualCableEl.appendChild(none);
+  const cables = devs.filter(d => CABLE_RE.test(d.label || ''));
+  const others = devs.filter(d => !CABLE_RE.test(d.label || ''));
+  if (cables.length) {
+    const grp = document.createElement('optgroup');
+    grp.label = 'Virtual cables (recommended)';
+    cables.forEach(d => {
+      const o = document.createElement('option');
+      o.value = d.deviceId;
+      o.textContent = d.label || ('Virtual ' + d.deviceId.slice(0, 6));
+      grp.appendChild(o);
+    });
+    netVirtualCableEl.appendChild(grp);
+  }
+  if (others.length) {
+    const grp = document.createElement('optgroup');
+    grp.label = 'Other output devices';
+    others.forEach(d => {
+      const o = document.createElement('option');
+      o.value = d.deviceId;
+      o.textContent = d.label || ('Output ' + d.deviceId.slice(0, 6));
+      grp.appendChild(o);
+    });
+    netVirtualCableEl.appendChild(grp);
+  }
+  netVirtualCableEl.value = current || '';
+  updateCableStatus();
+}
+
+function updateCableStatus() {
+  if (!netCableStatusEl) return;
+  const id = (netCfg && netCfg.virtualCableId) || '';
+  if (!id) {
+    netCableStatusEl.textContent = 'No output device selected. Pick CABLE Input above.';
+    netCableStatusEl.className = 'net-cable-status warn';
+    return;
+  }
+  let label = id;
+  if (netVirtualCableEl) {
+    for (const o of netVirtualCableEl.options) { if (o.value === id) { label = o.textContent; break; } }
+  }
+  if (CABLE_RE.test(label)) {
+    netCableStatusEl.textContent = 'Routed to: ' + label + ' OK';
+    netCableStatusEl.className = 'net-cable-status ok';
+  } else {
+    netCableStatusEl.textContent = 'Selected device is NOT a virtual cable: ' + label + '. Meeting will not hear our app.';
+    netCableStatusEl.className = 'net-cable-status err';
+  }
+}
+
+if (netVirtualCableEl) netVirtualCableEl.addEventListener('change', async () => {
+  const id = netVirtualCableEl.value || '';
+  await window.api.setNetworkConfig({ virtualCableId: id });
+  netCfg = await window.api.getNetworkConfig();
+  updateCableStatus();
+  if (id && (netCfg.role === 'speaker')) ensureCableMixer();
+});
+
+if (getVbCableBtnEl) getVbCableBtnEl.addEventListener('click', () => {
+  window.api.openExternal('https://vb-audio.com/Cable/');
+});
+
+async function ensureCableMixer() {
+  if (cableCtx) return;
+  if (!netCfg || !netCfg.virtualCableId) return;
+  if (!speakerMicOnlyStream) {
+    log('Cable mixer waiting for speaker mic capture (will retry after first supporter connects)', 'info');
+    return;
+  }
+  cableCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const aSrc = cableCtx.createMediaStreamSource(speakerMicOnlyStream);
+  cableAGain = cableCtx.createGain();
+  cableBGain = cableCtx.createGain();
+  cableDest = cableCtx.createMediaStreamDestination();
+  aSrc.connect(cableAGain).connect(cableDest);
+  cableBGain.connect(cableDest);
+  applyMicModeToCableMixer(currentMicMode);
+  cableOutEl = document.getElementById('cableOutAudio');
+  if (cableOutEl) {
+    cableOutEl.srcObject = cableDest.stream;
+    cableOutEl.muted = false;
+    cableOutEl.volume = 1;
+    try {
+      await cableOutEl.setSinkId(netCfg.virtualCableId);
+      log('Cable mixer routed to selected output device', 'info');
+    } catch (e) {
+      log('setSinkId failed: ' + e.message, 'err');
+    }
+    cableOutEl.play().catch((e) => log('Cable output play failed: ' + e.message, 'err'));
+  }
+  if (bIncomingForCable) attachBToCable(bIncomingForCable);
+}
+
+function attachBToCable(stream) {
+  bIncomingForCable = stream;
+  if (!cableCtx) return;
+  if (bIncomingSrcNode) { try { bIncomingSrcNode.disconnect(); } catch {} }
+  try {
+    bIncomingSrcNode = cableCtx.createMediaStreamSource(stream);
+    bIncomingSrcNode.connect(cableBGain);
+  } catch (e) { log('Cable B attach failed: ' + e.message, 'err'); }
+}
+
+if (settingsBtn) settingsBtn.addEventListener('click', () => {
+  refreshCablePicker().catch(() => {});
+  refreshMicPill().catch(() => {});
+});
+
+window.api.onNetworkStatus((status) => {
+  if (status && (status.role === 'speaker' || status.role === 'supporter')) {
+    refreshMicPill().catch(() => {});
+  }
+  if (status && status.role === 'speaker' && netCfg && netCfg.virtualCableId) {
+    setTimeout(() => ensureCableMixer().catch(() => {}), 200);
+  }
+  updateNetStatusPill(status);
+  updateCableNudge(status);
+});
+
+function updateNetStatusPill(status) {
+  const pill = document.getElementById('netStatusPill');
+  if (!pill || !status) return;
+  pill.classList.remove('live', 'warn', 'err');
+  if (status.role === 'speaker') {
+    if (status.bound) {
+      const n = (status.supporters || []).length;
+      pill.textContent = n > 0 ? `\u{1F7E2} ${n} supporter` : '\u{1F7E1} hosting';
+      pill.classList.add(n > 0 ? 'live' : 'warn');
+      pill.title = `Hosting on ${status.address} — ${n}/1 supporter connected`;
+    } else {
+      pill.textContent = '⚠ not bound';
+      pill.classList.add('err');
+      pill.title = 'Speaker mode but server not bound';
+    }
+  } else if (status.role === 'supporter') {
+    if (status.connected) {
+      pill.textContent = '\u{1F7E2} connected';
+      pill.classList.add('live');
+      pill.title = `Connected to ${status.address}`;
+    } else {
+      pill.textContent = '\u{1F7E1} dialing';
+      pill.classList.add('warn');
+      pill.title = `Dialing ${status.address}…`;
+    }
+  } else {
+    pill.textContent = 'idle';
+    pill.title = 'No active session';
+  }
+}
+
+let cableNudgeDismissed = false;
+function updateCableNudge(status) {
+  const banner = document.getElementById('cableNudge');
+  if (!banner) return;
+  if (cableNudgeDismissed) { banner.hidden = true; return; }
+  const role = (status && status.role) || (netCfg && netCfg.role) || '';
+  const hasCable = !!(netCfg && netCfg.virtualCableId);
+  const inInterview = document.body.classList.contains('in-interview');
+  banner.hidden = !(inInterview && role === 'speaker' && !hasCable);
+}
+
+const cableNudgeGetEl = document.getElementById('cableNudgeGet');
+const cableNudgeDismissEl = document.getElementById('cableNudgeDismiss');
+if (cableNudgeGetEl) cableNudgeGetEl.addEventListener('click', () => window.api.openExternal('https://vb-audio.com/Cable/'));
+if (cableNudgeDismissEl) cableNudgeDismissEl.addEventListener('click', () => {
+  cableNudgeDismissed = true;
+  document.getElementById('cableNudge').hidden = true;
+});
+
+const testCableBtnEl = document.getElementById('testCableBtn');
+if (testCableBtnEl) testCableBtnEl.addEventListener('click', async () => {
+  if (!netCfg || !netCfg.virtualCableId) { toast('Pick a virtual cable first', 'warn'); return; }
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const dest = ctx.createMediaStreamDestination();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = 440;
+    gain.gain.value = 0.2;
+    osc.connect(gain).connect(dest);
+    osc.start();
+    setTimeout(() => { osc.stop(); }, 1000);
+    const audio = new Audio();
+    audio.srcObject = dest.stream;
+    await audio.setSinkId(netCfg.virtualCableId);
+    audio.play();
+    setTimeout(() => { try { ctx.close(); audio.srcObject = null; } catch {} }, 1300);
+    toast('\u{1F50A} Test tone played to virtual cable (check meeting mic level)', 'info');
+  } catch (e) {
+    toast('Test cable failed: ' + e.message, 'warn');
+  }
+});
+
+// Welcome / first-run modal
+(async () => {
+  try {
+    const seen = await window.api.getWelcomeSeen().catch(() => true);
+    if (!seen) {
+      const overlay = document.getElementById('welcomeOverlay');
+      if (overlay) overlay.hidden = false;
+    }
+  } catch {}
+})();
+const welcomeDismissEl = document.getElementById('welcomeDismiss');
+if (welcomeDismissEl) welcomeDismissEl.addEventListener('click', () => {
+  const overlay = document.getElementById('welcomeOverlay');
+  if (overlay) overlay.hidden = true;
+  window.api.setWelcomeSeen(true).catch(() => {});
+});
+
+// PTT hotkey label in mic-pill tooltip
+async function refreshMicPillTooltip() {
+  const pill = document.getElementById('micPill');
+  if (!pill) return;
+  try {
+    const data = await window.api.getHotkeys();
+    const ptt = data.current && data.current.pushToTalk;
+    pill.title = ptt
+      ? `Cycle B's mic mode: mute → A only → A+C  (hotkey: ${ptt})`
+      : `Cycle B's mic mode: mute → A only → A+C`;
+  } catch {}
+}
+setTimeout(() => refreshMicPillTooltip().catch(() => {}), 500);
+window.api.onHotkeysChanged(() => refreshMicPillTooltip().catch(() => {}));

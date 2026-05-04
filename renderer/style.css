@@ -821,6 +821,235 @@ body:not(.in-interview) .iv-btn { display: none !important; }
 
 .end-btn:hover { filter: brightness(1.1); }
 
+.mic-pill {
+  width: auto;
+  height: 20px;
+  padding: 0 4px 0 6px;
+  margin: 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+  background: var(--track);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.mic-pill-icon { font-size: 11px; line-height: 1; }
+.mic-pill-label { padding: 0 2px; }
+
+.mic-pill.mode-mute { background: #f3f4f6; color: #4b5563; border-color: #d1d5db; }
+.mic-pill.mode-aOnly { background: #dcfce7; color: #15803d; border-color: #86efac; }
+.mic-pill.mode-aAndC { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; animation: micPillPulse 1.4s ease-in-out infinite; }
+
+@keyframes micPillPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.5); }
+  50% { box-shadow: 0 0 0 4px rgba(220, 38, 38, 0); }
+}
+
+.mic-pill[disabled],
+.mic-pill.disabled { opacity: 0.5; }
+
+.mic-pill:hover { filter: brightness(0.97); }
+
+.net-cable-status {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.net-cable-status.ok { color: #15803d; }
+.net-cable-status.warn { color: #ca8a04; }
+.net-cable-status.err { color: var(--rec-on); }
+
+/* Toast notifications */
+.toast-container {
+  position: fixed;
+  top: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+  max-width: 92%;
+}
+.toast {
+  background: rgba(15, 15, 20, 0.92);
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+  border-left: 4px solid var(--muted);
+  animation: toastIn 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.toast.toast-mute { border-left-color: #9ca3af; }
+.toast.toast-aOnly { border-left-color: #16a34a; }
+.toast.toast-aAndC { border-left-color: #dc2626; }
+.toast.toast-info { border-left-color: var(--accent); }
+.toast.toast-warn { border-left-color: #f59e0b; }
+.toast.toast-out { animation: toastOut 240ms ease-in forwards; }
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes toastOut {
+  to { opacity: 0; transform: translateY(-8px); }
+}
+
+/* Mic-mode banner on B's chat view */
+.mic-mode-banner {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.mic-mode-banner.mode-mute { background: #f3f4f6; color: #4b5563; }
+.mic-mode-banner.mode-aOnly { background: #dcfce7; color: #15803d; }
+.mic-mode-banner.mode-aAndC { background: #fee2e2; color: #b91c1c; animation: bannerPulse 1.6s ease-in-out infinite; }
+@keyframes bannerPulse {
+  0%, 100% { background: #fee2e2; }
+  50% { background: #fecaca; }
+}
+.mic-mode-banner-icon { font-size: 14px; }
+
+/* Network status pill in header */
+.net-status-pill {
+  width: auto;
+  padding: 0 6px;
+  margin: 0 4px 0 6px;
+  height: 18px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  background: var(--track);
+  color: var(--muted);
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  -webkit-app-region: no-drag;
+}
+.net-status-pill.live { background: #dcfce7; color: #15803d; border-color: #86efac; }
+.net-status-pill.warn { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+.net-status-pill.err { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
+
+/* VB-Cable nudge banner */
+.cable-nudge {
+  position: fixed;
+  top: 28px;
+  left: 0; right: 0;
+  z-index: 6;
+  background: #fef3c7;
+  border-bottom: 1px solid #fde047;
+  color: #713f12;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cable-nudge[hidden] { display: none !important; }
+.cable-nudge-text { flex: 1; }
+.cable-nudge-action {
+  -webkit-app-region: no-drag;
+  background: #f59e0b;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.cable-nudge-dismiss {
+  -webkit-app-region: no-drag;
+  background: transparent;
+  border: none;
+  color: #713f12;
+  font-size: 14px;
+  padding: 0 4px;
+}
+
+/* Welcome / first-run tutorial */
+.welcome-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(15, 15, 20, 0.55);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.welcome-overlay[hidden] { display: none !important; }
+.welcome-card {
+  background: var(--bg);
+  border-radius: 10px;
+  padding: 18px 20px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+.welcome-icon {
+  font-size: 36px;
+  margin-bottom: 6px;
+}
+.welcome-title {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 700;
+}
+.welcome-subtitle {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.welcome-list {
+  text-align: left;
+  margin: 0 0 14px;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.welcome-list li { margin-bottom: 6px; }
+.welcome-dismiss {
+  -webkit-app-region: no-drag;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 10px 22px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.welcome-dismiss:hover { filter: brightness(1.05); }
+
 body.in-interview .end-btn.live::before {
   background: #fef08a;
   animation: endPulse 1s ease-in-out infinite;
