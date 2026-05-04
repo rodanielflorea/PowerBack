@@ -34,6 +34,9 @@ const HOTKEY_DEFAULTS = {
   toggleStealth: 'Ctrl+H',
   toggleRecording: 'Alt+C',
   pushToTalk: 'Ctrl+B',
+  closeSticky: 'Ctrl+Left',
+  openSticky: 'Ctrl+Right',
+  helpRequest: 'Super+Shift+/',
 };
 
 const DEFAULT_STATE = {
@@ -80,6 +83,11 @@ const RAIL_W = 0;
 let win;
 let webView;
 let selectorWin = null;
+let stickyWin = null;
+let stickyWantOpen = false;
+let stickyReady = false;
+let chatHistory = [];
+const CHAT_HISTORY_MAX = 200;
 let captureLoop = null;
 let pastedHistory = [];
 let pendingRestart = false;
@@ -262,15 +270,21 @@ function createWindow() {
     ensureWebView();
   });
 
-  win.on('move', saveState);
-  win.on('resize', () => { layoutWebView(); saveState(); });
-  win.on('closed', () => { win = null; webView = null; });
+  win.on('move', () => { saveState(); syncStickyPosition(); });
+  win.on('resize', () => { layoutWebView(); saveState(); syncStickyPosition(); });
+  win.on('show', () => applyStickyState());
+  win.on('hide', () => applyStickyState());
+  win.on('closed', () => {
+    win = null; webView = null;
+    if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.close(); } catch {} }
+  });
 }
 
 function setOpacity(value) {
   if (!win) return;
   const v = Math.max(MIN_OPACITY, Math.min(1, value));
   win.setOpacity(v);
+  if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.setOpacity(v); } catch {} }
   saveState();
   win.webContents.send('opacity-changed', v);
 }
@@ -290,8 +304,112 @@ function setStealth(value) {
   if (!win) return;
   state.stealth = !!value;
   win.setContentProtection(state.stealth);
+  if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.setContentProtection(state.stealth); } catch {} }
   saveState();
   win.webContents.send('stealth-changed', state.stealth);
+}
+
+function syncStickyPosition() {
+  if (!stickyWin || stickyWin.isDestroyed() || !win) return;
+  const [mx, my] = win.getPosition();
+  const [mainW, mainH] = win.getSize();
+  const stickyW = mainW;
+  const stickyH = Math.max(160, Math.floor(mainH / 2));
+  const display = screen.getDisplayMatching(win.getBounds());
+  const work = display.workArea;
+  const gap = 6;
+  let sx = mx + mainW + gap;
+  let sy = my;
+  if (sx + stickyW > work.x + work.width) {
+    sx = mx - stickyW - gap;
+    if (sx < work.x) {
+      sx = mx;
+      sy = my - stickyH - gap;
+      if (sy < work.y) sy = my + mainH + gap;
+    }
+  }
+  try { stickyWin.setBounds({ x: sx, y: sy, width: stickyW, height: stickyH }); } catch {}
+}
+
+function applyStickyState() {
+  if (!stickyWin || stickyWin.isDestroyed() || !win) return;
+  const wantShow = stickyWantOpen && win.isVisible();
+  if (wantShow) {
+    if (!stickyWin.isVisible()) stickyWin.showInactive();
+    syncStickyPosition();
+    try { stickyWin.setOpacity(win.getOpacity()); } catch {}
+  } else if (stickyWin.isVisible()) {
+    stickyWin.hide();
+  }
+}
+
+function createStickyWindow() {
+  if (stickyWin && !stickyWin.isDestroyed()) return;
+  if (!win) return;
+  const [mainW, mainH] = win.getSize();
+  const initW = mainW;
+  const initH = Math.max(160, Math.floor(mainH / 2));
+  stickyWin = new BrowserWindow({
+    width: initW,
+    height: initH,
+    frame: false,
+    backgroundColor: '#ffffff',
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    resizable: false,
+    show: false,
+    icon: path.join(__dirname, 'build', 'icon.png'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-sticky.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  stickyWin.setContentProtection(state.stealth);
+  stickyWin.setAlwaysOnTop(true, 'screen-saver');
+  stickyWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  try { stickyWin.setOpacity(win.getOpacity()); } catch {}
+  stickyWin.setMenuBarVisibility(false);
+  stickyReady = false;
+  stickyWin.loadFile(path.join(__dirname, 'renderer', 'sticky.html'));
+  stickyWin.on('closed', () => { stickyWin = null; stickyReady = false; });
+  stickyWin.webContents.once('did-finish-load', () => {
+    if (!stickyWin || stickyWin.isDestroyed()) return;
+    stickyReady = true;
+    pushHistoryToStickyDom();
+    syncStickyPosition();
+  });
+}
+
+function openStickyWindow() {
+  stickyWantOpen = true;
+  if (!stickyWin || stickyWin.isDestroyed()) createStickyWindow();
+  applyStickyState();
+}
+
+function closeStickyWindow() {
+  stickyWantOpen = false;
+  applyStickyState();
+}
+
+function pushHistoryToStickyDom() {
+  if (!stickyWin || stickyWin.isDestroyed() || !stickyReady) return;
+  try {
+    const code = `window.__stickyHistory = ${JSON.stringify(chatHistory)};\nif (typeof window.applyStickyHistory === 'function') window.applyStickyHistory(window.__stickyHistory);`;
+    stickyWin.webContents.executeJavaScript(code).catch(() => {});
+  } catch {}
+  try { stickyWin.webContents.send('sticky-history', chatHistory); } catch {}
+}
+
+function pushChatToSticky(msg) {
+  chatHistory.push(msg);
+  if (chatHistory.length > CHAT_HISTORY_MAX) chatHistory.shift();
+  if (!stickyWantOpen) {
+    stickyWantOpen = true;
+    if (!stickyWin || stickyWin.isDestroyed()) createStickyWindow();
+  }
+  applyStickyState();
+  pushHistoryToStickyDom();
 }
 
 function reloadWebView() {
@@ -677,7 +795,29 @@ const HOTKEY_HANDLERS = {
   toggleStealth: () => setStealth(!state.stealth),
   toggleRecording: () => { if (win) win.webContents.send('toggle-recording'); },
   pushToTalk: () => { if (win) win.webContents.send('toggle-ptt'); },
+  closeSticky: () => closeStickyWindow(),
+  openSticky: () => openStickyWindow(),
+  helpRequest: () => sendHelpRequest(),
 };
+
+function sendHelpRequest() {
+  if (state.network.role !== 'speaker') {
+    if (win) win.webContents.send('capture-error', 'Help-me hotkey: only the speaker can send help requests');
+    return;
+  }
+  let count = 0;
+  for (const entry of supporterConns.values()) {
+    if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
+      try {
+        entry.ws.send(JSON.stringify({ type: 'help-request', ts: Date.now() }));
+        count++;
+      } catch {}
+    }
+  }
+  if (win) {
+    win.webContents.send('capture-text', `[help request sent to ${count} supporter(s)]`);
+  }
+}
 
 let wsServer = null;
 let wsClient = null;
@@ -757,6 +897,11 @@ function startSignalingServer() {
     ws.on('message', (data) => {
       let msg;
       try { msg = JSON.parse(data.toString()); } catch { return; }
+      if (msg && (msg.type === 'chat-text' || msg.type === 'chat-image')) {
+        if (win) win.webContents.send('capture-text', `[chat received from #${id}: ${msg.type}${msg.text ? ' "' + msg.text.slice(0,40) + '"' : ''}]`);
+        pushChatToSticky({ ...msg, fromId: id, ts: msg.ts || Date.now() });
+        return;
+      }
       if (win) win.webContents.send('signaling-in', { connId: id, ...msg });
     });
     ws.on('close', () => {
@@ -804,12 +949,20 @@ function connectSignalingClient() {
   ws.on('message', (data) => {
     let msg;
     try { msg = JSON.parse(data.toString()); } catch { return; }
+    if (msg && msg.type === 'help-request') {
+      if (win) win.webContents.send('help-request-received', msg);
+      return;
+    }
     if (win) win.webContents.send('signaling-in', msg);
   });
-  ws.on('close', () => {
-    if (win) win.webContents.send('signaling-in', { type: 'closed' });
+  ws.on('close', (code, reason) => {
+    if (win) win.webContents.send('signaling-in', { type: 'closed', code, reason: reason ? reason.toString() : '' });
     if (wsClient === ws) wsClient = null;
     broadcastNetworkStatus();
+    if (code === 4000) {
+      if (win) win.webContents.send('kicked-by-speaker');
+      return;
+    }
     if (state.network.role === 'supporter') {
       wsReconnectTimer = setTimeout(connectSignalingClient, 5000);
     }
@@ -997,6 +1150,64 @@ ipcMain.handle('reset-all-hotkeys', () => {
   registerHotkeys();
 });
 
+ipcMain.handle('sticky-open', () => openStickyWindow());
+ipcMain.handle('sticky-close', () => closeStickyWindow());
+ipcMain.handle('sticky-clear', () => {
+  chatHistory = [];
+  pushHistoryToStickyDom();
+});
+ipcMain.handle('inject-test-chat', (_e, payload) => {
+  const text = typeof payload === 'string' ? payload : (payload && payload.text) || 'test message';
+  pushChatToSticky({ type: 'chat-text', text, ts: Date.now(), fromId: 'debug' });
+  return true;
+});
+
+ipcMain.handle('chat-send-text', (_e, text) => {
+  const t = String(text || '').trim();
+  if (!t) {
+    if (win) win.webContents.send('capture-error', 'chat-send-text: empty text');
+    return false;
+  }
+  if (state.network.role !== 'supporter') {
+    if (win) win.webContents.send('capture-error', `chat-send-text: role is "${state.network.role}", need "supporter"`);
+    return false;
+  }
+  if (!wsClient || wsClient.readyState !== WebSocket.OPEN) {
+    const rs = wsClient ? wsClient.readyState : 'no client';
+    if (win) win.webContents.send('capture-error', `chat-send-text: WS not open (state=${rs})`);
+    return false;
+  }
+  try {
+    wsClient.send(JSON.stringify({ type: 'chat-text', text: t, ts: Date.now() }));
+    if (win) win.webContents.send('capture-text', `[chat sent: text "${t.slice(0,40)}"]`);
+    return true;
+  } catch (e) {
+    if (win) win.webContents.send('capture-error', 'chat-send-text exception: ' + e.message);
+    return false;
+  }
+});
+
+ipcMain.handle('chat-send-image', (_e, dataUrl) => {
+  if (!dataUrl || typeof dataUrl !== 'string') return false;
+  if (state.network.role !== 'supporter') {
+    if (win) win.webContents.send('capture-error', `chat-send-image: role is "${state.network.role}", need "supporter"`);
+    return false;
+  }
+  if (!wsClient || wsClient.readyState !== WebSocket.OPEN) {
+    const rs = wsClient ? wsClient.readyState : 'no client';
+    if (win) win.webContents.send('capture-error', `chat-send-image: WS not open (state=${rs})`);
+    return false;
+  }
+  try {
+    wsClient.send(JSON.stringify({ type: 'chat-image', dataUrl, ts: Date.now() }));
+    if (win) win.webContents.send('capture-text', `[chat sent: image (${Math.round(dataUrl.length/1024)} KB)]`);
+    return true;
+  } catch (e) {
+    if (win) win.webContents.send('capture-error', 'chat-send-image exception: ' + e.message);
+    return false;
+  }
+});
+
 ipcMain.handle('get-network-config', () => ({ ...state.network }));
 ipcMain.handle('set-network-config', (_e, cfg) => {
   state.network = { ...state.network, ...(cfg || {}) };
@@ -1013,7 +1224,8 @@ ipcMain.handle('stop-network', () => { stopNetwork(); });
 ipcMain.handle('kick-supporter', (_e, id) => {
   const entry = supporterConns.get(String(id));
   if (entry) {
-    try { entry.ws.close(); } catch {}
+    try { entry.ws.send(JSON.stringify({ type: 'kicked' })); } catch {}
+    try { entry.ws.close(4000, 'kicked'); } catch {}
     supporterConns.delete(String(id));
     broadcastNetworkStatus();
     return true;

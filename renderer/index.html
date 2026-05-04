@@ -614,8 +614,39 @@
     </div>
   </div>
 
+  <section class="chat-main" id="chatMain" hidden>
+    <div class="chat-header">
+      <span class="chat-header-title">&#128172; Chat &rarr; A</span>
+      <span class="chat-header-status" id="chatHeaderStatus">Drop image, paste, or type</span>
+    </div>
+    <div class="chat-history" id="chatHistory">
+      <div class="chat-empty" id="chatEmpty">No messages yet. Type below or drop an image anywhere.</div>
+    </div>
+    <div class="chat-input-area">
+      <textarea id="chatInput" rows="2" placeholder="Type a message and press Enter to send (Shift+Enter for newline)" spellcheck="false"></textarea>
+      <div class="chat-actions">
+        <input type="file" id="chatFileInput" accept="image/*" hidden />
+        <button class="chat-attach-btn" id="chatAttachBtn" title="Attach image">&#128206;</button>
+        <button class="chat-send-btn" id="chatSendBtn" title="Send (Enter)">Send</button>
+      </div>
+    </div>
+    <div class="chat-drop-overlay" id="chatDropOverlay" hidden>
+      <div class="chat-drop-message">&#128247; Drop image to send</div>
+    </div>
+  </section>
+
+  <div class="help-alert" id="helpAlert" hidden>
+    <div class="help-alert-card">
+      <div class="help-alert-icon">!</div>
+      <h2 class="help-alert-text">HELP ME!!!</h2>
+      <p class="help-alert-sub">A is asking for your help</p>
+      <button class="help-alert-dismiss" id="helpAlertDismiss">Got it</button>
+    </div>
+  </div>
+
   <audio id="remoteAudio" autoplay style="display:none"></audio>
   <audio id="speakerInAudio" autoplay style="display:none"></audio>
+  <audio id="cableOutAudio" autoplay style="display:none"></audio>
 
   <script src="lib/simplepeer.min.js"></script>
   <script src="renderer.js"></script>

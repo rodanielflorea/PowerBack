@@ -57,4 +57,12 @@ contextBridge.exposeInMainWorld('api', {
   onSignaling: (cb) => ipcRenderer.on('signaling-in', (_e, v) => cb(v)),
   onNetworkStatus: (cb) => ipcRenderer.on('network-status', (_e, v) => cb(v)),
   onNetworkError: (cb) => ipcRenderer.on('network-error', (_e, v) => cb(v)),
+  openSticky: () => ipcRenderer.invoke('sticky-open'),
+  closeSticky: () => ipcRenderer.invoke('sticky-close'),
+  clearSticky: () => ipcRenderer.invoke('sticky-clear'),
+  injectTestChat: (text) => ipcRenderer.invoke('inject-test-chat', text),
+  sendChatText: (text) => ipcRenderer.invoke('chat-send-text', text),
+  sendChatImage: (dataUrl) => ipcRenderer.invoke('chat-send-image', dataUrl),
+  onKickedBySpeaker: (cb) => ipcRenderer.on('kicked-by-speaker', () => cb()),
+  onHelpRequestReceived: (cb) => ipcRenderer.on('help-request-received', (_e, v) => cb(v)),
 });

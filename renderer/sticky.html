@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; media-src 'self' data:" />
+  <link rel="stylesheet" href="sticky.css" />
+</head>
+<body>
+  <header class="sticky-header">
+    <span class="sticky-title">&#128221; Notes from B</span>
+    <button class="sticky-clear" id="stickyClear" title="Clear all messages">clear</button>
+    <button class="sticky-close" id="stickyClose" title="Close (Ctrl+Right reopens)">&times;</button>
+  </header>
+  <main class="sticky-body" id="stickyBody">
+    <div class="sticky-empty" id="stickyEmpty">No messages yet.</div>
+  </main>
+  <script src="sticky.js"></script>
+</body>
+</html>

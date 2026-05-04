@@ -355,11 +355,19 @@ async function refreshSetupUI() {
   refreshSetupMicList();
 }
 
+function applyRoleClass(role) {
+  document.body.classList.toggle('role-supporter', role === 'supporter');
+  document.body.classList.toggle('role-speaker', role === 'speaker');
+  const chatMain = document.getElementById('chatMain');
+  if (chatMain) chatMain.hidden = role !== 'supporter';
+}
+
 function showSetup() {
   if (settingsOverlay) settingsOverlay.hidden = true;
   setupOverlay.hidden = false;
   document.body.classList.remove('in-interview');
   endBtn.classList.remove('live');
+  applyRoleClass('');
   window.api.setWebviewVisible(false);
   activateSetupTab('essentials');
   refreshSetupUI();
@@ -370,7 +378,13 @@ function hideSetup() {
   setupOverlay.hidden = true;
   document.body.classList.add('in-interview');
   endBtn.classList.add('live');
-  window.api.setWebviewVisible(true);
+  const role = setupRoleSpeaker.checked ? 'speaker' : (setupRoleSupporter.checked ? 'supporter' : '');
+  applyRoleClass(role);
+  if (role === 'supporter') {
+    window.api.setWebviewVisible(false);
+  } else {
+    window.api.setWebviewVisible(true);
+  }
 }
 
 setupStartBtn.addEventListener('click', async () => {
@@ -1605,3 +1619,201 @@ function encodeWav(samples, sampleRate) {
   }
   return buffer;
 }
+
+const chatMainEl = document.getElementById('chatMain');
+const chatHistoryEl = document.getElementById('chatHistory');
+const chatEmptyEl = document.getElementById('chatEmpty');
+const chatInputEl = document.getElementById('chatInput');
+const chatSendBtn = document.getElementById('chatSendBtn');
+const chatAttachBtn = document.getElementById('chatAttachBtn');
+const chatFileInput = document.getElementById('chatFileInput');
+const chatDropOverlay = document.getElementById('chatDropOverlay');
+const chatHeaderStatus = document.getElementById('chatHeaderStatus');
+
+function chatTime(ts) {
+  const d = new Date(ts || Date.now());
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function chatRemoveEmpty() {
+  if (chatEmptyEl && chatEmptyEl.parentNode) chatEmptyEl.remove();
+}
+
+function chatAddText(text, ok = true) {
+  if (!chatHistoryEl) return;
+  chatRemoveEmpty();
+  const wrap = document.createElement('div');
+  wrap.className = 'chat-msg' + (ok ? '' : ' failed');
+  wrap.textContent = text;
+  chatHistoryEl.appendChild(wrap);
+  const meta = document.createElement('div');
+  meta.className = 'chat-msg-meta';
+  meta.textContent = chatTime(Date.now()) + (ok ? '' : ' · failed');
+  chatHistoryEl.appendChild(meta);
+  chatHistoryEl.scrollTop = chatHistoryEl.scrollHeight;
+}
+
+function chatAddImage(dataUrl, ok = true) {
+  if (!chatHistoryEl) return;
+  chatRemoveEmpty();
+  const wrap = document.createElement('div');
+  wrap.className = 'chat-msg-image' + (ok ? '' : ' failed');
+  const img = document.createElement('img');
+  img.src = dataUrl;
+  wrap.appendChild(img);
+  chatHistoryEl.appendChild(wrap);
+  const meta = document.createElement('div');
+  meta.className = 'chat-msg-meta';
+  meta.textContent = chatTime(Date.now()) + (ok ? '' : ' · failed');
+  chatHistoryEl.appendChild(meta);
+  chatHistoryEl.scrollTop = chatHistoryEl.scrollHeight;
+}
+
+function chatSetStatus(text) {
+  if (chatHeaderStatus) chatHeaderStatus.textContent = text;
+}
+
+async function chatSendText() {
+  if (!chatInputEl) return;
+  const text = chatInputEl.value;
+  if (!text || !text.trim()) return;
+  chatInputEl.value = '';
+  const ok = await window.api.sendChatText(text).catch(() => false);
+  chatAddText(text, ok);
+  if (!ok) chatSetStatus('Send failed (not connected)');
+  else chatSetStatus('Sent');
+}
+
+async function downscaleImage(dataUrl, maxW = 1280, quality = 0.85) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxW / img.width);
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+async function chatSendFile(file) {
+  if (!file) return;
+  if (!file.type || !file.type.startsWith('image/')) {
+    chatSetStatus('Only image files supported');
+    return;
+  }
+  chatSetStatus('Encoding image…');
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const raw = e.target.result;
+    const small = await downscaleImage(raw);
+    const ok = await window.api.sendChatImage(small).catch(() => false);
+    chatAddImage(small, ok);
+    chatSetStatus(ok ? 'Image sent' : 'Image send failed (not connected)');
+  };
+  reader.readAsDataURL(file);
+}
+
+if (chatSendBtn) chatSendBtn.addEventListener('click', () => chatSendText());
+if (chatInputEl) chatInputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    chatSendText();
+  }
+});
+
+if (chatAttachBtn) chatAttachBtn.addEventListener('click', () => chatFileInput && chatFileInput.click());
+if (chatFileInput) chatFileInput.addEventListener('change', () => {
+  if (chatFileInput.files && chatFileInput.files[0]) chatSendFile(chatFileInput.files[0]);
+  chatFileInput.value = '';
+});
+
+if (chatMainEl) {
+  let dragCounter = 0;
+  chatMainEl.addEventListener('dragenter', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    dragCounter++;
+    if (chatDropOverlay) chatDropOverlay.hidden = false;
+  });
+  chatMainEl.addEventListener('dragleave', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    dragCounter--;
+    if (dragCounter <= 0 && chatDropOverlay) { chatDropOverlay.hidden = true; dragCounter = 0; }
+  });
+  chatMainEl.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
+  chatMainEl.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    dragCounter = 0;
+    if (chatDropOverlay) chatDropOverlay.hidden = true;
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+      chatSendFile(e.dataTransfer.files[0]);
+    }
+  });
+}
+
+if (chatInputEl) chatInputEl.addEventListener('paste', (e) => {
+  if (!e.clipboardData) return;
+  for (const item of e.clipboardData.items) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      e.preventDefault();
+      chatSendFile(item.getAsFile());
+      return;
+    }
+  }
+});
+
+window.api.onKickedBySpeaker(() => {
+  log('Disconnected by speaker — auto-reconnect disabled', 'err');
+  if (typeof teardownPeers === 'function') teardownPeers();
+  if (netActionBtn) delete netActionBtn.dataset.connecting;
+  window.alert('You were disconnected by the speaker. Click End to reconfigure or reconnect.');
+});
+
+const helpAlertEl = document.getElementById('helpAlert');
+const helpAlertDismissEl = document.getElementById('helpAlertDismiss');
+let helpAlertTimer = null;
+
+function playHelpBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const playTone = (freq, start, dur) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = freq;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0, ctx.currentTime + start);
+      gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + start + 0.02);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + start + dur);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(ctx.currentTime + start);
+      osc.stop(ctx.currentTime + start + dur);
+    };
+    playTone(880, 0, 0.18);
+    playTone(660, 0.22, 0.18);
+    playTone(880, 0.44, 0.22);
+    setTimeout(() => { try { ctx.close(); } catch {} }, 800);
+  } catch {}
+}
+
+function showHelpAlert() {
+  if (!helpAlertEl) return;
+  helpAlertEl.hidden = false;
+  playHelpBeep();
+  if (helpAlertTimer) clearTimeout(helpAlertTimer);
+  helpAlertTimer = setTimeout(() => { helpAlertEl.hidden = true; }, 8000);
+  log('HELP REQUEST received from speaker', 'err');
+}
+
+if (helpAlertDismissEl) helpAlertDismissEl.addEventListener('click', () => {
+  if (helpAlertEl) helpAlertEl.hidden = true;
+  if (helpAlertTimer) { clearTimeout(helpAlertTimer); helpAlertTimer = null; }
+});
+
+window.api.onHelpRequestReceived(() => showHelpAlert());
