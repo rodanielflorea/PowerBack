@@ -59,11 +59,3 @@ I think it's better to create a new way for output mic so that in the google mee
 
 First tell me if it is acceptable, and what you understood. Once I confirm everything then proceed.
 
-
-Q1, ok,
-Q2, aOnly
-Q3, ok
-Q4, yes
-Q5, yes
-Q6. IP+port and make it only one supporter not 1 to N make it 1 to 1.
-And on B's side, chat page is now in the setting, I want to show chat page in the main page as soon as join as a supporter mode.

@@ -18,14 +18,6 @@
     <div class="slider" id="slider" title="Click and drag horizontally to change opacity">
       <div class="slider-fill" id="sliderFill"></div>
     </div>
-    <div class="header-tools">
-      <button class="btn iv-btn" id="urlMenuBtn" title="Switch site">&#9662;</button>
-      <button class="btn iv-btn" id="reloadBtn" title="Reload site">&#8635;</button>
-      <button class="btn iv-btn" id="settingsBtn" title="Settings">&#9881;</button>
-      <button class="btn iv-btn rec-btn" id="recBtn" title="Start transcription">
-        <span class="rec-dot"></span>
-      </button>
-    </div>
     <button class="btn stealth-btn" id="stealthBtn" title="Toggle stealth (hidden from screen capture)">
       <svg class="stealth-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path class="shield-body" d="M12 2 L4 5 L4 12 C4 16.5 7.5 20.5 12 22 C16.5 20.5 20 16.5 20 12 L20 5 Z" />
@@ -40,6 +32,15 @@
     <button class="btn" id="hideBtn" title="Hide (Ctrl+Alt+H)">&minus;</button>
     <button class="btn" id="quitBtn" title="Quit">&times;</button>
   </header>
+
+  <aside class="right-rail iv-btn" id="rightRail">
+    <button class="rail-btn" id="urlMenuBtn" title="Switch site">&#9662;</button>
+    <button class="rail-btn" id="reloadBtn" title="Reload site">&#8635;</button>
+    <button class="rail-btn" id="settingsBtn" title="Settings">&#9881;</button>
+    <button class="rail-btn rec-btn" id="recBtn" title="Start transcription">
+      <span class="rec-dot"></span>
+    </button>
+  </aside>
 
   <section class="settings-overlay" id="settingsOverlay" hidden>
     <div class="settings-header">
@@ -247,14 +248,30 @@
         <section class="settings-section">
           <h3>Virtual mic output (relay to meeting app)</h3>
           <p class="hint">For meeting apps like Zoom / Meet / Teams to hear A (or B in 📢 mode), install a virtual audio cable, pick "CABLE Input" here, and set the meeting's mic to "CABLE Output".</p>
+          <p class="hint" style="background:#fef3c7;border:1px solid #f59e0b;color:#78350f;padding:6px 8px;border-radius:4px;margin:6px 0">
+            <b>&#9888; Important:</b> only set CABLE Input as the <i>app's</i> output device below. Do <b>NOT</b> set CABLE Input as your <b>Windows default output</b> (System &rarr; Sound &rarr; Output) &mdash; that breaks A's ability to hear B's voice through your headphones, and creates a feedback loop on system-audio capture.
+          </p>
           <div class="field">
-            <label for="netVirtualCable">Output device</label>
+            <label for="netVirtualCable">Output device (relay to meeting)</label>
             <select id="netVirtualCable"></select>
           </div>
           <div class="net-cable-status" id="netCableStatus">Pick an output device above.</div>
           <div style="display:flex;gap:8px;margin-top:8px">
             <button class="action-btn-secondary" id="getVbCableBtn">Get VB-Cable</button>
             <button class="action-btn-secondary" id="testCableBtn">Test cable (1s tone)</button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3>Local listen device (your headphones)</h3>
+          <p class="hint">Where the incoming audio from the other side plays on <b>this</b> machine. Set this explicitly to your headphones / speakers so it never accidentally routes into a virtual cable.</p>
+          <div class="field">
+            <label for="netListenDevice">Output device (your headphones)</label>
+            <select id="netListenDevice"></select>
+          </div>
+          <div class="net-cable-status" id="netListenStatus">Defaults to Windows default output if blank.</div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button class="action-btn-secondary" id="testListenBtn">Test listen device (1s tone)</button>
           </div>
         </section>
       </div>

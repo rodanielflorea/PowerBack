@@ -410,6 +410,8 @@ setupStartBtn.addEventListener('click', async () => {
   await window.api.setMode(chosenMode);
   mode = chosenMode;
   await window.api.setNetworkConfig(patch);
+  netCfg = await window.api.getNetworkConfig();
+  log(`Setup-start: netCfg refreshed (role=${netCfg.role || 'none'})`, 'info');
   await window.api.startNetwork();
   hideSetup();
   const showAddr = chosenRole === 'speaker' ? `0.0.0.0:${patch.speakerPort}` : patch.supporterAddress;
@@ -1116,6 +1118,13 @@ function isSilent(samples) {
 
 let netCfg = null;
 
+(async () => {
+  try {
+    netCfg = await window.api.getNetworkConfig();
+    log(`Init: netCfg loaded (role=${netCfg.role || 'none'})`, 'info');
+  } catch (e) { log('Init: netCfg load failed: ' + e.message, 'err'); }
+})();
+
 async function refreshNetworkUI() {
   netCfg = await window.api.getNetworkConfig();
   const status = await window.api.getNetworkStatus();
@@ -1338,7 +1347,45 @@ window.api.onNetworkError((msg) => {
   }
 });
 
-const RTC_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+const RTC_CONFIG = {
+  iceServers: [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] },
+  ],
+  iceTransportPolicy: 'all',
+};
+
+function describeCandidate(c) {
+  const m = (c || '').match(/candidate:\S+\s+\d+\s+(\S+)\s+\d+\s+(\S+)\s+(\d+)\s+typ\s+(\S+)/);
+  if (!m) return c || '';
+  return `${m[4]} ${m[1]} ${m[2]}:${m[3]}`;
+}
+
+function attachPcDiagnostics(peer, label) {
+  const tryAttach = () => {
+    const pc = peer && peer._pc;
+    if (!pc) return false;
+    pc.addEventListener('iceconnectionstatechange', () =>
+      log(`${label}: iceConnectionState=${pc.iceConnectionState}`, 'info'));
+    pc.addEventListener('connectionstatechange', () =>
+      log(`${label}: connectionState=${pc.connectionState}`, 'info'));
+    pc.addEventListener('icegatheringstatechange', () =>
+      log(`${label}: iceGatheringState=${pc.iceGatheringState}`, 'info'));
+    pc.addEventListener('icecandidateerror', (ev) =>
+      log(`${label}: ICE candidate error: ${ev.errorText || ev.errorCode || 'unknown'} (host=${ev.hostCandidate || ''})`, 'err'));
+    pc.addEventListener('icecandidate', (ev) => {
+      if (ev.candidate && ev.candidate.candidate) {
+        log(`${label}: ICE local candidate gathered: ${describeCandidate(ev.candidate.candidate)}`, 'info');
+      } else if (!ev.candidate) {
+        log(`${label}: ICE gathering complete`, 'info');
+      }
+    });
+    log(`${label}: PC diagnostics attached (initial iceConnectionState=${pc.iceConnectionState})`, 'info');
+    return true;
+  };
+  if (!tryAttach()) {
+    setTimeout(() => { if (!tryAttach()) log(`${label}: PC diagnostics could not attach (no _pc)`, 'err'); }, 0);
+  }
+}
 const speakerPeers = new Map();
 let supporterPeer = null;
 let speakerLocalStream = null;
@@ -1489,22 +1536,33 @@ async function speakerHandleOpened(connId) {
     config: RTC_CONFIG,
   });
   speakerPeers.set(connId, { peer });
+  attachPcDiagnostics(peer, `Speaker[${connId}]`);
 
   peer.on('signal', (sig) => {
+    if (sig && sig.candidate && sig.candidate.candidate) {
+      log(`Speaker[${connId}]: ICE local candidate: ${describeCandidate(sig.candidate.candidate)}`, 'info');
+    }
     window.api.sendSignaling({ connId, type: 'signal', payload: sig });
   });
   peer.on('connect', () => log(`Speaker[${connId}]: P2P connected`, 'info'));
-  peer.on('stream', (remote) => {
-    log(`Speaker[${connId}]: receiving supporter audio (${remote.getAudioTracks().length} track)`, 'info');
+  const speakerSeenStreams = new Set();
+  const attachRemote = (remote, src) => {
+    if (speakerSeenStreams.has(remote.id)) return;
+    speakerSeenStreams.add(remote.id);
+    log(`Speaker[${connId}]: receiving supporter audio via ${src} (${remote.getAudioTracks().length} track)`, 'info');
+    applyListenSink(speakerInAudioEl).catch(() => {});
     speakerInAudioEl.srcObject = remote;
     const vol = Math.min(1, (netCfg && netCfg.incomingVolume != null) ? netCfg.incomingVolume : 1);
     speakerInAudioEl.volume = vol;
     speakerInAudioEl.muted = false;
     const p = speakerInAudioEl.play();
-    if (p && p.catch) p.catch((err) => log('Speaker: <audio>.play() rejected: ' + err.message, 'err'));
+    if (p && p.then) p.then(() => log(`Speaker[${connId}]: <audio> play() resolved`, 'info'))
+                     .catch((err) => log(`Speaker[${connId}]: <audio>.play() rejected: ${err.message}`, 'err'));
     startLevelMeter(remote);
     if (typeof attachBToCable === 'function') attachBToCable(remote);
-  });
+  };
+  peer.on('stream', (remote) => attachRemote(remote, 'stream'));
+  peer.on('track', (track, remote) => attachRemote(remote, `track[${track.kind}]`));
   peer.on('error', (err) => log(`Speaker[${connId}] peer error: ${err.message}`, 'err'));
   peer.on('close', () => {
     log(`Speaker[${connId}]: peer closed`, 'info');
@@ -1527,33 +1585,48 @@ function speakerHandleClosed(connId) {
   }
 }
 
+let supporterMicPromise = null;
 async function ensureSupporterMic() {
   if (supporterMicTrack) return supporterMicTrack;
-  try {
-    supporterMicStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      },
-    });
-    supporterMicTrack = supporterMicStream.getAudioTracks()[0];
-    supporterMicTrack.enabled = true;
-    setPttStatus(true);
-    log('Supporter mic active (transmitting to speaker)', 'info');
-    return supporterMicTrack;
-  } catch (e) {
-    log('Supporter mic capture failed: ' + e.message, 'err');
-    return null;
-  }
+  if (supporterMicPromise) return supporterMicPromise;
+  supporterMicPromise = (async () => {
+    try {
+      supporterMicStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+      supporterMicTrack = supporterMicStream.getAudioTracks()[0];
+      supporterMicTrack.enabled = true;
+      setPttStatus(true);
+      log('Supporter mic active (transmitting to speaker)', 'info');
+      return supporterMicTrack;
+    } catch (e) {
+      log('Supporter mic capture failed: ' + e.message, 'err');
+      return null;
+    } finally {
+      supporterMicPromise = null;
+    }
+  })();
+  return supporterMicPromise;
 }
 
+let supporterPeerPromise = null;
 async function ensureSupporterPeer() {
   if (supporterPeer) return supporterPeer;
+  if (supporterPeerPromise) return supporterPeerPromise;
   if (!SimplePeerLib) { log('SimplePeer not loaded', 'err'); return null; }
-  const micTrack = await ensureSupporterMic();
-  const localStream = micTrack ? supporterMicStream : undefined;
+  supporterPeerPromise = (async () => {
+    const micTrack = await ensureSupporterMic();
+    const localStream = micTrack ? supporterMicStream : undefined;
+    return _createSupporterPeer(localStream);
+  })().finally(() => { supporterPeerPromise = null; });
+  return supporterPeerPromise;
+}
 
+function _createSupporterPeer(localStream) {
   supporterPeer = new SimplePeerLib({
     initiator: false,
     trickle: true,
@@ -1561,21 +1634,32 @@ async function ensureSupporterPeer() {
     config: RTC_CONFIG,
   });
 
+  attachPcDiagnostics(supporterPeer, 'Supporter');
   supporterPeer.on('signal', (sig) => {
+    if (sig && sig.candidate && sig.candidate.candidate) {
+      log(`Supporter: ICE local candidate: ${describeCandidate(sig.candidate.candidate)}`, 'info');
+    }
     window.api.sendSignaling({ type: 'signal', payload: sig });
   });
   supporterPeer.on('connect', () => log('Supporter: P2P connected', 'info'));
-  supporterPeer.on('stream', (remote) => {
-    log(`Supporter: received remote stream (${remote.getAudioTracks().length} audio track)`, 'info');
+  const supSeenStreams = new Set();
+  const attachRemote = (remote, src) => {
+    if (supSeenStreams.has(remote.id)) return;
+    supSeenStreams.add(remote.id);
+    log(`Supporter: received remote stream via ${src} (${remote.getAudioTracks().length} audio track)`, 'info');
+    applyListenSink(remoteAudioEl).catch(() => {});
     remoteAudioEl.srcObject = remote;
     const vol = Math.min(1, (netCfg && netCfg.incomingVolume != null) ? netCfg.incomingVolume : 1);
     remoteAudioEl.volume = vol;
     remoteAudioEl.muted = false;
     const p = remoteAudioEl.play();
-    if (p && p.catch) p.catch((err) => log('Supporter: <audio>.play() rejected: ' + err.message, 'err'));
+    if (p && p.then) p.then(() => log(`Supporter: <audio> play() resolved`, 'info'))
+                     .catch((err) => log('Supporter: <audio>.play() rejected: ' + err.message, 'err'));
     log(`Supporter: <audio> attached (volume=${vol})`, 'info');
     startLevelMeter(remote);
-  });
+  };
+  supporterPeer.on('stream', (remote) => attachRemote(remote, 'stream'));
+  supporterPeer.on('track', (track, remote) => attachRemote(remote, `track[${track.kind}]`));
   supporterPeer.on('error', (err) => log('Supporter peer error: ' + err.message, 'err'));
   supporterPeer.on('close', () => {
     log('Supporter: peer closed', 'info');
@@ -1854,6 +1938,9 @@ const micPillLabelEl = document.getElementById('micPillLabel');
 const netVirtualCableEl = document.getElementById('netVirtualCable');
 const netCableStatusEl = document.getElementById('netCableStatus');
 const getVbCableBtnEl = document.getElementById('getVbCableBtn');
+const netListenDeviceEl = document.getElementById('netListenDevice');
+const netListenStatusEl = document.getElementById('netListenStatus');
+const testListenBtnEl = document.getElementById('testListenBtn');
 
 const MIC_MODE_LABELS = { mute: 'MUTE', aOnly: 'TO A', aAndC: 'TO A+C' };
 const MIC_MODE_ICONS = { mute: '\u{1F507}', aOnly: '\u{1F512}', aAndC: '\u{1F4E2}' };
@@ -1955,38 +2042,83 @@ async function refreshCablePicker() {
   try {
     devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audiooutput');
   } catch {}
-  const current = (netCfg && netCfg.virtualCableId) || '';
-  netVirtualCableEl.innerHTML = '';
-  const none = document.createElement('option');
-  none.value = '';
-  none.textContent = '-- None --';
-  netVirtualCableEl.appendChild(none);
   const cables = devs.filter(d => CABLE_RE.test(d.label || ''));
   const others = devs.filter(d => !CABLE_RE.test(d.label || ''));
-  if (cables.length) {
-    const grp = document.createElement('optgroup');
-    grp.label = 'Virtual cables (recommended)';
-    cables.forEach(d => {
-      const o = document.createElement('option');
-      o.value = d.deviceId;
-      o.textContent = d.label || ('Virtual ' + d.deviceId.slice(0, 6));
-      grp.appendChild(o);
-    });
-    netVirtualCableEl.appendChild(grp);
+  const populate = (selectEl, currentId, noneLabel, cablesGroupLabel, othersGroupLabel) => {
+    selectEl.innerHTML = '';
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = noneLabel;
+    selectEl.appendChild(none);
+    if (cables.length) {
+      const grp = document.createElement('optgroup');
+      grp.label = cablesGroupLabel;
+      cables.forEach(d => {
+        const o = document.createElement('option');
+        o.value = d.deviceId;
+        o.textContent = d.label || ('Virtual ' + d.deviceId.slice(0, 6));
+        grp.appendChild(o);
+      });
+      selectEl.appendChild(grp);
+    }
+    if (others.length) {
+      const grp = document.createElement('optgroup');
+      grp.label = othersGroupLabel;
+      others.forEach(d => {
+        const o = document.createElement('option');
+        o.value = d.deviceId;
+        o.textContent = d.label || ('Output ' + d.deviceId.slice(0, 6));
+        grp.appendChild(o);
+      });
+      selectEl.appendChild(grp);
+    }
+    selectEl.value = currentId || '';
+  };
+  populate(netVirtualCableEl, (netCfg && netCfg.virtualCableId) || '', '-- None --', 'Virtual cables (recommended)', 'Other output devices');
+  if (netListenDeviceEl) {
+    populate(netListenDeviceEl, (netCfg && netCfg.listenDeviceId) || '', '-- Windows default --', 'Virtual cables (NOT recommended for listening)', 'Headphones / speakers (recommended)');
   }
-  if (others.length) {
-    const grp = document.createElement('optgroup');
-    grp.label = 'Other output devices';
-    others.forEach(d => {
-      const o = document.createElement('option');
-      o.value = d.deviceId;
-      o.textContent = d.label || ('Output ' + d.deviceId.slice(0, 6));
-      grp.appendChild(o);
-    });
-    netVirtualCableEl.appendChild(grp);
-  }
-  netVirtualCableEl.value = current || '';
   updateCableStatus();
+  updateListenStatus();
+}
+
+function updateListenStatus() {
+  if (!netListenStatusEl) return;
+  const id = (netCfg && netCfg.listenDeviceId) || '';
+  if (!id) {
+    netListenStatusEl.textContent = 'Defaults to Windows default output if blank.';
+    netListenStatusEl.className = 'net-cable-status';
+    return;
+  }
+  let label = id;
+  if (netListenDeviceEl) {
+    for (const o of netListenDeviceEl.options) { if (o.value === id) { label = o.textContent; break; } }
+  }
+  if (CABLE_RE.test(label)) {
+    netListenStatusEl.textContent = '⚠ Listening on a virtual cable: ' + label + '. You will not hear the other side through your headphones.';
+    netListenStatusEl.className = 'net-cable-status err';
+  } else {
+    netListenStatusEl.textContent = 'Listening on: ' + label;
+    netListenStatusEl.className = 'net-cable-status ok';
+  }
+}
+
+async function applyListenSink(audioEl) {
+  if (!audioEl) return;
+  const id = (netCfg && netCfg.listenDeviceId) || '';
+  if (!id) return;
+  if (typeof audioEl.setSinkId !== 'function') return;
+  try {
+    await audioEl.setSinkId(id);
+    log('Listen sink set on <audio>', 'info');
+  } catch (e) {
+    log('Listen sink failed: ' + e.message, 'err');
+  }
+}
+
+async function reapplyListenSinkAll() {
+  await applyListenSink(speakerInAudioEl);
+  await applyListenSink(remoteAudioEl);
 }
 
 function updateCableStatus() {
@@ -2010,16 +2142,64 @@ function updateCableStatus() {
   }
 }
 
+async function isDeviceWindowsDefault(deviceId) {
+  if (!deviceId) return false;
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const outs = devs.filter(d => d.kind === 'audiooutput');
+    const defAlias = outs.find(d => d.deviceId === 'default');
+    if (!defAlias) return false;
+    const target = outs.find(d => d.deviceId === deviceId);
+    if (!target) return false;
+    return defAlias.groupId && target.groupId && defAlias.groupId === target.groupId;
+  } catch { return false; }
+}
+
 if (netVirtualCableEl) netVirtualCableEl.addEventListener('change', async () => {
   const id = netVirtualCableEl.value || '';
   await window.api.setNetworkConfig({ virtualCableId: id });
   netCfg = await window.api.getNetworkConfig();
   updateCableStatus();
   if (id && (netCfg.role === 'speaker')) ensureCableMixer();
+  if (id && (await isDeviceWindowsDefault(id))) {
+    toast('⚠ This virtual cable is also your Windows default output. Open System → Sound → Output and pick your headphones as default — otherwise A cannot hear B and system loopback will feed back.', 'warn');
+    log('WARN: virtual cable matches Windows default output device — misconfiguration', 'err');
+  }
 });
 
 if (getVbCableBtnEl) getVbCableBtnEl.addEventListener('click', () => {
   window.api.openExternal('https://vb-audio.com/Cable/');
+});
+
+if (netListenDeviceEl) netListenDeviceEl.addEventListener('change', async () => {
+  const id = netListenDeviceEl.value || '';
+  await window.api.setNetworkConfig({ listenDeviceId: id });
+  netCfg = await window.api.getNetworkConfig();
+  updateListenStatus();
+  await reapplyListenSinkAll();
+});
+
+if (testListenBtnEl) testListenBtnEl.addEventListener('click', async () => {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const dest = ctx.createMediaStreamDestination();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = 660;
+    gain.gain.value = 0.2;
+    osc.connect(gain).connect(dest);
+    osc.start();
+    setTimeout(() => { osc.stop(); }, 1000);
+    const audio = new Audio();
+    audio.srcObject = dest.stream;
+    const id = (netCfg && netCfg.listenDeviceId) || '';
+    if (id) { try { await audio.setSinkId(id); } catch (e) { toast('setSinkId failed: ' + e.message, 'warn'); } }
+    audio.play();
+    setTimeout(() => { try { ctx.close(); audio.srcObject = null; } catch {} }, 1300);
+    toast('🔊 Test tone played to listen device (you should hear a 660 Hz beep)', 'info');
+  } catch (e) {
+    toast('Test listen failed: ' + e.message, 'warn');
+  }
 });
 
 async function ensureCableMixer() {
@@ -2066,9 +2246,21 @@ function attachBToCable(stream) {
 if (settingsBtn) settingsBtn.addEventListener('click', () => {
   refreshCablePicker().catch(() => {});
   refreshMicPill().catch(() => {});
+  (async () => {
+    const id = (netCfg && netCfg.virtualCableId) || '';
+    if (id && (await isDeviceWindowsDefault(id))) {
+      toast('⚠ Virtual cable matches Windows default output. Pick your headphones as Windows default in System → Sound → Output.', 'warn');
+    }
+  })();
 });
 
 window.api.onNetworkStatus((status) => {
+  if (status && status.role && (!netCfg || netCfg.role !== status.role)) {
+    window.api.getNetworkConfig().then(c => {
+      netCfg = c;
+      log(`Sync: netCfg.role refreshed from network-status (role=${netCfg.role || 'none'})`, 'info');
+    }).catch(() => {});
+  }
   if (status && (status.role === 'speaker' || status.role === 'supporter')) {
     refreshMicPill().catch(() => {});
   }

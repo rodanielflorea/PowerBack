@@ -10,6 +10,8 @@ const WebSocket = require('ws');
 let autoUpdater = null;
 try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
 
+app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
+
 const STATE_FILE = path.join(app.getPath('userData'), 'state.json');
 const LOG_FILE = path.join(app.getPath('userData'), 'activity.log');
 const LOG_MAX_LINES_RETURNED = 500;
@@ -69,9 +71,10 @@ const DEFAULT_STATE = {
     incomingVolume: 1.0,
     outgoingVolume: 1.0,
     virtualCableId: '',
+    listenDeviceId: '',
   },
   welcomeSeen: false,
-  stickyPos: null,
+  stickyAnchor: null,
   hotkeys: { ...HOTKEY_DEFAULTS },
 };
 
@@ -81,6 +84,7 @@ const OPACITY_STEP = 0.05;
 const SCROLL_STEP = 100;
 const HEADER_H = 28;
 const RAIL_W = 0;
+const RIGHT_RAIL_W = 30;
 
 let win;
 let webView;
@@ -103,14 +107,104 @@ function normalizeWord(w) {
   return w.toLowerCase().replace(/[^\w']/g, '');
 }
 
+function wordsApproxEqual(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const lenA = a.length, lenB = b.length;
+  if (Math.abs(lenA - lenB) > 1) return false;
+  if (lenA >= 4 && lenB >= 4) {
+    const minLen = Math.min(lenA, lenB);
+    let common = 0;
+    for (let i = 0; i < minLen; i++) {
+      if (a[i] === b[i]) common++;
+      else break;
+    }
+    if (common >= Math.max(4, minLen - 1)) return true;
+  }
+  let i = 0, j = 0, edits = 0;
+  while (i < lenA && j < lenB) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    edits++;
+    if (edits > 1) return false;
+    if (lenA > lenB) i++;
+    else if (lenB > lenA) j++;
+    else { i++; j++; }
+  }
+  edits += (lenA - i) + (lenB - j);
+  return edits <= 1;
+}
+
+function windowsApproxEqual(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (!wordsApproxEqual(a[i], b[i])) return false;
+  return true;
+}
+
+function trimSeenPrefix(newWordsNorm, histNorm, lookback) {
+  if (newWordsNorm.length === 0) return 0;
+  const tail = histNorm.slice(-lookback);
+  if (tail.length === 0) return 0;
+  let total = 0;
+  let progress = true;
+  while (progress && total < newWordsNorm.length) {
+    progress = false;
+    for (let len = Math.min(newWordsNorm.length - total, 8); len >= 1; len--) {
+      const slice = newWordsNorm.slice(total, total + len);
+      let found = false;
+      for (let i = 0; i + len <= tail.length; i++) {
+        if (windowsApproxEqual(tail.slice(i, i + len), slice)) { found = true; break; }
+      }
+      if (found) {
+        total += len;
+        progress = true;
+        break;
+      }
+    }
+  }
+  return total;
+}
+
+function dedupeInlinePhrases(words) {
+  if (words.length < 4) return words;
+  const out = words.slice();
+  for (let phraseLen = 5; phraseLen >= 2; phraseLen--) {
+    let i = 0;
+    while (i + 2 * phraseLen <= out.length) {
+      const aNorm = out.slice(i, i + phraseLen).map(normalizeWord);
+      const bNorm = out.slice(i + phraseLen, i + 2 * phraseLen).map(normalizeWord);
+      if (windowsApproxEqual(aNorm, bNorm)) {
+        out.splice(i + phraseLen, phraseLen);
+        // re-check at same i for cascading repeats
+      } else {
+        i++;
+      }
+    }
+  }
+  return out;
+}
+
+let pendingTrailing = '';
+let pendingIdleFrames = 0;
+const PENDING_FLUSH_AFTER_IDLE = 5;
+
+function resetSmartDiffState() {
+  pastedHistory = [];
+  pendingTrailing = '';
+  pendingIdleFrames = 0;
+}
+
 function smartDiff(curr) {
   if (!curr) return '';
   const currWords = curr.split(/\s+/).filter(Boolean);
   if (currWords.length === 0) return '';
 
-  if (pastedHistory.length === 0) {
-    pastedHistory = currWords.slice(-MAX_HISTORY_WORDS);
-    return curr;
+  if (pastedHistory.length === 0 && !pendingTrailing) {
+    let head = currWords.slice(0, -1);
+    if (head.length >= 4) head = dedupeInlinePhrases(head);
+    pendingTrailing = currWords[currWords.length - 1];
+    pendingIdleFrames = 0;
+    pastedHistory = head.slice(-MAX_HISTORY_WORDS);
+    return head.length > 0 ? head.join(' ') : '';
   }
 
   const histNorm = pastedHistory.map(normalizeWord);
@@ -121,30 +215,83 @@ function smartDiff(curr) {
   for (let n = maxN; n >= 2; n--) {
     let m = true;
     for (let i = 0; i < n; i++) {
-      if (histNorm[histNorm.length - n + i] !== currNorm[i]) { m = false; break; }
+      if (!wordsApproxEqual(histNorm[histNorm.length - n + i], currNorm[i])) { m = false; break; }
     }
     if (m) { prefixMatch = n; break; }
   }
 
   let windowMatch = 0;
   if (currNorm.length >= WINDOW_K && histNorm.length >= WINDOW_K) {
-    const wset = new Set();
+    const histWindows = [];
     for (let i = 0; i + WINDOW_K <= histNorm.length; i++) {
-      wset.add(histNorm.slice(i, i + WINDOW_K).join(' '));
+      histWindows.push(histNorm.slice(i, i + WINDOW_K));
     }
     for (let i = 0; i + WINDOW_K <= currNorm.length; i++) {
-      if (wset.has(currNorm.slice(i, i + WINDOW_K).join(' '))) {
-        windowMatch = i + WINDOW_K;
+      const cw = currNorm.slice(i, i + WINDOW_K);
+      for (let h = 0; h < histWindows.length; h++) {
+        if (windowsApproxEqual(histWindows[h], cw)) { windowMatch = i + WINDOW_K; break; }
       }
     }
   }
 
   const skipTo = Math.max(prefixMatch, windowMatch);
-  if (skipTo >= currWords.length) return '';
+  let newWords = currWords.slice(skipTo);
 
-  const newWords = currWords.slice(skipTo);
-  pastedHistory = pastedHistory.concat(newWords).slice(-MAX_HISTORY_WORDS);
-  return ' ' + newWords.join(' ');
+  if (newWords.length > 0) {
+    const newNorm = newWords.map(normalizeWord);
+    const trimmed = trimSeenPrefix(newNorm, histNorm, 60);
+    if (trimmed > 0) newWords = newWords.slice(trimmed);
+  }
+  if (newWords.length >= 4) newWords = dedupeInlinePhrases(newWords);
+
+  if (pendingTrailing) {
+    const pendNorm = normalizeWord(pendingTrailing);
+    if (newWords.length > 0) {
+      const firstNorm = normalizeWord(newWords[0]);
+      if (firstNorm === pendNorm) {
+        newWords = newWords.slice(1);
+        pendingIdleFrames = 0;
+      } else if (firstNorm.length > pendNorm.length && firstNorm.startsWith(pendNorm)) {
+        pendingTrailing = newWords[0];
+        newWords = newWords.slice(1);
+        pendingIdleFrames = 0;
+      } else if (pendNorm.length > firstNorm.length && pendNorm.startsWith(firstNorm)) {
+        newWords = newWords.slice(1);
+        pendingIdleFrames = 0;
+      } else {
+        const flush = pendingTrailing;
+        pendingTrailing = '';
+        pendingIdleFrames = 0;
+        pastedHistory.push(flush);
+        newWords = [flush, ...newWords];
+      }
+    } else {
+      pendingIdleFrames++;
+      if (pendingIdleFrames >= PENDING_FLUSH_AFTER_IDLE) {
+        const flush = pendingTrailing;
+        pendingTrailing = '';
+        pendingIdleFrames = 0;
+        pastedHistory.push(flush);
+        pastedHistory = pastedHistory.slice(-MAX_HISTORY_WORDS);
+        return ' ' + flush;
+      }
+      return '';
+    }
+  }
+
+  if (newWords.length === 0) return '';
+
+  const newPending = newWords[newWords.length - 1];
+  const toEmit = newWords.slice(0, -1);
+  pendingTrailing = newPending;
+  pendingIdleFrames = 0;
+
+  if (toEmit.length === 0) return '';
+  if (toEmit.length > 40 && win) {
+    win.webContents.send('capture-text', `[OCR diff: large emission ${toEmit.length} words — likely match drift]`);
+  }
+  pastedHistory = pastedHistory.concat(toEmit).slice(-MAX_HISTORY_WORDS);
+  return ' ' + toEmit.join(' ');
 }
 
 function loadState() {
@@ -193,7 +340,7 @@ function layoutWebView() {
   webView.setBounds({
     x: RAIL_W,
     y: HEADER_H,
-    width: Math.max(0, w - RAIL_W),
+    width: Math.max(0, w - RAIL_W - RIGHT_RAIL_W),
     height: Math.max(0, h - HEADER_H),
   });
 }
@@ -245,6 +392,8 @@ function createWindow() {
     y: state.y ?? undefined,
     width: state.width,
     height: state.height,
+    minWidth: 360,
+    minHeight: 200,
     useContentSize: true,
     frame: false,
     backgroundColor: '#ffffff',
@@ -312,30 +461,82 @@ function setStealth(value) {
   win.webContents.send('stealth-changed', state.stealth);
 }
 
+function computeDefaultStickyAnchor(mainW, mainH, stickyW, stickyH) {
+  const [mx, my] = win.getPosition();
+  const display = screen.getDisplayMatching(win.getBounds());
+  const work = display.workArea;
+  const gap = 6;
+  if (mx + mainW + gap + stickyW <= work.x + work.width) {
+    return { xMode: 'rightOf', xGap: gap, yMode: 'alignTop', yOffset: 0 };
+  }
+  if (mx - gap - stickyW >= work.x) {
+    return { xMode: 'leftOf', xGap: gap, yMode: 'alignTop', yOffset: 0 };
+  }
+  if (my + mainH + gap + stickyH <= work.y + work.height) {
+    return { xMode: 'alignLeft', xOffset: 0, yMode: 'belowOf', yGap: gap };
+  }
+  return { xMode: 'alignLeft', xOffset: 0, yMode: 'aboveOf', yGap: gap };
+}
+
+function computeStickyXY(anchor, mainX, mainY, mainW, mainH, stickyW, stickyH) {
+  let sx, sy;
+  switch (anchor.xMode) {
+    case 'rightOf':   sx = mainX + mainW + (anchor.xGap || 0); break;
+    case 'leftOf':    sx = mainX - (anchor.xGap || 0) - stickyW; break;
+    case 'alignRight':sx = mainX + mainW - stickyW + (anchor.xOffset || 0); break;
+    case 'alignLeft':
+    default:          sx = mainX + (anchor.xOffset || 0); break;
+  }
+  switch (anchor.yMode) {
+    case 'belowOf':    sy = mainY + mainH + (anchor.yGap || 0); break;
+    case 'aboveOf':    sy = mainY - (anchor.yGap || 0) - stickyH; break;
+    case 'alignBottom':sy = mainY + mainH - stickyH + (anchor.yOffset || 0); break;
+    case 'alignTop':
+    default:           sy = mainY + (anchor.yOffset || 0); break;
+  }
+  return { sx, sy };
+}
+
+function deriveStickyAnchor(stickyX, stickyY, stickyW, stickyH, mainX, mainY, mainW, mainH) {
+  const anchor = {};
+  if (stickyX >= mainX + mainW) {
+    anchor.xMode = 'rightOf';
+    anchor.xGap = stickyX - (mainX + mainW);
+  } else if (stickyX + stickyW <= mainX) {
+    anchor.xMode = 'leftOf';
+    anchor.xGap = mainX - (stickyX + stickyW);
+  } else {
+    anchor.xMode = 'alignLeft';
+    anchor.xOffset = stickyX - mainX;
+  }
+  if (stickyY >= mainY + mainH) {
+    anchor.yMode = 'belowOf';
+    anchor.yGap = stickyY - (mainY + mainH);
+  } else if (stickyY + stickyH <= mainY) {
+    anchor.yMode = 'aboveOf';
+    anchor.yGap = mainY - (stickyY + stickyH);
+  } else {
+    anchor.yMode = 'alignTop';
+    anchor.yOffset = stickyY - mainY;
+  }
+  return anchor;
+}
+
+let stickyMovingProgrammatically = 0;
 function syncStickyPosition(force) {
   if (!stickyWin || stickyWin.isDestroyed() || !win) return;
   const [mainW, mainH] = win.getSize();
   const stickyW = mainW;
   const stickyH = Math.max(160, Math.floor(mainH / 2));
-  if (state.stickyPos && !force) {
-    try { stickyWin.setBounds({ x: state.stickyPos.x, y: state.stickyPos.y, width: stickyW, height: stickyH }); } catch {}
-    return;
+  if (!state.stickyAnchor || force) {
+    state.stickyAnchor = computeDefaultStickyAnchor(mainW, mainH, stickyW, stickyH);
+    saveState();
   }
   const [mx, my] = win.getPosition();
-  const display = screen.getDisplayMatching(win.getBounds());
-  const work = display.workArea;
-  const gap = 6;
-  let sx = mx + mainW + gap;
-  let sy = my;
-  if (sx + stickyW > work.x + work.width) {
-    sx = mx - stickyW - gap;
-    if (sx < work.x) {
-      sx = mx;
-      sy = my - stickyH - gap;
-      if (sy < work.y) sy = my + mainH + gap;
-    }
-  }
+  const { sx, sy } = computeStickyXY(state.stickyAnchor, mx, my, mainW, mainH, stickyW, stickyH);
+  stickyMovingProgrammatically++;
   try { stickyWin.setBounds({ x: sx, y: sy, width: stickyW, height: stickyH }); } catch {}
+  setTimeout(() => { stickyMovingProgrammatically = Math.max(0, stickyMovingProgrammatically - 1); }, 50);
 }
 
 function applyStickyState() {
@@ -381,9 +582,13 @@ function createStickyWindow() {
   stickyWin.loadFile(path.join(__dirname, 'renderer', 'sticky.html'));
   stickyWin.on('closed', () => { stickyWin = null; stickyReady = false; });
   stickyWin.on('move', () => {
-    if (!stickyWin || stickyWin.isDestroyed()) return;
-    const [x, y] = stickyWin.getPosition();
-    state.stickyPos = { x, y };
+    if (!stickyWin || stickyWin.isDestroyed() || !win) return;
+    if (stickyMovingProgrammatically > 0) return;
+    const [sx, sy] = stickyWin.getPosition();
+    const [sw, sh] = stickyWin.getSize();
+    const [mx, my] = win.getPosition();
+    const [mw, mh] = win.getSize();
+    state.stickyAnchor = deriveStickyAnchor(sx, sy, sw, sh, mx, my, mw, mh);
     saveState();
   });
   stickyWin.webContents.once('did-finish-load', () => {
@@ -467,7 +672,8 @@ function showUrlMenu() {
           saveState();
         },
       }));
-  Menu.buildFromTemplate(items).popup({ window: win, x: RAIL_W + 2, y: HEADER_H + 2 });
+  const [winW] = win.getContentSize();
+  Menu.buildFromTemplate(items).popup({ window: win, x: Math.max(0, winW - RIGHT_RAIL_W - 180), y: HEADER_H + 2 });
 }
 
 let pasteQueue = Promise.resolve();
@@ -696,7 +902,7 @@ function startCaptureLoop() {
     if (win) win.webContents.send('capture-error', 'No capture area selected');
     return;
   }
-  pastedHistory = [];
+  resetSmartDiffState();
   firstOcrLogged = false;
   lastOcrEmptyAt = 0;
   lastInjectError = '';
@@ -719,6 +925,15 @@ function triggerResetCaptureArea() {
 function stopCaptureLoop() {
   if (captureLoop) clearInterval(captureLoop);
   captureLoop = null;
+  if (pendingTrailing) {
+    const flush = pendingTrailing;
+    pendingTrailing = '';
+    pendingIdleFrames = 0;
+    pastedHistory.push(flush);
+    pastedHistory = pastedHistory.slice(-MAX_HISTORY_WORDS);
+    injectIntoChat(' ' + flush).catch(() => {});
+    if (win) win.webContents.send('capture-text', flush);
+  }
   if (win) win.webContents.send('capture-state', false);
   hideCaptureOverlay();
 }

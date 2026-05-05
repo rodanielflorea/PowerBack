@@ -35,24 +35,31 @@ input, textarea, select, button { cursor: default !important; }
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
   -webkit-app-region: drag;
   user-select: none;
+  overflow: hidden;
 }
 
+.titlebar > * { flex-shrink: 0; }
+
 .drag {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   height: 100%;
 }
 
 .slider {
   -webkit-app-region: no-drag;
-  width: 100px;
+  width: 80px;
+  min-width: 40px;
   height: 8px;
-  margin: 0 8px;
+  margin: 0 6px;
   background: var(--track);
   border-radius: 4px;
   position: relative;
   overflow: hidden;
+  flex-shrink: 1;
 }
 
 .slider-fill {
@@ -79,16 +86,43 @@ input, textarea, select, button { cursor: default !important; }
 
 .btn:hover { background: rgba(0, 0, 0, 0.06); }
 
-.header-tools {
-  display: flex;
-  align-items: center;
-  height: 100%;
-  margin-left: 4px;
-  padding-left: 4px;
+.right-rail {
+  position: fixed;
+  top: var(--header-h);
+  right: 0;
+  bottom: 0;
+  width: var(--rail-w);
+  background: var(--header-bg);
   border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 0;
+  gap: 2px;
+  z-index: 10;
 }
 
+.rail-btn {
+  -webkit-app-region: no-drag;
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: default;
+}
+
+.rail-btn:hover { background: rgba(0, 0, 0, 0.08); }
+
 body:not(.in-interview) .iv-btn { display: none !important; }
+body:not(.in-interview) .right-rail { display: none !important; }
 
 .stealth-icon {
   width: 15px;
@@ -124,40 +158,6 @@ body:not(.in-interview) .iv-btn { display: none !important; }
   stroke: #b91c1c;
 }
 .stealth-btn.off .shield-slash { display: inline; }
-
-.rail {
-  position: fixed;
-  top: var(--header-h);
-  left: 0;
-  width: var(--rail-w);
-  bottom: 0;
-  background: var(--header-bg);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding-top: 4px;
-  gap: 2px;
-  z-index: 1;
-}
-
-.rail-btn {
-  -webkit-app-region: no-drag;
-  width: 26px;
-  height: 26px;
-  background: transparent;
-  border: none;
-  color: var(--text);
-  font-size: 14px;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border-radius: 4px;
-}
-
-.rail-btn:hover { background: rgba(0, 0, 0, 0.06); }
 
 .rec-dot {
   width: 10px;
@@ -1198,7 +1198,7 @@ body.role-supporter .live-pill-label { }
   position: fixed;
   top: var(--header-h);
   left: 0;
-  right: 0;
+  right: var(--rail-w);
   bottom: 0;
   background: var(--bg);
   z-index: 5;
