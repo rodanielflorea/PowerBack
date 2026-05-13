@@ -37,6 +37,7 @@ const HOTKEY_DEFAULTS = {
   reloadSite: 'Ctrl+R',
   toggleStealth: 'Ctrl+H',
   toggleRecording: 'Alt+C',
+  toggleMode: 'Alt+D',
   pushToTalk: 'Ctrl+B',
   closeSticky: 'Ctrl+Left',
   openSticky: 'Ctrl+Right',
@@ -1061,6 +1062,7 @@ const HOTKEY_HANDLERS = {
   reloadSite: () => reloadWebView(),
   toggleStealth: () => setStealth(!state.stealth),
   toggleRecording: () => { if (win) win.webContents.send('toggle-recording'); },
+  toggleMode: () => { if (win) win.webContents.send('toggle-mode'); },
   pushToTalk: () => cycleMicModeFromHotkey(),
   closeSticky: () => closeStickyWindow(),
   openSticky: () => openStickyWindow(),
@@ -1419,7 +1421,7 @@ function startDeepgramWs(apiKey, language) {
     model: 'nova-2', encoding: 'linear16',
     sample_rate: '16000', channels: '1',
     punctuate: 'true', interim_results: 'true',
-    endpointing: '300',
+    endpointing: '150', no_delay: 'true', utterance_end_ms: '1000',
   });
   if (language && language !== 'auto') params.set('language', language);
   else params.set('detect_language', 'true');

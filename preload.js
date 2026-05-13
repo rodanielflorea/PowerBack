@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('api', {
   onCaptureState: (cb) => ipcRenderer.on('capture-state', (_e, v) => cb(v)),
   onHotkeysChanged: (cb) => ipcRenderer.on('hotkeys-changed', (_e, v) => cb(v)),
   onToggleRecording: (cb) => ipcRenderer.on('toggle-recording', () => cb()),
+  onToggleMode: (cb) => ipcRenderer.on('toggle-mode', () => cb()),
   onTogglePtt: (cb) => ipcRenderer.on('toggle-ptt', () => cb()),
   onSelectorClosed: (cb) => ipcRenderer.on('selector-closed', () => cb()),
   getNetworkConfig: () => ipcRenderer.invoke('get-network-config'),

@@ -28,7 +28,6 @@
     <button class="btn mic-pill iv-btn" id="micPill" title="Cycle B's mic mode: mute → A only → A+C">
       <span class="mic-pill-icon" id="micPillIcon">🔒</span><span class="mic-pill-label" id="micPillLabel">TO A</span>
     </button>
-    <button class="btn mic-inject-btn iv-btn on" id="micInjectBtn" title="Toggle: inject transcripts into chat input">Mic→Chat</button>
     <button class="btn end-btn iv-btn" id="endBtn" title="End session — return to setup">End</button>
     <button class="btn" id="hideBtn" title="Hide (Ctrl+Alt+H)">&minus;</button>
     <button class="btn" id="quitBtn" title="Quit">&times;</button>
@@ -38,6 +37,7 @@
     <button class="rail-btn" id="urlMenuBtn" title="Switch site">&#9662;</button>
     <button class="rail-btn" id="reloadBtn" title="Reload site">&#8635;</button>
     <button class="rail-btn" id="settingsBtn" title="Settings">&#9881;</button>
+    <button class="rail-btn mode-toggle-btn" id="modeToggleBtn" title="Toggle mode: OCR ↔ Voice (Alt+D)">OCR</button>
     <button class="rail-btn rec-btn" id="recBtn" title="Start transcription">
       <span class="rec-dot"></span>
     </button>
@@ -331,6 +331,7 @@
             <li><b>&#9881;</b> &mdash; open Settings.</li>
             <li><b>&#9679;</b> rec dot &mdash; start/stop the active mode (Voice or Caption). Pulsing red = running.</li>
             <li><b>Stealth shield</b> &mdash; <span style="color:#16a34a">green check</span> = invisible to screen capture; <span style="color:#dc2626">red slash</span> = visible. Click to toggle.</li>
+            <li><b>Mode toggle</b> (shows <span class="kbd">OCR</span> or <span class="kbd">Voice</span>) &mdash; click or press <span class="kbd">Alt+D</span> to switch between Caption and Voice mode. Switches the active mode and restarts capture automatically.</li>
             <li><b>Mic pill</b> (Supporter only) &mdash; cycles B's mic between <b>&#128263; MUTE</b>, <b>&#128274; TO A</b>, <b>&#128226; TO A+C</b>. See "Mic modes" below.</li>
             <li><b>End</b> &mdash; stops the session and returns to Setup. Confirms first.</li>
             <li><b>&minus;</b> hides the window (bring it back with <span class="kbd">Ctrl+Alt+H</span>).</li>
@@ -354,7 +355,7 @@
 
         <section class="settings-section help-section">
           <h3>Voice mode</h3>
-          <p>Captures mic and/or system audio in real-time and streams it to Deepgram (or local whisper.cpp in chunks). Transcripts are injected directly into the loaded AI site's chat input — no clipboard, no focus theft. All transcripts are saved to a <b>.txt file</b> when you click End.</p>
+          <p>Captures mic and/or system audio in real-time and streams it to Deepgram (or local whisper.cpp in chunks). Final transcripts are injected directly into the loaded AI site's chat input — no clipboard, no focus theft. All transcripts are also saved to a <b>.txt file</b> when you click End.</p>
           <h4>Setup</h4>
           <ol class="help-steps">
             <li><b>Voice</b> tab &rarr; pick microphone, toggle "Capture mic" / "Capture system audio".</li>
@@ -368,9 +369,9 @@
           </ol>
           <h4>Use it</h4>
           <ol class="help-steps">
-            <li>Press <span class="kbd">Alt+C</span> or click the <b>&#9679;</b> dot to start streaming.</li>
-            <li>Words appear in the AI site's chat input as you (or the meeting) speak.</li>
-            <li>Use the <b>Mic&rarr;Chat</b> toggle to turn off auto-injection — mic is still captured and saved, just not typed into the chat.</li>
+            <li>Press <span class="kbd">Alt+D</span> or click the mode button on the right rail to switch to Voice mode.</li>
+            <li>Press <span class="kbd">Alt+C</span> or click the <b>&#9679;</b> dot to start/stop streaming.</li>
+            <li>Transcripts appear in real-time in the log panel as you (or the meeting) speak.</li>
             <li>Click <b>End</b> to finish the session — you'll be prompted to save a <code>.txt</code> transcript of everything captured.</li>
           </ol>
         </section>
@@ -400,7 +401,7 @@
             <li><b>Two-way audio is always on</b> &mdash; there's no toggle to disable it.</li>
           </ul>
           <h4>Chat panel (B's main view)</h4>
-          <p>When B connects, the AI website is hidden and the chat panel takes over. B can:</p>
+          <p>When B connects, the AI website is hidden and the chat panel takes over. Voice/OCR capture functions are not available in Supporter mode — B's role is to listen and send guidance. B can:</p>
           <ul>
             <li>Type messages and press Enter to send.</li>
             <li>Drag-drop or paste images (auto-resized, &gt;5&nbsp;MB warns).</li>
@@ -459,6 +460,7 @@
               <tr><td>Toggle window visibility</td><td><span class="kbd">Ctrl+Alt+H</span></td></tr>
               <tr><td>Toggle stealth</td><td><span class="kbd">Ctrl+H</span></td></tr>
               <tr><td>Start / stop active mode</td><td><span class="kbd">Alt+C</span></td></tr>
+              <tr><td>Toggle OCR ↔ Voice mode</td><td><span class="kbd">Alt+D</span></td></tr>
               <tr><td>Cycle B's mic mode (Mute &rarr; A &rarr; A+C)</td><td><span class="kbd">Ctrl+B</span></td></tr>
               <tr><td>Reload site</td><td><span class="kbd">Ctrl+R</span></td></tr>
               <tr><td>Reset capture area</td><td><span class="kbd">Ctrl+Q</span></td></tr>
@@ -514,8 +516,8 @@
           <p>Check that A's <b>Voice</b> tab has both "Capture mic" and "Capture system audio" enabled. Verify the network pill shows <b>LIVE</b> on both sides. On A's machine, the loopback capture sometimes needs Windows to re-enumerate devices &mdash; toggle the recording dot off/on.</p>
           <h4>C (meeting peer) can't hear me</h4>
           <p>Make sure VB-Cable is installed, "CABLE Input" is selected as Output device in Network tab, and the meeting app's mic is set to "CABLE Output". Click <b>Test cable</b> &mdash; if no level appears in the meeting, the routing is broken.</p>
-          <h4>Voice mode pastes into the wrong app</h4>
-          <p>Click the target app's input field <i>before</i> starting Voice mode. While the dot is pulsing, don't click into this app.</p>
+          <h4>Voice mode transcripts not appearing in the chat input</h4>
+          <p>Voice transcripts are injected directly into the AI site loaded in the webview (ChatGPT, Claude, etc.) — make sure a site is loaded and the chat input is visible. The injection targets the chat input automatically, no click needed.</p>
           <h4>Caption mode duplicates text</h4>
           <p>The diff is word-based and tolerant to OCR variations, but if the OCR engine produces wildly different text for the same speech, some duplication is unavoidable. Press <span class="kbd">Ctrl+Q</span> to re-pick a tighter area &mdash; smaller and cleaner is better.</p>
           <h4>Deepgram 401 / 429 errors</h4>

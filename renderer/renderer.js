@@ -361,6 +361,24 @@ function applyRoleClass(role) {
   document.body.classList.toggle('role-speaker', role === 'speaker');
   const chatMain = document.getElementById('chatMain');
   if (chatMain) chatMain.hidden = role !== 'supporter';
+  applyRoleSettingsTabs(role === 'supporter');
+}
+
+function applyRoleSettingsTabs(isSupporter) {
+  const hiddenForSupporter = ['general', 'voice', 'caption', 'hotkeys'];
+  const shownForSupporter = ['network', 'log', 'help'];
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    const tab = btn.dataset.tab;
+    if (isSupporter) {
+      btn.style.display = hiddenForSupporter.includes(tab) ? 'none' : '';
+    } else {
+      btn.style.display = '';
+    }
+  });
+  if (isSupporter) {
+    const activeBtn = document.querySelector('.tab-btn.active');
+    if (activeBtn && activeBtn.style.display === 'none') activateTab('network');
+  }
 }
 
 function showSetup() {
@@ -409,6 +427,7 @@ setupStartBtn.addEventListener('click', async () => {
   }
   await window.api.setMode(chosenMode);
   mode = chosenMode;
+  updateModeToggleBtn();
   await window.api.setNetworkConfig(patch);
   netCfg = await window.api.getNetworkConfig();
   log(`Setup-start: netCfg refreshed (role=${netCfg.role || 'none'})`, 'info');
@@ -610,7 +629,10 @@ function openSettings() {
   settingsOverlay.hidden = false;
   window.api.setWebviewVisible(false);
   const inInterview = document.body.classList.contains('in-interview');
-  activateTab(inInterview ? 'caption' : 'general');
+  const isSupporter = netCfg && netCfg.role === 'supporter';
+  let defaultTab = 'general';
+  if (inInterview) defaultTab = 'network';
+  activateTab(defaultTab);
   refreshUrls();
   refreshModeUI();
   refreshTranscriptionUI();
@@ -618,11 +640,13 @@ function openSettings() {
   refreshMicList();
   refreshHotkeysUI();
   refreshNetworkUI();
+  applyRoleSettingsTabs(isSupporter);
 }
 
 function closeSettings() {
   settingsOverlay.hidden = true;
-  window.api.setWebviewVisible(true);
+  const isSupporter = netCfg && netCfg.role === 'supporter';
+  if (!isSupporter) window.api.setWebviewVisible(true);
 }
 
 settingsBtn.addEventListener('click', openSettings);
@@ -663,6 +687,7 @@ async function refreshModeUI() {
   modeCaption.checked = mode === 'caption';
   updateRecTitle();
   updateTabVisibility(mode);
+  updateModeToggleBtn();
 }
 
 function updateTabVisibility(activeMode) {
@@ -784,6 +809,7 @@ const HOTKEY_LABELS = {
   reloadSite: 'Reload site',
   toggleStealth: 'Toggle stealth',
   toggleRecording: 'Start/stop voice or caption',
+  toggleMode: 'Toggle OCR ↔ Voice mode',
   pushToTalk: 'Push-to-talk (toggle supporter mic)',
 };
 
@@ -914,6 +940,10 @@ window.api.onToggleRecording(() => {
   recBtn.click();
 });
 
+window.api.onToggleMode(() => {
+  doToggleMode();
+});
+
 window.api.onSelectorClosed(() => {
   if (!settingsOverlay.hidden) closeSettings();
 });
@@ -924,7 +954,7 @@ window.api.onTranscriptLive(({ text, isFinal }) => {
   if (isFinal) {
     if (interimEl) { interimEl.remove(); interimEl = null; }
     log(text);
-    if (micInjectToChat) window.api.injectToWebview(text + ' ');
+    window.api.injectToWebview(text + ' ');
   } else {
     if (!interimEl) {
       interimEl = document.createElement('div');
@@ -980,18 +1010,40 @@ async function refreshMicList() {
 let recState = null;
 let captureRunning = false;
 
-let micInjectToChat = true;
-const micInjectBtn = document.getElementById('micInjectBtn');
-if (micInjectBtn) {
-  micInjectBtn.addEventListener('click', () => {
-    micInjectToChat = !micInjectToChat;
-    micInjectBtn.classList.toggle('on', micInjectToChat);
-    micInjectBtn.title = micInjectToChat
-      ? 'Mic→Chat ON — transcripts injected into chat input'
-      : 'Mic→Chat OFF — transcripts saved only, not injected';
-    log('Mic→Chat ' + (micInjectToChat ? 'ON' : 'OFF'), 'info');
-  });
+const modeToggleBtn = document.getElementById('modeToggleBtn');
+const selectAreaRailBtn = document.getElementById('selectAreaRailBtn');
+
+function updateModeToggleBtn() {
+  if (!modeToggleBtn) return;
+  const isVoice = mode === 'voice';
+  modeToggleBtn.textContent = isVoice ? 'Voice' : 'OCR';
+  modeToggleBtn.classList.toggle('mode-voice', isVoice);
+  modeToggleBtn.title = isVoice
+    ? 'Currently: Voice — click or Alt+D to switch to OCR mode'
+    : 'Currently: OCR — click or Alt+D to switch to Voice mode';
 }
+
+async function doToggleMode() {
+  const newMode = mode === 'voice' ? 'caption' : 'voice';
+  const wasRunning = !!(recState || captureRunning);
+  if (recState) await stopVoice().catch(() => {});
+  if (captureRunning) await stopCaption().catch(() => {});
+  mode = newMode;
+  await window.api.setMode(newMode);
+  updateRecTitle();
+  updateTabVisibility(newMode);
+  updateModeToggleBtn();
+  log('Mode switched to ' + (newMode === 'voice' ? 'Voice' : 'OCR'), 'info');
+  if (wasRunning) {
+    if (newMode === 'voice') {
+      startVoice().catch(e => log('Auto-start voice failed: ' + e.message, 'err'));
+    } else {
+      startCaption().catch(e => log('Auto-start caption failed: ' + e.message, 'err'));
+    }
+  }
+}
+
+if (modeToggleBtn) modeToggleBtn.addEventListener('click', doToggleMode);
 
 async function startVoice() {
   if (recState) return;
@@ -1034,7 +1086,7 @@ async function startVoice() {
       } catch (e) { log('System audio failed: ' + e.message, 'err'); }
     }
 
-    const processor = ctx.createScriptProcessor(4096, 1, 1);
+    const processor = ctx.createScriptProcessor(512, 1, 1);
     ctx.createMediaStreamSource(dest.stream).connect(processor);
     const sink = ctx.createGain(); sink.gain.value = 0;
     processor.connect(sink).connect(ctx.destination);

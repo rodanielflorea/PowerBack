@@ -413,10 +413,13 @@ body:not(.in-interview) .right-rail { display: none !important; }
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: 11px;
   padding: 6px 8px;
-  height: 120px;
+  height: 160px;
+  min-height: 60px;
+  max-height: 500px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
+  resize: vertical;
 }
 
 .log-line { padding: 1px 0; }
@@ -821,25 +824,22 @@ body:not(.in-interview) .right-rail { display: none !important; }
 
 .end-btn:hover { filter: brightness(1.1); }
 
-.mic-inject-btn {
-  height: 20px;
-  padding: 0 6px;
-  font-size: 10px;
+.mode-toggle-btn {
+  font-size: 9px;
   font-weight: 700;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  background: var(--track);
+  letter-spacing: 0.5px;
   color: var(--muted);
-  cursor: pointer;
-  margin: 0 2px;
-  letter-spacing: 0.3px;
+  background: var(--track);
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  padding: 1px 3px;
 }
-.mic-inject-btn.on {
-  background: #dcfce7;
-  color: #15803d;
-  border-color: #86efac;
+.mode-toggle-btn.mode-voice {
+  background: #dbeafe;
+  color: #1d4ed8;
+  border-color: #93c5fd;
 }
-.mic-inject-btn:hover { filter: brightness(0.95); }
+.mode-toggle-btn:hover { filter: brightness(0.95); }
 
 .log-interim {
   color: #6366f1;
@@ -1217,6 +1217,9 @@ body.in-interview .setup-only {
 
 body.role-supporter #urlMenuBtn,
 body.role-supporter #reloadBtn { display: none !important; }
+
+body.role-supporter .rec-btn,
+body.role-supporter .mode-toggle-btn { display: none !important; }
 
 body.role-supporter .live-pill,
 body.role-supporter .live-pill-label { }
