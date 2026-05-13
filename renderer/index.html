@@ -28,6 +28,7 @@
     <button class="btn mic-pill iv-btn" id="micPill" title="Cycle B's mic mode: mute → A only → A+C">
       <span class="mic-pill-icon" id="micPillIcon">🔒</span><span class="mic-pill-label" id="micPillLabel">TO A</span>
     </button>
+    <button class="btn mic-inject-btn iv-btn on" id="micInjectBtn" title="Toggle: inject transcripts into chat input">Mic→Chat</button>
     <button class="btn end-btn iv-btn" id="endBtn" title="End session — return to setup">End</button>
     <button class="btn" id="hideBtn" title="Hide (Ctrl+Alt+H)">&minus;</button>
     <button class="btn" id="quitBtn" title="Quit">&times;</button>
@@ -105,12 +106,12 @@
         <section class="settings-section">
           <h3>Transcription engine</h3>
           <div class="field-row">
-            <label class="radio"><input type="radio" name="engine" value="openai" id="engineOpenai" /> OpenAI Whisper API</label>
+            <label class="radio"><input type="radio" name="engine" value="deepgram" id="engineDeepgram" /> Deepgram API</label>
             <label class="radio"><input type="radio" name="engine" value="local" id="engineLocal" /> Local whisper.cpp</label>
           </div>
-          <div class="field" id="openaiBlock">
-            <label for="openaiKey">OpenAI API key</label>
-            <input type="password" id="openaiKey" placeholder="sk-..." spellcheck="false" />
+          <div class="field" id="deepgramBlock">
+            <label for="deepgramKey">Deepgram API key</label>
+            <input type="password" id="deepgramKey" placeholder="Paste Deepgram key..." spellcheck="false" />
           </div>
           <div class="field" id="localExeBlock">
             <label for="whisperExe">whisper.exe path</label>
@@ -246,32 +247,10 @@
         </section>
 
         <section class="settings-section">
-          <h3>Virtual mic output (relay to meeting app)</h3>
-          <p class="hint">For meeting apps like Zoom / Meet / Teams to hear A (or B in 📢 mode), install a virtual audio cable, pick "CABLE Input" here, and set the meeting's mic to "CABLE Output".</p>
-          <p class="hint" style="background:#fef3c7;border:1px solid #f59e0b;color:#78350f;padding:6px 8px;border-radius:4px;margin:6px 0">
-            <b>&#9888; Important:</b> only set CABLE Input as the <i>app's</i> output device below. Do <b>NOT</b> set CABLE Input as your <b>Windows default output</b> (System &rarr; Sound &rarr; Output) &mdash; that breaks A's ability to hear B's voice through your headphones, and creates a feedback loop on system-audio capture.
-          </p>
-          <div class="field">
-            <label for="netVirtualCable">Output device (relay to meeting)</label>
-            <select id="netVirtualCable"></select>
-          </div>
-          <div class="net-cable-status" id="netCableStatus">Pick an output device above.</div>
+          <h3>Virtual mic relay (VB-Cable)</h3>
+          <p class="hint">To let the meeting app (Zoom / Meet / Teams) hear B's voice, install VB-Cable. Set your meeting app's microphone to <b>CABLE Output</b>. The app routes audio through your system default output automatically.</p>
           <div style="display:flex;gap:8px;margin-top:8px">
             <button class="action-btn-secondary" id="getVbCableBtn">Get VB-Cable</button>
-            <button class="action-btn-secondary" id="testCableBtn">Test cable (1s tone)</button>
-          </div>
-        </section>
-
-        <section class="settings-section">
-          <h3>Local listen device (your headphones)</h3>
-          <p class="hint">Where the incoming audio from the other side plays on <b>this</b> machine. Set this explicitly to your headphones / speakers so it never accidentally routes into a virtual cable.</p>
-          <div class="field">
-            <label for="netListenDevice">Output device (your headphones)</label>
-            <select id="netListenDevice"></select>
-          </div>
-          <div class="net-cable-status" id="netListenStatus">Defaults to Windows default output if blank.</div>
-          <div style="display:flex;gap:8px;margin-top:8px">
-            <button class="action-btn-secondary" id="testListenBtn">Test listen device (1s tone)</button>
           </div>
         </section>
       </div>
@@ -318,7 +297,7 @@
           <h3>Quick start (solo)</h3>
           <ol class="help-steps">
             <li>Setup &rarr; pick <b>Caption</b> or <b>Voice</b> mode.</li>
-            <li>If using Voice: <b>Voice</b> tab &rarr; choose engine (OpenAI Whisper API or local whisper.cpp) and provide key/paths.</li>
+            <li>If using Voice: <b>Voice</b> tab &rarr; choose engine (Deepgram API or local whisper.cpp) and provide key/paths.</li>
             <li><b>Sites</b> tab &rarr; add <code>https://chatgpt.com</code> or <code>https://claude.ai</code>.</li>
             <li>Click <b>Start</b>.</li>
             <li>For Caption mode: a screen-area selector appears &mdash; drag a rectangle around the live caption strip you want to OCR.</li>
@@ -375,13 +354,13 @@
 
         <section class="settings-section help-section">
           <h3>Voice mode</h3>
-          <p>Captures your mic and/or system audio, chunks it ~5 s at a time, transcribes via Whisper (cloud or local), and pastes the result into <b>whichever app is foreground</b> via clipboard + Ctrl+V. Use it for relaying spoken meeting content into a chat editor in another app.</p>
+          <p>Captures mic and/or system audio in real-time and streams it to Deepgram (or local whisper.cpp in chunks). Transcripts are injected directly into the loaded AI site's chat input — no clipboard, no focus theft. All transcripts are saved to a <b>.txt file</b> when you click End.</p>
           <h4>Setup</h4>
           <ol class="help-steps">
             <li><b>Voice</b> tab &rarr; pick microphone, toggle "Capture mic" / "Capture system audio".</li>
             <li>Pick engine:
               <ul>
-                <li><b>OpenAI Whisper API</b> &mdash; paste API key. Easy, fast, audio leaves your machine.</li>
+                <li><b>Deepgram API</b> &mdash; paste API key. Real-time, low-latency, audio leaves your machine. Get a free key at deepgram.com.</li>
                 <li><b>Local whisper.cpp</b> &mdash; browse to <code>whisper-cli.exe</code> and a model (<code>ggml-base.bin</code> etc.). Fully offline; slower without GPU.</li>
               </ul>
             </li>
@@ -389,10 +368,11 @@
           </ol>
           <h4>Use it</h4>
           <ol class="help-steps">
-            <li>Click into the target app's input box first (chat, editor, anything that takes paste).</li>
-            <li>Press <span class="kbd">Alt+C</span> or click the <b>&#9679;</b> dot. After ~5&ndash;8 s the transcript appears in your target app.</li>
+            <li>Press <span class="kbd">Alt+C</span> or click the <b>&#9679;</b> dot to start streaming.</li>
+            <li>Words appear in the AI site's chat input as you (or the meeting) speak.</li>
+            <li>Use the <b>Mic&rarr;Chat</b> toggle to turn off auto-injection — mic is still captured and saved, just not typed into the chat.</li>
+            <li>Click <b>End</b> to finish the session — you'll be prompted to save a <code>.txt</code> transcript of everything captured.</li>
           </ol>
-          <p class="hint">&#9888; While running, don't click into this app or the paste will land here. Stealth shield does not block the paste mechanism &mdash; the foreground window is whatever you click last.</p>
         </section>
 
         <section class="settings-section help-section">
@@ -456,14 +436,12 @@
 
         <section class="settings-section help-section">
           <h3>VB-Cable setup (relay to meeting app)</h3>
-          <p>To make C hear A (or B in 📢 mode) through Zoom / Meet / Teams, you need a virtual audio cable that loops the app's audio output back as a virtual microphone input.</p>
+          <p>To make C hear A (or B in 📢 mode) through Zoom / Meet / Teams, install a virtual audio cable.</p>
           <ol class="help-steps">
             <li><b>Network tab</b> &rarr; click <b>Get VB-Cable</b>. Download &amp; install (free, restart required).</li>
-            <li>After reboot, <b>Network tab</b> &rarr; pick <b>CABLE Input (VB-Audio Virtual Cable)</b> in "Output device".</li>
             <li>In your meeting app (Zoom / Meet / Teams), set the microphone to <b>CABLE Output (VB-Audio Virtual Cable)</b>.</li>
-            <li>Click <b>Test cable (1s tone)</b> &mdash; you should see the meeting app's mic level jump.</li>
+            <li>The app routes audio through your Windows default output automatically — no device selection needed.</li>
           </ol>
-          <p>If you start a session without VB-Cable installed, a banner appears at the top of the window with a one-click installer link. Dismiss it once and it stays dismissed for the session.</p>
         </section>
 
         <section class="settings-section help-section">
@@ -540,8 +518,8 @@
           <p>Click the target app's input field <i>before</i> starting Voice mode. While the dot is pulsing, don't click into this app.</p>
           <h4>Caption mode duplicates text</h4>
           <p>The diff is word-based and tolerant to OCR variations, but if the OCR engine produces wildly different text for the same speech, some duplication is unavoidable. Press <span class="kbd">Ctrl+Q</span> to re-pick a tighter area &mdash; smaller and cleaner is better.</p>
-          <h4>OpenAI 401 / 429 errors</h4>
-          <p>Check the <b>Log</b> tab. 401 = bad API key. 429 = rate limit / out of credits.</p>
+          <h4>Deepgram 401 / 429 errors</h4>
+          <p>Check the <b>Log</b> tab. 401 = bad API key. 429 = rate limit / out of credits. Get a free key at deepgram.com.</p>
           <h4>Local whisper exits with non-zero code</h4>
           <p>Open a terminal and run the same command manually with <code>-f some.wav -m model.bin</code> to see the real error. Ensure the model and exe are from the same whisper.cpp version.</p>
           <h4>Hotkey shows red "register failed"</h4>
@@ -644,11 +622,11 @@
         <div class="setup-tab-pane" data-stab="voice" hidden>
           <div class="setup-section" id="setupVoiceSection">
             <h4>Transcription engine</h4>
-            <label class="radio"><input type="radio" name="setupEngine" value="openai" id="setupEngineOpenai" /> OpenAI Whisper API</label>
+            <label class="radio"><input type="radio" name="setupEngine" value="deepgram" id="setupEngineDeepgram" /> Deepgram API</label>
             <label class="radio"><input type="radio" name="setupEngine" value="local" id="setupEngineLocal" /> Local whisper.cpp</label>
-            <div class="field" id="setupOpenaiBlock">
-              <label for="setupOpenaiKey">OpenAI API key</label>
-              <input type="password" id="setupOpenaiKey" placeholder="sk-..." spellcheck="false" />
+            <div class="field" id="setupDeepgramBlock">
+              <label for="setupDeepgramKey">Deepgram API key</label>
+              <input type="password" id="setupDeepgramKey" placeholder="Paste Deepgram key..." spellcheck="false" />
             </div>
             <div class="field" id="setupLocalExeBlock">
               <label for="setupWhisperExe">whisper.exe path</label>

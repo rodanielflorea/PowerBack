@@ -26,9 +26,7 @@
       {
         "from": "caption2text",
         "to": "caption2text",
-        "filter": [
-          "**/*"
-        ]
+        "filter": ["**/*"]
       }
     ],
     "directories": {

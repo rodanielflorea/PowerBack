@@ -25,9 +25,9 @@ const setupUrlAddBtn = document.getElementById('setupUrlAddBtn');
 const setupCaptureLanguage = document.getElementById('setupCaptureLanguage');
 const setupCapturePollMs = document.getElementById('setupCapturePollMs');
 
-const setupEngineOpenai = document.getElementById('setupEngineOpenai');
+const setupEngineDeepgram = document.getElementById('setupEngineDeepgram');
 const setupEngineLocal = document.getElementById('setupEngineLocal');
-const setupOpenaiKey = document.getElementById('setupOpenaiKey');
+const setupDeepgramKey = document.getElementById('setupDeepgramKey');
 const setupWhisperExe = document.getElementById('setupWhisperExe');
 const setupWhisperExeBrowse = document.getElementById('setupWhisperExeBrowse');
 const setupWhisperModel = document.getElementById('setupWhisperModel');
@@ -56,9 +56,9 @@ const modeCaption = document.getElementById('modeCaption');
 const micSelect = document.getElementById('micSelect');
 const captureMicEl = document.getElementById('captureMic');
 const captureSystemEl = document.getElementById('captureSystem');
-const engineOpenai = document.getElementById('engineOpenai');
+const engineDeepgram = document.getElementById('engineDeepgram');
 const engineLocal = document.getElementById('engineLocal');
-const openaiKeyEl = document.getElementById('openaiKey');
+const deepgramKeyEl = document.getElementById('deepgramKey');
 const whisperExeEl = document.getElementById('whisperExe');
 const whisperExeBrowse = document.getElementById('whisperExeBrowse');
 const whisperModelEl = document.getElementById('whisperModel');
@@ -293,9 +293,9 @@ setupCapturePollMs.addEventListener('change', () => {
   if (Number.isFinite(v) && v >= 200) window.api.setCaptureConfig({ pollMs: v });
 });
 
-setupEngineOpenai.addEventListener('change', () => setupEngineOpenai.checked && window.api.setTranscriptionConfig({ engine: 'openai' }));
+setupEngineDeepgram.addEventListener('change', () => setupEngineDeepgram.checked && window.api.setTranscriptionConfig({ engine: 'deepgram' }));
 setupEngineLocal.addEventListener('change', () => setupEngineLocal.checked && window.api.setTranscriptionConfig({ engine: 'local' }));
-setupOpenaiKey.addEventListener('change', () => window.api.setTranscriptionConfig({ openaiApiKey: setupOpenaiKey.value.trim() }));
+setupDeepgramKey.addEventListener('change', () => window.api.setTranscriptionConfig({ deepgramApiKey: setupDeepgramKey.value.trim() }));
 setupWhisperExe.addEventListener('change', () => window.api.setTranscriptionConfig({ whisperExe: setupWhisperExe.value.trim() }));
 setupWhisperModel.addEventListener('change', () => window.api.setTranscriptionConfig({ whisperModel: setupWhisperModel.value.trim() }));
 setupVoiceLanguage.addEventListener('change', () => window.api.setTranscriptionConfig({ language: setupVoiceLanguage.value }));
@@ -339,9 +339,9 @@ async function refreshSetupUI() {
 
   const tx = await window.api.getTranscriptionConfig();
   txCfg = tx;
-  setupEngineOpenai.checked = tx.engine !== 'local';
+  setupEngineDeepgram.checked = tx.engine !== 'local';
   setupEngineLocal.checked = tx.engine === 'local';
-  setupOpenaiKey.value = tx.openaiApiKey || '';
+  setupDeepgramKey.value = tx.deepgramApiKey || '';
   setupWhisperExe.value = tx.whisperExe || '';
   setupWhisperModel.value = tx.whisperModel || '';
   setupVoiceLanguage.value = tx.language || 'auto';
@@ -468,6 +468,7 @@ endBtn.addEventListener('click', showEndModal);
 endModalCancel.addEventListener('click', hideEndModal);
 endModalConfirm.addEventListener('click', async () => {
   endModal.hidden = true;
+  await window.api.saveSessionLog().catch(() => {});
   if (recState) await stopVoice().catch(() => {});
   if (captureRunning) await stopCaption().catch(() => {});
   await window.api.stopNetwork();
@@ -689,9 +690,9 @@ modeCaption.addEventListener('change', async () => {
 
 async function refreshTranscriptionUI() {
   txCfg = await window.api.getTranscriptionConfig();
-  engineOpenai.checked = txCfg.engine !== 'local';
+  engineDeepgram.checked = txCfg.engine !== 'local';
   engineLocal.checked = txCfg.engine === 'local';
-  openaiKeyEl.value = txCfg.openaiApiKey || '';
+  deepgramKeyEl.value = txCfg.deepgramApiKey || '';
   whisperExeEl.value = txCfg.whisperExe || '';
   whisperModelEl.value = txCfg.whisperModel || '';
   languageSelect.value = txCfg.language || 'auto';
@@ -704,9 +705,9 @@ async function persistTx(patch) {
   await window.api.setTranscriptionConfig(patch);
 }
 
-engineOpenai.addEventListener('change', () => engineOpenai.checked && persistTx({ engine: 'openai' }));
+engineDeepgram.addEventListener('change', () => engineDeepgram.checked && persistTx({ engine: 'deepgram' }));
 engineLocal.addEventListener('change', () => engineLocal.checked && persistTx({ engine: 'local' }));
-openaiKeyEl.addEventListener('change', () => persistTx({ openaiApiKey: openaiKeyEl.value.trim() }));
+deepgramKeyEl.addEventListener('change', () => persistTx({ deepgramApiKey: deepgramKeyEl.value.trim() }));
 whisperExeEl.addEventListener('change', () => persistTx({ whisperExe: whisperExeEl.value.trim() }));
 whisperModelEl.addEventListener('change', () => persistTx({ whisperModel: whisperModelEl.value.trim() }));
 languageSelect.addEventListener('change', () => persistTx({ language: languageSelect.value }));
@@ -917,7 +918,36 @@ window.api.onSelectorClosed(() => {
   if (!settingsOverlay.hidden) closeSettings();
 });
 
-window.api.onCaptureText((text) => log('OCR: ' + text));
+let interimEl = null;
+window.api.onTranscriptLive(({ text, isFinal }) => {
+  if (!text) return;
+  if (isFinal) {
+    if (interimEl) { interimEl.remove(); interimEl = null; }
+    log(text);
+    if (micInjectToChat) window.api.injectToWebview(text + ' ');
+  } else {
+    if (!interimEl) {
+      interimEl = document.createElement('div');
+      interimEl.className = 'log-entry log-interim';
+      logBody.appendChild(interimEl);
+    }
+    interimEl.textContent = '⟳ ' + text;
+    logBody.scrollTop = logBody.scrollHeight;
+  }
+});
+window.api.onTranscriptLiveError((msg) => {
+  log('Deepgram error: ' + msg, 'err');
+  if (recState && recState.deepgram) {
+    recState = null;
+    recBtn.classList.remove('on');
+    updateRecTitle();
+  }
+});
+
+window.api.onCaptureText((text) => {
+  log('OCR: ' + text);
+  window.api.sessionLogAdd({ ts: Date.now(), kind: 'ocr', text });
+});
 window.api.onCaptureError((msg) => log('OCR error: ' + msg, 'err'));
 window.api.onCaptureState((on) => {
   captureRunning = !!on;
@@ -950,10 +980,82 @@ async function refreshMicList() {
 let recState = null;
 let captureRunning = false;
 
+let micInjectToChat = true;
+const micInjectBtn = document.getElementById('micInjectBtn');
+if (micInjectBtn) {
+  micInjectBtn.addEventListener('click', () => {
+    micInjectToChat = !micInjectToChat;
+    micInjectBtn.classList.toggle('on', micInjectToChat);
+    micInjectBtn.title = micInjectToChat
+      ? 'Mic→Chat ON — transcripts injected into chat input'
+      : 'Mic→Chat OFF — transcripts saved only, not injected';
+    log('Mic→Chat ' + (micInjectToChat ? 'ON' : 'OFF'), 'info');
+  });
+}
+
 async function startVoice() {
   if (recState) return;
   txCfg = await window.api.getTranscriptionConfig();
 
+  if (txCfg.engine === 'deepgram') {
+    if (!txCfg.deepgramApiKey) { log('Deepgram API key not set', 'err'); return; }
+
+    await window.api.startDeepgramStream({
+      apiKey: txCfg.deepgramApiKey,
+      language: txCfg.language || 'auto',
+    });
+
+    const ctx = new AudioContext({ sampleRate: 16000 });
+    const dest = ctx.createMediaStreamDestination();
+    const streams = [];
+
+    if (txCfg.captureMic !== false) {
+      try {
+        const constraints = { audio: txCfg.micDeviceId
+          ? { deviceId: { exact: txCfg.micDeviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+          : { echoCancellation: false, noiseSuppression: false, autoGainControl: false } };
+        const mic = await navigator.mediaDevices.getUserMedia(constraints);
+        streams.push(mic);
+        ctx.createMediaStreamSource(mic).connect(dest);
+        log('Mic capture started', 'info');
+      } catch (e) { log('Mic failed: ' + e.message, 'err'); }
+    }
+
+    if (txCfg.captureSystem !== false) {
+      try {
+        const sys = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        sys.getVideoTracks().forEach(t => t.stop());
+        const audioTracks = sys.getAudioTracks();
+        if (audioTracks.length > 0) {
+          streams.push(sys);
+          ctx.createMediaStreamSource(new MediaStream(audioTracks)).connect(dest);
+          log('System audio capture started', 'info');
+        } else { log('System audio: no audio track returned', 'err'); }
+      } catch (e) { log('System audio failed: ' + e.message, 'err'); }
+    }
+
+    const processor = ctx.createScriptProcessor(4096, 1, 1);
+    ctx.createMediaStreamSource(dest.stream).connect(processor);
+    const sink = ctx.createGain(); sink.gain.value = 0;
+    processor.connect(sink).connect(ctx.destination);
+    processor.onaudioprocess = (e) => {
+      const f32 = e.inputBuffer.getChannelData(0);
+      const i16 = new Int16Array(f32.length);
+      for (let i = 0; i < f32.length; i++) i16[i] = Math.max(-32768, Math.min(32767, f32[i] * 32767));
+      window.api.sendAudioChunk(i16.buffer);
+    };
+
+    recState = { ctx, streams, processor, deepgram: true };
+    recBtn.classList.add('on');
+    updateRecTitle();
+    log('Voice transcription started (Deepgram live)', 'info');
+    return;
+  }
+
+  return startVoiceChunked();
+}
+
+async function startVoiceChunked() {
   const ctx = new AudioContext();
   const dest = ctx.createMediaStreamDestination();
   const streams = [];
@@ -1041,6 +1143,17 @@ async function startVoice() {
 
 async function stopVoice() {
   if (!recState) return;
+  if (recState.deepgram) {
+    try { recState.processor.disconnect(); } catch {}
+    recState.streams.forEach(s => s.getTracks ? s.getTracks().forEach(t => t.stop()) : null);
+    try { await recState.ctx.close(); } catch {}
+    await window.api.stopDeepgramStream();
+    recState = null;
+    recBtn.classList.remove('on');
+    updateRecTitle();
+    log('Voice transcription stopped', 'info');
+    return;
+  }
   try { recState.processor.disconnect(); } catch {}
   recState.streams.forEach(s => s.getTracks().forEach(t => t.stop()));
   try { await recState.ctx.close(); } catch {}
@@ -1083,7 +1196,7 @@ async function runTranscription(wavBuf) {
   const text = await window.api.transcribe(wavBuf);
   if (text && text.trim()) {
     log(text);
-    await window.api.pasteText(text + ' ');
+    await window.api.injectToWebview(text + ' ');
   }
 }
 

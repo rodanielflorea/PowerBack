@@ -1,6 +1,6 @@
 const {
   app, BrowserWindow, WebContentsView, ipcMain, globalShortcut, Menu,
-  session, desktopCapturer, dialog, clipboard, screen,
+  session, desktopCapturer, dialog, clipboard, screen, net,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -20,6 +20,8 @@ const CAPTURE_EXE = path.join(
   'caption2text',
   'Capture2Text_CLI.exe'
 );
+
+
 
 const HOTKEY_DEFAULTS = {
   toggleVisibility: 'Ctrl+Alt+H',
@@ -47,9 +49,8 @@ const DEFAULT_STATE = {
   urls: [], currentUrlIndex: 0,
   mode: 'caption',
   transcription: {
-    engine: 'openai',
-    openaiApiKey: '',
-    openaiModel: 'whisper-1',
+    engine: 'deepgram',
+    deepgramApiKey: '',
     whisperExe: '',
     whisperModel: '',
     language: 'auto',
@@ -98,6 +99,8 @@ let captureOverlayWin = null;
 let captureLoop = null;
 let pastedHistory = [];
 let pendingRestart = false;
+let deepgramWs = null;
+let sessionLog = [];
 let state = { ...DEFAULT_STATE };
 
 const MAX_HISTORY_WORDS = 500;
@@ -761,35 +764,29 @@ async function injectIntoChat(text) {
   }
 }
 
-async function transcribeOpenAi(wavBuffer, cfg) {
-  if (!cfg.openaiApiKey) throw new Error('OpenAI API key not set');
-  const boundary = '----stealth' + Date.now();
-  const headerStr =
-    `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n${cfg.openaiModel || 'whisper-1'}\r\n` +
-    (cfg.language && cfg.language !== 'auto'
-      ? `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\n${cfg.language}\r\n`
-      : '') +
-    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.wav"\r\nContent-Type: audio/wav\r\n\r\n`;
-  const footerStr = `\r\n--${boundary}--\r\n`;
-  const body = Buffer.concat([
-    Buffer.from(headerStr, 'utf8'),
-    Buffer.from(wavBuffer),
-    Buffer.from(footerStr, 'utf8'),
-  ]);
-  const r = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+async function transcribeDeepgram(wavBuffer, cfg) {
+  if (!cfg.deepgramApiKey) throw new Error('Deepgram API key not set');
+  const params = new URLSearchParams({ model: 'nova-2', punctuate: 'true' });
+  if (cfg.language && cfg.language !== 'auto') {
+    params.set('language', cfg.language);
+  } else {
+    params.set('detect_language', 'true');
+  }
+  const r = await net.fetch(`https://api.deepgram.com/v1/listen?${params}`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${cfg.openaiApiKey}`,
-      'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      Authorization: `Token ${cfg.deepgramApiKey}`,
+      'Content-Type': 'audio/wav',
     },
-    body,
+    body: Buffer.from(wavBuffer),
   });
   if (!r.ok) {
     const text = await r.text().catch(() => '');
-    throw new Error(`OpenAI ${r.status}: ${text.slice(0, 200)}`);
+    throw new Error(`Deepgram ${r.status}: ${text.slice(0, 200)}`);
   }
   const data = await r.json();
-  return (data.text || '').trim();
+  const transcript = data?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
+  return transcript.trim();
 }
 
 async function transcribeLocal(wavBuffer, cfg) {
@@ -832,7 +829,7 @@ function enqueueTranscribe(wavBuffer) {
   const cfg = state.transcription;
   transcribeQueue = transcribeQueue.then(async () => {
     if (cfg.engine === 'local') return transcribeLocal(wavBuffer, cfg);
-    return transcribeOpenAi(wavBuffer, cfg);
+    return transcribeDeepgram(wavBuffer, cfg);
   });
   return transcribeQueue;
 }
@@ -1415,7 +1412,77 @@ ipcMain.handle('set-transcription-config', (_e, cfg) => {
   saveState();
 });
 ipcMain.handle('transcribe', async (_e, wavArrayBuffer) => enqueueTranscribe(wavArrayBuffer));
+
+function startDeepgramWs(apiKey, language) {
+  if (deepgramWs) return;
+  const params = new URLSearchParams({
+    model: 'nova-2', encoding: 'linear16',
+    sample_rate: '16000', channels: '1',
+    punctuate: 'true', interim_results: 'true',
+    endpointing: '300',
+  });
+  if (language && language !== 'auto') params.set('language', language);
+  else params.set('detect_language', 'true');
+
+  deepgramWs = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, {
+    headers: { Authorization: `Token ${apiKey}` },
+  });
+  deepgramWs.on('open', () => appendLogLine('[deepgram] connected'));
+  deepgramWs.on('message', (raw) => {
+    try {
+      const msg = JSON.parse(raw.toString());
+      if (msg.type !== 'Results') return;
+      const text = (msg.channel?.alternatives?.[0]?.transcript || '').trim();
+      if (!text) return;
+      if (msg.is_final) sessionLog.push({ ts: Date.now(), kind: 'voice', text });
+      if (win && !win.isDestroyed()) win.webContents.send('transcript-live', { text, isFinal: !!msg.is_final });
+    } catch {}
+  });
+  deepgramWs.on('error', (e) => {
+    appendLogLine('[deepgram] error: ' + e.message);
+    if (win && !win.isDestroyed()) win.webContents.send('transcript-live-error', e.message);
+    deepgramWs = null;
+  });
+  deepgramWs.on('close', () => { deepgramWs = null; });
+}
+
+ipcMain.handle('start-deepgram-stream', (_e, { apiKey, language }) => {
+  startDeepgramWs(apiKey, language);
+});
+ipcMain.handle('stop-deepgram-stream', () => {
+  if (deepgramWs) {
+    try { deepgramWs.send(JSON.stringify({ type: 'CloseStream' })); } catch {}
+    deepgramWs.close();
+    deepgramWs = null;
+  }
+});
+ipcMain.on('audio-chunk', (_e, buf) => {
+  if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) deepgramWs.send(buf);
+});
+ipcMain.on('session-log-add', (_e, entry) => { sessionLog.push(entry); });
+ipcMain.handle('clear-session-log', () => { sessionLog = []; });
+ipcMain.handle('save-session-log', async () => {
+  if (sessionLog.length === 0) return null;
+  const lines = sessionLog.map(e => {
+    const d = new Date(e.ts);
+    const t = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+    return `[${t}] [${e.kind.toUpperCase()}] ${e.text}`;
+  }).join('\n');
+  const r = await dialog.showSaveDialog(win, {
+    title: 'Save session transcript',
+    defaultPath: path.join(app.getPath('desktop'), `session-${new Date().toISOString().slice(0,10)}.txt`),
+    filters: [{ name: 'Text', extensions: ['txt'] }],
+  });
+  if (!r.canceled && r.filePath) {
+    await fs.promises.writeFile(r.filePath, lines, 'utf8');
+    sessionLog = [];
+    return r.filePath;
+  }
+  return null;
+});
+
 ipcMain.handle('paste-text', (_e, text) => pasteToForeground(text));
+ipcMain.handle('inject-to-webview', (_e, text) => injectIntoChat(text));
 ipcMain.handle('pick-file', async (_e, kind) => {
   const filters = kind === 'exe'
     ? [{ name: 'Executable', extensions: ['exe'] }]
