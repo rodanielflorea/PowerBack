@@ -1,119 +1,121 @@
-const slider = document.getElementById('slider');
-const sliderFill = document.getElementById('sliderFill');
-const stealthBtn = document.getElementById('stealthBtn');
-const endBtn = document.getElementById('endBtn');
-const hideBtn = document.getElementById('hideBtn');
-const quitBtn = document.getElementById('quitBtn');
+const slider = document.getElementById("slider");
+const sliderFill = document.getElementById("sliderFill");
+const stealthBtn = document.getElementById("stealthBtn");
+const endBtn = document.getElementById("endBtn");
+const hideBtn = document.getElementById("hideBtn");
+const quitBtn = document.getElementById("quitBtn");
 
-const setupOverlay = document.getElementById('setupOverlay');
-const setupModeCaption = document.getElementById('setupModeCaption');
-const setupModeVoice = document.getElementById('setupModeVoice');
-const setupRoleSpeaker = document.getElementById('setupRoleSpeaker');
-const setupRoleSupporter = document.getElementById('setupRoleSupporter');
-const setupPortBlock = document.getElementById('setupPortBlock');
-const setupAddressBlock = document.getElementById('setupAddressBlock');
-const setupPortEl = document.getElementById('setupPort');
-const setupAddressEl = document.getElementById('setupAddress');
-const setupSavePortBtn = document.getElementById('setupSavePortBtn');
-const setupSaveAddressBtn = document.getElementById('setupSaveAddressBtn');
-const setupStartBtn = document.getElementById('setupStartBtn');
+const setupOverlay = document.getElementById("setupOverlay");
+const setupModeCaption = document.getElementById("setupModeCaption");
+const setupModeVoice = document.getElementById("setupModeVoice");
+const setupRoleSpeaker = document.getElementById("setupRoleSpeaker");
+const setupRoleSupporter = document.getElementById("setupRoleSupporter");
+const setupPortBlock = document.getElementById("setupPortBlock");
+const setupAddressBlock = document.getElementById("setupAddressBlock");
+const setupPortEl = document.getElementById("setupPort");
+const setupAddressEl = document.getElementById("setupAddress");
+const setupSavePortBtn = document.getElementById("setupSavePortBtn");
+const setupSaveAddressBtn = document.getElementById("setupSaveAddressBtn");
+const setupStartBtn = document.getElementById("setupStartBtn");
 
-const setupUrlList = document.getElementById('setupUrlList');
-const setupUrlInput = document.getElementById('setupUrlInput');
-const setupUrlAddBtn = document.getElementById('setupUrlAddBtn');
+const setupUrlList = document.getElementById("setupUrlList");
+const setupUrlInput = document.getElementById("setupUrlInput");
+const setupUrlAddBtn = document.getElementById("setupUrlAddBtn");
 
-const setupCaptureLanguage = document.getElementById('setupCaptureLanguage');
-const setupCapturePollMs = document.getElementById('setupCapturePollMs');
+const setupCaptureLanguage = document.getElementById("setupCaptureLanguage");
+const setupCapturePollMs = document.getElementById("setupCapturePollMs");
 
-const setupEngineDeepgram = document.getElementById('setupEngineDeepgram');
-const setupEngineLocal = document.getElementById('setupEngineLocal');
-const setupDeepgramKey = document.getElementById('setupDeepgramKey');
-const setupWhisperExe = document.getElementById('setupWhisperExe');
-const setupWhisperExeBrowse = document.getElementById('setupWhisperExeBrowse');
-const setupWhisperModel = document.getElementById('setupWhisperModel');
-const setupWhisperModelBrowse = document.getElementById('setupWhisperModelBrowse');
-const setupVoiceLanguage = document.getElementById('setupVoiceLanguage');
-const setupMicSelect = document.getElementById('setupMicSelect');
-const setupCaptureMic = document.getElementById('setupCaptureMic');
-const setupCaptureSystem = document.getElementById('setupCaptureSystem');
+const setupEngineDeepgram = document.getElementById("setupEngineDeepgram");
+const setupEngineLocal = document.getElementById("setupEngineLocal");
+const setupDeepgramKey = document.getElementById("setupDeepgramKey");
+const setupWhisperExe = document.getElementById("setupWhisperExe");
+const setupWhisperExeBrowse = document.getElementById("setupWhisperExeBrowse");
+const setupWhisperModel = document.getElementById("setupWhisperModel");
+const setupWhisperModelBrowse = document.getElementById(
+  "setupWhisperModelBrowse",
+);
+const setupVoiceLanguage = document.getElementById("setupVoiceLanguage");
+const setupMicSelect = document.getElementById("setupMicSelect");
+const setupCaptureMic = document.getElementById("setupCaptureMic");
+const setupCaptureSystem = document.getElementById("setupCaptureSystem");
 
-const setupMaxSupporters = document.getElementById('setupMaxSupporters');
-const setupTwoWay = document.getElementById('setupTwoWay');
+const setupMaxSupporters = document.getElementById("setupMaxSupporters");
+const setupTwoWay = document.getElementById("setupTwoWay");
 
-const urlMenuBtn = document.getElementById('urlMenuBtn');
-const reloadBtn = document.getElementById('reloadBtn');
-const settingsBtn = document.getElementById('settingsBtn');
-const recBtn = document.getElementById('recBtn');
-const settingsOverlay = document.getElementById('settingsOverlay');
-const settingsCloseBtn = document.getElementById('settingsCloseBtn');
-const urlList = document.getElementById('urlList');
-const urlInput = document.getElementById('urlInput');
-const urlAddBtn = document.getElementById('urlAddBtn');
+const urlMenuBtn = document.getElementById("urlMenuBtn");
+const reloadBtn = document.getElementById("reloadBtn");
+const settingsBtn = document.getElementById("settingsBtn");
+const recBtn = document.getElementById("recBtn");
+const settingsOverlay = document.getElementById("settingsOverlay");
+const settingsCloseBtn = document.getElementById("settingsCloseBtn");
+const urlList = document.getElementById("urlList");
+const urlInput = document.getElementById("urlInput");
+const urlAddBtn = document.getElementById("urlAddBtn");
 
-const modeVoice = document.getElementById('modeVoice');
-const modeCaption = document.getElementById('modeCaption');
+const modeVoice = document.getElementById("modeVoice");
+const modeCaption = document.getElementById("modeCaption");
 
-const micSelect = document.getElementById('micSelect');
-const captureMicEl = document.getElementById('captureMic');
-const captureSystemEl = document.getElementById('captureSystem');
-const engineDeepgram = document.getElementById('engineDeepgram');
-const engineLocal = document.getElementById('engineLocal');
-const deepgramKeyEl = document.getElementById('deepgramKey');
-const whisperExeEl = document.getElementById('whisperExe');
-const whisperExeBrowse = document.getElementById('whisperExeBrowse');
-const whisperModelEl = document.getElementById('whisperModel');
-const whisperModelBrowse = document.getElementById('whisperModelBrowse');
-const languageSelect = document.getElementById('languageSelect');
+const micSelect = document.getElementById("micSelect");
+const captureMicEl = document.getElementById("captureMic");
+const captureSystemEl = document.getElementById("captureSystem");
+const engineDeepgram = document.getElementById("engineDeepgram");
+const engineLocal = document.getElementById("engineLocal");
+const deepgramKeyEl = document.getElementById("deepgramKey");
+const whisperExeEl = document.getElementById("whisperExe");
+const whisperExeBrowse = document.getElementById("whisperExeBrowse");
+const whisperModelEl = document.getElementById("whisperModel");
+const whisperModelBrowse = document.getElementById("whisperModelBrowse");
+const languageSelect = document.getElementById("languageSelect");
 
-const captureRectEl = document.getElementById('captureRect');
-const selectAreaBtn = document.getElementById('selectAreaBtn');
-const captureLanguageEl = document.getElementById('captureLanguage');
-const capturePollMsEl = document.getElementById('capturePollMs');
-const captureShowOverlayEl = document.getElementById('captureShowOverlay');
+const captureRectEl = document.getElementById("captureRect");
+const selectAreaBtn = document.getElementById("selectAreaBtn");
+const captureLanguageEl = document.getElementById("captureLanguage");
+const capturePollMsEl = document.getElementById("capturePollMs");
+const captureShowOverlayEl = document.getElementById("captureShowOverlay");
 
-const hotkeyList = document.getElementById('hotkeyList');
-const resetAllHotkeysBtn = document.getElementById('resetAllHotkeysBtn');
+const hotkeyList = document.getElementById("hotkeyList");
+const resetAllHotkeysBtn = document.getElementById("resetAllHotkeysBtn");
 
-const roleSpeaker = document.getElementById('roleSpeaker');
-const roleSupporter = document.getElementById('roleSupporter');
-const netAddressEl = document.getElementById('netAddress');
-const maxSupportersEl = document.getElementById('maxSupporters');
-const maxSupportersField = document.getElementById('maxSupportersField');
-const netPortField = document.getElementById('netPortField');
-const netPortEl = document.getElementById('netPort');
-const netAddressField = document.getElementById('netAddressField');
-const netActionBtn = document.getElementById('netActionBtn');
-const netStopBtn = document.getElementById('netStopBtn');
-const supportersBlock = document.getElementById('supportersBlock');
-const supportersList = document.getElementById('supportersList');
-const netFlag = document.getElementById('netFlag');
-const netStatusEl = document.getElementById('netStatus');
-const incomingVolumeEl = document.getElementById('incomingVolume');
-const incomingVolumeVal = document.getElementById('incomingVolumeVal');
-const twoWayEl = document.getElementById('twoWay');
-const pttStatusEl = document.getElementById('pttStatus');
-const incomingLevelFill = document.getElementById('incomingLevelFill');
-const remoteAudioEl = document.getElementById('remoteAudio');
-const speakerInAudioEl = document.getElementById('speakerInAudio');
-const muteToggleBtn = document.getElementById('muteToggleBtn');
+const roleSpeaker = document.getElementById("roleSpeaker");
+const roleSupporter = document.getElementById("roleSupporter");
+const netAddressEl = document.getElementById("netAddress");
+const maxSupportersEl = document.getElementById("maxSupporters");
+const maxSupportersField = document.getElementById("maxSupportersField");
+const netPortField = document.getElementById("netPortField");
+const netPortEl = document.getElementById("netPort");
+const netAddressField = document.getElementById("netAddressField");
+const netActionBtn = document.getElementById("netActionBtn");
+const netStopBtn = document.getElementById("netStopBtn");
+const supportersBlock = document.getElementById("supportersBlock");
+const supportersList = document.getElementById("supportersList");
+const netFlag = document.getElementById("netFlag");
+const netStatusEl = document.getElementById("netStatus");
+const incomingVolumeEl = document.getElementById("incomingVolume");
+const incomingVolumeVal = document.getElementById("incomingVolumeVal");
+const twoWayEl = document.getElementById("twoWay");
+const pttStatusEl = document.getElementById("pttStatus");
+const incomingLevelFill = document.getElementById("incomingLevelFill");
+const remoteAudioEl = document.getElementById("remoteAudio");
+const speakerInAudioEl = document.getElementById("speakerInAudio");
+const muteToggleBtn = document.getElementById("muteToggleBtn");
 
-const logBody = document.getElementById('logBody');
+const logBody = document.getElementById("logBody");
 
 let urls = [];
 let txCfg = null;
 let capCfg = null;
-let mode = 'voice';
+let mode = "voice";
 
 function updateFill(opacity) {
   sliderFill.style.width = `${Math.round(opacity * 100)}%`;
 }
 
 function updateStealth(on) {
-  stealthBtn.classList.toggle('on', on);
-  stealthBtn.classList.toggle('off', !on);
+  stealthBtn.classList.toggle("on", on);
+  stealthBtn.classList.toggle("off", !on);
   stealthBtn.title = on
-    ? 'Stealth ON — hidden from screen capture (click to disable)'
-    : 'Stealth OFF — visible to screen capture (click to enable)';
+    ? "Stealth ON — hidden from screen capture (click to disable)"
+    : "Stealth OFF — visible to screen capture (click to enable)";
 }
 
 let sliderDragging = false;
@@ -126,96 +128,101 @@ function setOpacityFromEvent(e) {
   updateFill(opacity);
 }
 
-slider.addEventListener('mousedown', (e) => {
+slider.addEventListener("mousedown", (e) => {
   e.preventDefault();
   sliderDragging = true;
   setOpacityFromEvent(e);
 });
 
-window.addEventListener('mousemove', (e) => {
+window.addEventListener("mousemove", (e) => {
   if (sliderDragging) setOpacityFromEvent(e);
 });
 
-window.addEventListener('mouseup', () => {
+window.addEventListener("mouseup", () => {
   sliderDragging = false;
 });
 
-window.addEventListener('mouseleave', () => {
+window.addEventListener("mouseleave", () => {
   sliderDragging = false;
 });
 
-stealthBtn.addEventListener('click', async () => {
+stealthBtn.addEventListener("click", async () => {
   const current = await window.api.getStealth();
   window.api.setStealth(!current);
 });
 
-hideBtn.addEventListener('click', () => window.api.hide());
-quitBtn.addEventListener('click', () => window.api.quit());
+hideBtn.addEventListener("click", () => window.api.hide());
+quitBtn.addEventListener("click", () => window.api.quit());
 
 function applySetupRoleVisibility() {
   const isSpeaker = setupRoleSpeaker.checked;
   setupPortBlock.hidden = !isSpeaker;
   setupAddressBlock.hidden = isSpeaker;
   if (setupMaxSupporters) {
-    const field = document.getElementById('setupMaxSupportersField');
-    if (field) field.style.display = isSpeaker ? '' : 'none';
+    const field = document.getElementById("setupMaxSupportersField");
+    if (field) field.style.display = isSpeaker ? "" : "none";
   }
 }
 
 function activateSetupTab(name) {
-  document.querySelectorAll('.stab-btn').forEach(b => b.classList.toggle('active', b.dataset.stab === name));
-  document.querySelectorAll('.setup-tab-pane').forEach(p => { p.hidden = p.dataset.stab !== name; });
+  document
+    .querySelectorAll(".stab-btn")
+    .forEach((b) => b.classList.toggle("active", b.dataset.stab === name));
+  document.querySelectorAll(".setup-tab-pane").forEach((p) => {
+    p.hidden = p.dataset.stab !== name;
+  });
 }
 
-document.querySelectorAll('.stab-btn').forEach(btn => {
-  btn.addEventListener('click', () => activateSetupTab(btn.dataset.stab));
+document.querySelectorAll(".stab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => activateSetupTab(btn.dataset.stab));
 });
 
 function applySetupModeTabVisibility(activeMode) {
   const voiceTab = document.querySelector('.stab-btn[data-stab="voice"]');
   const captionTab = document.querySelector('.stab-btn[data-stab="caption"]');
-  const isCaption = activeMode === 'caption';
-  if (voiceTab) voiceTab.style.display = isCaption ? 'none' : '';
-  if (captionTab) captionTab.style.display = isCaption ? '' : 'none';
-  const activeBtn = document.querySelector('.stab-btn.active');
-  if (activeBtn && activeBtn.style.display === 'none') activateSetupTab('essentials');
+  const isCaption = activeMode === "caption";
+  if (voiceTab) voiceTab.style.display = isCaption ? "none" : "";
+  if (captionTab) captionTab.style.display = isCaption ? "" : "none";
+  const activeBtn = document.querySelector(".stab-btn.active");
+  if (activeBtn && activeBtn.style.display === "none")
+    activateSetupTab("essentials");
 }
 
-setupModeCaption.addEventListener('change', () => {
-  if (setupModeCaption.checked) applySetupModeTabVisibility('caption');
+setupModeCaption.addEventListener("change", () => {
+  if (setupModeCaption.checked) applySetupModeTabVisibility("caption");
 });
-setupModeVoice.addEventListener('change', () => {
-  if (setupModeVoice.checked) applySetupModeTabVisibility('voice');
+setupModeVoice.addEventListener("change", () => {
+  if (setupModeVoice.checked) applySetupModeTabVisibility("voice");
 });
 
 function flashSaved(el) {
   if (!el) return;
-  el.classList.remove('save-flash');
+  el.classList.remove("save-flash");
   void el.offsetWidth;
-  el.classList.add('save-flash');
-  setTimeout(() => el.classList.remove('save-flash'), 1300);
+  el.classList.add("save-flash");
+  setTimeout(() => el.classList.remove("save-flash"), 1300);
 }
 
 function renderSetupUrlList(urlsArr) {
-  setupUrlList.innerHTML = '';
+  setupUrlList.innerHTML = "";
   if (urlsArr.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'url-empty';
-    empty.textContent = 'No URLs added yet.';
+    const empty = document.createElement("div");
+    empty.className = "url-empty";
+    empty.textContent = "No URLs added yet.";
     setupUrlList.appendChild(empty);
     return;
   }
   urlsArr.forEach((u, i) => {
-    const row = document.createElement('div');
-    row.className = 'url-row';
-    const txt = document.createElement('span');
-    txt.className = 'url-text';
+    const row = document.createElement("div");
+    row.className = "url-row";
+    const txt = document.createElement("span");
+    txt.className = "url-text";
     txt.textContent = u;
-    const rm = document.createElement('button');
-    rm.className = 'url-remove';
-    rm.textContent = '×';
-    rm.title = 'Remove';
-    rm.addEventListener('click', async () => {
+    const rm = document.createElement("button");
+    rm.className = "url-remove";
+    rm.textContent = "×";
+    rm.title = "Remove";
+    rm.addEventListener("click", async () => {
       urlsArr.splice(i, 1);
       await window.api.setUrls(urlsArr);
       renderSetupUrlList(urlsArr);
@@ -229,107 +236,157 @@ function renderSetupUrlList(urlsArr) {
 async function refreshSetupMicList() {
   if (!setupMicSelect) return;
   try {
-    await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
+    await navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((s) => s.getTracks().forEach((t) => t.stop()));
     const devices = await navigator.mediaDevices.enumerateDevices();
-    const mics = devices.filter(d => d.kind === 'audioinput');
-    setupMicSelect.innerHTML = '';
-    const def = document.createElement('option');
-    def.value = '';
-    def.textContent = 'System default';
+    const mics = devices.filter((d) => d.kind === "audioinput");
+    setupMicSelect.innerHTML = "";
+    const def = document.createElement("option");
+    def.value = "";
+    def.textContent = "System default";
     setupMicSelect.appendChild(def);
-    mics.forEach(m => {
-      const o = document.createElement('option');
+    mics.forEach((m) => {
+      const o = document.createElement("option");
       o.value = m.deviceId;
       o.textContent = m.label || `Microphone (${m.deviceId.slice(0, 6)})`;
       setupMicSelect.appendChild(o);
     });
     if (txCfg && txCfg.micDeviceId) setupMicSelect.value = txCfg.micDeviceId;
   } catch (e) {
-    log('Setup mic enumeration failed: ' + e.message, 'err');
+    log("Setup mic enumeration failed: " + e.message, "err");
   }
 }
 
-[setupRoleSpeaker, setupRoleSupporter].forEach(el => {
-  el.addEventListener('change', applySetupRoleVisibility);
+[setupRoleSpeaker, setupRoleSupporter].forEach((el) => {
+  el.addEventListener("change", applySetupRoleVisibility);
 });
 
-setupSavePortBtn.addEventListener('click', async () => {
+setupSavePortBtn.addEventListener("click", async () => {
   const port = parseInt(setupPortEl.value, 10);
   if (!Number.isFinite(port) || port < 1 || port > 65535) {
-    window.alert('Enter a valid port (1–65535)');
+    window.alert("Enter a valid port (1–65535)");
     return;
   }
   await window.api.setNetworkConfig({ speakerPort: port });
   flashSaved(setupPortEl);
-  log(`Default port saved: ${port}`, 'info');
+  log(`Default port saved: ${port}`, "info");
 });
 
-setupSaveAddressBtn.addEventListener('click', async () => {
+setupSaveAddressBtn.addEventListener("click", async () => {
   const addr = setupAddressEl.value.trim();
   if (!/^[^:\s]+:\d+$/.test(addr)) {
-    window.alert('Enter address as host:port (e.g. 172.16.98.11:2000)');
+    window.alert("Enter address as host:port (e.g. 172.16.98.11:2000)");
     return;
   }
   await window.api.setNetworkConfig({ supporterAddress: addr });
   flashSaved(setupAddressEl);
-  log(`Default address saved: ${addr}`, 'info');
+  log(`Default address saved: ${addr}`, "info");
 });
 
-setupUrlAddBtn.addEventListener('click', async () => {
+setupUrlAddBtn.addEventListener("click", async () => {
   const u = normalizeUrl(setupUrlInput.value);
   if (!u) return;
   const data = await window.api.getUrls();
   const arr = data.urls.slice();
   arr.push(u);
   await window.api.setUrls(arr);
-  setupUrlInput.value = '';
+  setupUrlInput.value = "";
   renderSetupUrlList(arr);
 });
-setupUrlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') setupUrlAddBtn.click(); });
+setupUrlInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") setupUrlAddBtn.click();
+});
 
-setupCaptureLanguage.addEventListener('change', () => window.api.setCaptureConfig({ language: setupCaptureLanguage.value }));
-setupCapturePollMs.addEventListener('change', () => {
+setupCaptureLanguage.addEventListener("change", () =>
+  window.api.setCaptureConfig({ language: setupCaptureLanguage.value }),
+);
+setupCapturePollMs.addEventListener("change", () => {
   const v = parseInt(setupCapturePollMs.value, 10);
-  if (Number.isFinite(v) && v >= 200) window.api.setCaptureConfig({ pollMs: v });
+  if (Number.isFinite(v) && v >= 200)
+    window.api.setCaptureConfig({ pollMs: v });
 });
 
-setupEngineDeepgram.addEventListener('change', () => setupEngineDeepgram.checked && window.api.setTranscriptionConfig({ engine: 'deepgram' }));
-setupEngineLocal.addEventListener('change', () => setupEngineLocal.checked && window.api.setTranscriptionConfig({ engine: 'local' }));
-setupDeepgramKey.addEventListener('change', () => window.api.setTranscriptionConfig({ deepgramApiKey: setupDeepgramKey.value.trim() }));
-setupWhisperExe.addEventListener('change', () => window.api.setTranscriptionConfig({ whisperExe: setupWhisperExe.value.trim() }));
-setupWhisperModel.addEventListener('change', () => window.api.setTranscriptionConfig({ whisperModel: setupWhisperModel.value.trim() }));
-setupVoiceLanguage.addEventListener('change', () => window.api.setTranscriptionConfig({ language: setupVoiceLanguage.value }));
-setupCaptureMic.addEventListener('change', () => window.api.setTranscriptionConfig({ captureMic: setupCaptureMic.checked }));
-setupCaptureSystem.addEventListener('change', () => window.api.setTranscriptionConfig({ captureSystem: setupCaptureSystem.checked }));
-setupMicSelect.addEventListener('change', () => window.api.setTranscriptionConfig({ micDeviceId: setupMicSelect.value }));
+setupEngineDeepgram.addEventListener(
+  "change",
+  () =>
+    setupEngineDeepgram.checked &&
+    window.api.setTranscriptionConfig({ engine: "deepgram" }),
+);
+setupEngineLocal.addEventListener(
+  "change",
+  () =>
+    setupEngineLocal.checked &&
+    window.api.setTranscriptionConfig({ engine: "local" }),
+);
+setupDeepgramKey.addEventListener("change", () =>
+  window.api.setTranscriptionConfig({
+    deepgramApiKey: setupDeepgramKey.value.trim(),
+  }),
+);
+setupWhisperExe.addEventListener("change", () =>
+  window.api.setTranscriptionConfig({
+    whisperExe: setupWhisperExe.value.trim(),
+  }),
+);
+setupWhisperModel.addEventListener("change", () =>
+  window.api.setTranscriptionConfig({
+    whisperModel: setupWhisperModel.value.trim(),
+  }),
+);
+setupVoiceLanguage.addEventListener("change", () =>
+  window.api.setTranscriptionConfig({ language: setupVoiceLanguage.value }),
+);
+setupCaptureMic.addEventListener("change", () =>
+  window.api.setTranscriptionConfig({ captureMic: setupCaptureMic.checked }),
+);
+setupCaptureSystem.addEventListener("change", () =>
+  window.api.setTranscriptionConfig({
+    captureSystem: setupCaptureSystem.checked,
+  }),
+);
+setupMicSelect.addEventListener("change", () =>
+  window.api.setTranscriptionConfig({ micDeviceId: setupMicSelect.value }),
+);
 
-setupWhisperExeBrowse.addEventListener('click', async () => {
-  const p = await window.api.pickFile('exe');
-  if (p) { setupWhisperExe.value = p; window.api.setTranscriptionConfig({ whisperExe: p }); }
+setupWhisperExeBrowse.addEventListener("click", async () => {
+  const p = await window.api.pickFile("exe");
+  if (p) {
+    setupWhisperExe.value = p;
+    window.api.setTranscriptionConfig({ whisperExe: p });
+  }
 });
-setupWhisperModelBrowse.addEventListener('click', async () => {
-  const p = await window.api.pickFile('model');
-  if (p) { setupWhisperModel.value = p; window.api.setTranscriptionConfig({ whisperModel: p }); }
+setupWhisperModelBrowse.addEventListener("click", async () => {
+  const p = await window.api.pickFile("model");
+  if (p) {
+    setupWhisperModel.value = p;
+    window.api.setTranscriptionConfig({ whisperModel: p });
+  }
 });
 
-setupMaxSupporters.addEventListener('change', () => {
+setupMaxSupporters.addEventListener("change", () => {
   const n = parseInt(setupMaxSupporters.value, 10);
-  if (Number.isFinite(n) && n >= 1) window.api.setNetworkConfig({ maxSupporters: n });
+  if (Number.isFinite(n) && n >= 1)
+    window.api.setNetworkConfig({ maxSupporters: n });
 });
-if (setupTwoWay) setupTwoWay.addEventListener('change', () => {});
+if (setupTwoWay) setupTwoWay.addEventListener("change", () => {});
 
 async function refreshSetupUI() {
   const m = await window.api.getMode();
-  setupModeCaption.checked = m !== 'voice';
-  setupModeVoice.checked = m === 'voice';
-  applySetupModeTabVisibility(m === 'voice' ? 'voice' : 'caption');
+  setupModeCaption.checked = m !== "voice";
+  setupModeVoice.checked = m === "voice";
+  applySetupModeTabVisibility(m === "voice" ? "voice" : "caption");
 
   const netC = await window.api.getNetworkConfig();
-  const role = netC.role || 'speaker';
-  setupRoleSpeaker.checked = role === 'speaker';
-  setupRoleSupporter.checked = role === 'supporter';
+  const role = netC.role || "speaker";
+  setupRoleSpeaker.checked = role === "speaker";
+  setupRoleSupporter.checked = role === "supporter";
   setupPortEl.value = netC.speakerPort || parsePort(netC.address) || 2000;
-  setupAddressEl.value = netC.supporterAddress || (netC.address && !netC.address.startsWith('0.0.0.0') ? netC.address : '172.16.98.11:2000');
+  setupAddressEl.value =
+    netC.supporterAddress ||
+    (netC.address && !netC.address.startsWith("0.0.0.0")
+      ? netC.address
+      : "172.16.98.11:2000");
   setupMaxSupporters.value = netC.maxSupporters || 1;
   if (setupTwoWay) setupTwoWay.checked = true;
   applySetupRoleVisibility();
@@ -339,88 +396,92 @@ async function refreshSetupUI() {
 
   const tx = await window.api.getTranscriptionConfig();
   txCfg = tx;
-  setupEngineDeepgram.checked = tx.engine !== 'local';
-  setupEngineLocal.checked = tx.engine === 'local';
-  setupDeepgramKey.value = tx.deepgramApiKey || '';
-  setupWhisperExe.value = tx.whisperExe || '';
-  setupWhisperModel.value = tx.whisperModel || '';
-  setupVoiceLanguage.value = tx.language || 'auto';
+  setupEngineDeepgram.checked = tx.engine !== "local";
+  setupEngineLocal.checked = tx.engine === "local";
+  setupDeepgramKey.value = tx.deepgramApiKey || "";
+  setupWhisperExe.value = tx.whisperExe || "";
+  setupWhisperModel.value = tx.whisperModel || "";
+  setupVoiceLanguage.value = tx.language || "auto";
   setupCaptureMic.checked = tx.captureMic !== false;
   setupCaptureSystem.checked = tx.captureSystem !== false;
 
   const cap = await window.api.getCaptureConfig();
   capCfg = cap;
-  setupCaptureLanguage.value = cap.language || 'English';
+  setupCaptureLanguage.value = cap.language || "English";
   setupCapturePollMs.value = cap.pollMs || 700;
 
   refreshSetupMicList();
 }
 
 function applyRoleClass(role) {
-  document.body.classList.toggle('role-supporter', role === 'supporter');
-  document.body.classList.toggle('role-speaker', role === 'speaker');
-  const chatMain = document.getElementById('chatMain');
-  if (chatMain) chatMain.hidden = role !== 'supporter';
-  applyRoleSettingsTabs(role === 'supporter');
+  document.body.classList.toggle("role-supporter", role === "supporter");
+  document.body.classList.toggle("role-speaker", role === "speaker");
+  const chatMain = document.getElementById("chatMain");
+  if (chatMain) chatMain.hidden = role !== "supporter";
+  applyRoleSettingsTabs(role === "supporter");
 }
 
 function applyRoleSettingsTabs(isSupporter) {
-  const hiddenForSupporter = ['general', 'voice', 'caption', 'hotkeys'];
-  const shownForSupporter = ['network', 'log', 'help'];
-  document.querySelectorAll('.tab-btn').forEach(btn => {
+  const hiddenForSupporter = ["general", "voice", "caption", "hotkeys"];
+  const shownForSupporter = ["network", "log", "help"];
+  document.querySelectorAll(".tab-btn").forEach((btn) => {
     const tab = btn.dataset.tab;
     if (isSupporter) {
-      btn.style.display = hiddenForSupporter.includes(tab) ? 'none' : '';
+      btn.style.display = hiddenForSupporter.includes(tab) ? "none" : "";
     } else {
-      btn.style.display = '';
+      btn.style.display = "";
     }
   });
   if (isSupporter) {
-    const activeBtn = document.querySelector('.tab-btn.active');
-    if (activeBtn && activeBtn.style.display === 'none') activateTab('network');
+    const activeBtn = document.querySelector(".tab-btn.active");
+    if (activeBtn && activeBtn.style.display === "none") activateTab("network");
   }
 }
 
 function showSetup() {
   if (settingsOverlay) settingsOverlay.hidden = true;
   setupOverlay.hidden = false;
-  document.body.classList.remove('in-interview');
-  endBtn.classList.remove('live');
-  applyRoleClass('');
+  document.body.classList.remove("in-interview");
+  endBtn.classList.remove("live");
+  applyRoleClass("");
   window.api.setWebviewVisible(false);
-  activateSetupTab('essentials');
+  activateSetupTab("essentials");
   refreshSetupUI();
 }
 
 function hideSetup() {
   if (settingsOverlay) settingsOverlay.hidden = true;
   setupOverlay.hidden = true;
-  document.body.classList.add('in-interview');
-  endBtn.classList.add('live');
-  const role = setupRoleSpeaker.checked ? 'speaker' : (setupRoleSupporter.checked ? 'supporter' : '');
+  document.body.classList.add("in-interview");
+  endBtn.classList.add("live");
+  const role = setupRoleSpeaker.checked
+    ? "speaker"
+    : setupRoleSupporter.checked
+      ? "supporter"
+      : "";
   applyRoleClass(role);
-  if (role === 'supporter') {
+  if (role === "supporter") {
     window.api.setWebviewVisible(false);
   } else {
     window.api.setWebviewVisible(true);
   }
 }
 
-setupStartBtn.addEventListener('click', async () => {
-  const chosenMode = setupModeCaption.checked ? 'caption' : 'voice';
-  const chosenRole = setupRoleSpeaker.checked ? 'speaker' : 'supporter';
+setupStartBtn.addEventListener("click", async () => {
+  const chosenMode = setupModeCaption.checked ? "caption" : "voice";
+  const chosenRole = setupRoleSpeaker.checked ? "speaker" : "supporter";
   const patch = { role: chosenRole };
-  if (chosenRole === 'speaker') {
+  if (chosenRole === "speaker") {
     const port = parseInt(setupPortEl.value, 10);
     if (!Number.isFinite(port) || port < 1 || port > 65535) {
-      window.alert('Enter a valid port (1–65535)');
+      window.alert("Enter a valid port (1–65535)");
       return;
     }
     patch.speakerPort = port;
   } else {
     const addr = setupAddressEl.value.trim();
     if (!/^[^:\s]+:\d+$/.test(addr)) {
-      window.alert('Enter address as host:port (e.g. 172.16.98.11:2000)');
+      window.alert("Enter address as host:port (e.g. 172.16.98.11:2000)");
       return;
     }
     patch.supporterAddress = addr;
@@ -430,48 +491,54 @@ setupStartBtn.addEventListener('click', async () => {
   updateModeToggleBtn();
   await window.api.setNetworkConfig(patch);
   netCfg = await window.api.getNetworkConfig();
-  log(`Setup-start: netCfg refreshed (role=${netCfg.role || 'none'})`, 'info');
+  log(`Setup-start: netCfg refreshed (role=${netCfg.role || "none"})`, "info");
   await window.api.startNetwork();
   hideSetup();
-  const showAddr = chosenRole === 'speaker' ? `0.0.0.0:${patch.speakerPort}` : patch.supporterAddress;
-  log(`Started: ${chosenMode} mode as ${chosenRole} on ${showAddr}`, 'info');
+  const showAddr =
+    chosenRole === "speaker"
+      ? `0.0.0.0:${patch.speakerPort}`
+      : patch.supporterAddress;
+  log(`Started: ${chosenMode} mode as ${chosenRole} on ${showAddr}`, "info");
 
-  if (chosenMode === 'caption') {
+  if (chosenMode === "caption") {
     const cap = await window.api.getCaptureConfig();
     if (!cap.rect) {
-      log('Caption mode: pick a screen area to OCR', 'info');
+      log("Caption mode: pick a screen area to OCR", "info");
       pendingCaptureStart = true;
       setTimeout(() => window.api.selectCaptureArea(), 300);
     }
   }
 });
 
-const endModal = document.getElementById('endModal');
-const endModalList = document.getElementById('endModalList');
-const endModalCancel = document.getElementById('endModalCancel');
-const endModalConfirm = document.getElementById('endModalConfirm');
+const endModal = document.getElementById("endModal");
+const endModalList = document.getElementById("endModalList");
+const endModalCancel = document.getElementById("endModalCancel");
+const endModalConfirm = document.getElementById("endModalConfirm");
 
 function addModalItem(text, kind) {
-  const li = document.createElement('li');
+  const li = document.createElement("li");
   if (kind) li.className = kind;
   li.appendChild(document.createTextNode(text));
   endModalList.appendChild(li);
 }
 
 async function showEndModal() {
-  endModalList.innerHTML = '';
-  if (recState) addModalItem('Voice transcription · running', 'live');
-  else if (captureRunning) addModalItem('Caption capture · running', 'live');
-  else addModalItem(`Active mode · ${mode || 'none'} (idle)`, 'idle');
+  endModalList.innerHTML = "";
+  if (recState) addModalItem("Voice transcription · running", "live");
+  else if (captureRunning) addModalItem("Caption capture · running", "live");
+  else addModalItem(`Active mode · ${mode || "none"} (idle)`, "idle");
 
   const status = await window.api.getNetworkStatus().catch(() => ({}));
   if (status.bound) {
     const n = (status.supporters || []).length;
-    addModalItem(`Hosting on ${status.address} · ${n}/${status.maxSupporters} supporter${n === 1 ? '' : 's'}`, 'live');
+    addModalItem(
+      `Hosting on ${status.address} · ${n}/${status.maxSupporters} supporter${n === 1 ? "" : "s"}`,
+      "live",
+    );
   } else if (status.connected) {
-    addModalItem(`Connected to ${status.address}`, 'live');
+    addModalItem(`Connected to ${status.address}`, "live");
   } else if (status.role) {
-    addModalItem(`Network · ${status.role} (idle)`, 'idle');
+    addModalItem(`Network · ${status.role} (idle)`, "idle");
   }
 
   endModal.hidden = false;
@@ -480,12 +547,13 @@ async function showEndModal() {
 
 function hideEndModal() {
   endModal.hidden = true;
-  if (setupOverlay.hidden && settingsOverlay.hidden) window.api.setWebviewVisible(true);
+  if (setupOverlay.hidden && settingsOverlay.hidden)
+    window.api.setWebviewVisible(true);
 }
 
-endBtn.addEventListener('click', showEndModal);
-endModalCancel.addEventListener('click', hideEndModal);
-endModalConfirm.addEventListener('click', async () => {
+endBtn.addEventListener("click", showEndModal);
+endModalCancel.addEventListener("click", hideEndModal);
+endModalConfirm.addEventListener("click", async () => {
   endModal.hidden = true;
   await window.api.saveSessionLog().catch(() => {});
   if (recState) await stopVoice().catch(() => {});
@@ -493,12 +561,12 @@ endModalConfirm.addEventListener('click', async () => {
   await window.api.stopNetwork();
   teardownPeers();
   delete netActionBtn.dataset.connecting;
-  log('Session ended — back to setup', 'info');
+  log("Session ended — back to setup", "info");
   showSetup();
 });
 
-document.addEventListener('keydown', (e) => {
-  if (!endModal.hidden && e.key === 'Escape') hideEndModal();
+document.addEventListener("keydown", (e) => {
+  if (!endModal.hidden && e.key === "Escape") hideEndModal();
 });
 
 showSetup();
@@ -512,30 +580,30 @@ function normalizeUrl(input) {
   const u = input.trim();
   if (!u) return null;
   if (/^https?:\/\//i.test(u)) return u;
-  if (/^[\w.-]+\.[a-z]{2,}/i.test(u)) return 'https://' + u;
+  if (/^[\w.-]+\.[a-z]{2,}/i.test(u)) return "https://" + u;
   return null;
 }
 
 function renderUrlList() {
-  urlList.innerHTML = '';
+  urlList.innerHTML = "";
   if (urls.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'url-empty';
-    empty.textContent = 'No URLs added yet.';
+    const empty = document.createElement("div");
+    empty.className = "url-empty";
+    empty.textContent = "No URLs added yet.";
     urlList.appendChild(empty);
     return;
   }
   urls.forEach((url, i) => {
-    const row = document.createElement('div');
-    row.className = 'url-row';
-    const txt = document.createElement('span');
-    txt.className = 'url-text';
+    const row = document.createElement("div");
+    row.className = "url-row";
+    const txt = document.createElement("span");
+    txt.className = "url-text";
     txt.textContent = url;
-    const rm = document.createElement('button');
-    rm.className = 'url-remove';
-    rm.textContent = '×';
-    rm.title = 'Remove';
-    rm.addEventListener('click', () => {
+    const rm = document.createElement("button");
+    rm.className = "url-remove";
+    rm.textContent = "×";
+    rm.title = "Remove";
+    rm.addEventListener("click", () => {
       urls.splice(i, 1);
       window.api.setUrls(urls);
       renderUrlList();
@@ -552,41 +620,45 @@ async function refreshUrls() {
   renderUrlList();
 }
 
-urlAddBtn.addEventListener('click', () => {
+urlAddBtn.addEventListener("click", () => {
   const u = normalizeUrl(urlInput.value);
   if (!u) return;
   urls.push(u);
   window.api.setUrls(urls);
-  urlInput.value = '';
+  urlInput.value = "";
   renderUrlList();
 });
 
-urlInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') urlAddBtn.click();
+urlInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") urlAddBtn.click();
 });
 
-urlMenuBtn.addEventListener('click', () => window.api.showUrlMenu());
-reloadBtn.addEventListener('click', () => window.api.reloadWebview());
+urlMenuBtn.addEventListener("click", () => window.api.showUrlMenu());
+reloadBtn.addEventListener("click", () => window.api.reloadWebview());
 
-const tabBtns = document.querySelectorAll('.tab-btn');
-const tabPanels = document.querySelectorAll('.settings-tab');
+const tabBtns = document.querySelectorAll(".tab-btn");
+const tabPanels = document.querySelectorAll(".settings-tab");
 
 function activateTab(name) {
-  tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  tabPanels.forEach(p => { p.hidden = p.dataset.tab !== name; });
+  tabBtns.forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  tabPanels.forEach((p) => {
+    p.hidden = p.dataset.tab !== name;
+  });
 }
 
-tabBtns.forEach(btn => btn.addEventListener('click', () => {
-  activateTab(btn.dataset.tab);
-  if (btn.dataset.tab === 'log') loadPersistedLog();
-}));
+tabBtns.forEach((btn) =>
+  btn.addEventListener("click", () => {
+    activateTab(btn.dataset.tab);
+    if (btn.dataset.tab === "log") loadPersistedLog();
+  }),
+);
 
-const logOpenBtn = document.getElementById('logOpenBtn');
-const logClearBtn = document.getElementById('logClearBtn');
-const updaterVersionEl = document.getElementById('updaterVersion');
-const updaterCheckBtn = document.getElementById('updaterCheckBtn');
-const updaterInstallBtn = document.getElementById('updaterInstallBtn');
-const updaterStatusEl = document.getElementById('updaterStatus');
+const logOpenBtn = document.getElementById("logOpenBtn");
+const logClearBtn = document.getElementById("logClearBtn");
+const updaterVersionEl = document.getElementById("updaterVersion");
+const updaterCheckBtn = document.getElementById("updaterCheckBtn");
+const updaterInstallBtn = document.getElementById("updaterInstallBtn");
+const updaterStatusEl = document.getElementById("updaterStatus");
 
 if (window.api && window.api.getAppVersion) {
   window.api.getAppVersion().then((v) => {
@@ -594,44 +666,56 @@ if (window.api && window.api.getAppVersion) {
   });
 }
 
-if (updaterCheckBtn) updaterCheckBtn.addEventListener('click', async () => {
-  if (!updaterStatusEl) return;
-  updaterStatusEl.textContent = 'Checking…';
-  const r = await window.api.checkForUpdates();
-  if (!r.ok) updaterStatusEl.textContent = 'Error: ' + (r.message || 'check failed');
-});
+if (updaterCheckBtn)
+  updaterCheckBtn.addEventListener("click", async () => {
+    if (!updaterStatusEl) return;
+    updaterStatusEl.textContent = "Checking…";
+    const r = await window.api.checkForUpdates();
+    if (!r.ok)
+      updaterStatusEl.textContent = "Error: " + (r.message || "check failed");
+  });
 
-if (updaterInstallBtn) updaterInstallBtn.addEventListener('click', () => window.api.installUpdateNow());
+if (updaterInstallBtn)
+  updaterInstallBtn.addEventListener("click", () =>
+    window.api.installUpdateNow(),
+  );
 
 if (window.api && window.api.onUpdaterStatus) {
   window.api.onUpdaterStatus((s) => {
     if (!updaterStatusEl) return;
-    if (s.state === 'checking') updaterStatusEl.textContent = 'Checking for updates…';
-    else if (s.state === 'available') updaterStatusEl.textContent = `Update available: v${s.version}. Downloading…`;
-    else if (s.state === 'up-to-date') updaterStatusEl.textContent = 'Up to date.';
-    else if (s.state === 'downloading') updaterStatusEl.textContent = `Downloading update… ${s.percent}%`;
-    else if (s.state === 'downloaded') {
+    if (s.state === "checking")
+      updaterStatusEl.textContent = "Checking for updates…";
+    else if (s.state === "available")
+      updaterStatusEl.textContent = `Update available: v${s.version}. Downloading…`;
+    else if (s.state === "up-to-date")
+      updaterStatusEl.textContent = "Up to date.";
+    else if (s.state === "downloading")
+      updaterStatusEl.textContent = `Downloading update… ${s.percent}%`;
+    else if (s.state === "downloaded") {
       updaterStatusEl.textContent = `Update v${s.version} ready. Restart to install.`;
       if (updaterInstallBtn) updaterInstallBtn.hidden = false;
-    } else if (s.state === 'error') updaterStatusEl.textContent = 'Updater error: ' + s.message;
+    } else if (s.state === "error")
+      updaterStatusEl.textContent = "Updater error: " + s.message;
   });
 }
 
-if (logOpenBtn) logOpenBtn.addEventListener('click', () => window.api.logOpen());
-if (logClearBtn) logClearBtn.addEventListener('click', async () => {
-  if (!window.confirm('Clear the activity log file?')) return;
-  await window.api.logClear();
-  logBody.innerHTML = '';
-  log('Log cleared', 'info');
-});
+if (logOpenBtn)
+  logOpenBtn.addEventListener("click", () => window.api.logOpen());
+if (logClearBtn)
+  logClearBtn.addEventListener("click", async () => {
+    if (!window.confirm("Clear the activity log file?")) return;
+    await window.api.logClear();
+    logBody.innerHTML = "";
+    log("Log cleared", "info");
+  });
 
 function openSettings() {
   settingsOverlay.hidden = false;
   window.api.setWebviewVisible(false);
-  const inInterview = document.body.classList.contains('in-interview');
-  const isSupporter = netCfg && netCfg.role === 'supporter';
-  let defaultTab = 'general';
-  if (inInterview) defaultTab = 'network';
+  const inInterview = document.body.classList.contains("in-interview");
+  const isSupporter = netCfg && netCfg.role === "supporter";
+  let defaultTab = "general";
+  if (inInterview) defaultTab = "network";
   activateTab(defaultTab);
   refreshUrls();
   refreshModeUI();
@@ -645,23 +729,28 @@ function openSettings() {
 
 function closeSettings() {
   settingsOverlay.hidden = true;
-  const isSupporter = netCfg && netCfg.role === 'supporter';
+  const isSupporter = netCfg && netCfg.role === "supporter";
   if (!isSupporter) window.api.setWebviewVisible(true);
 }
 
-settingsBtn.addEventListener('click', openSettings);
-settingsCloseBtn.addEventListener('click', closeSettings);
+settingsBtn.addEventListener("click", openSettings);
+settingsCloseBtn.addEventListener("click", closeSettings);
 
-function log(msg, kind = '') {
-  const line = document.createElement('div');
-  line.className = 'log-line ' + (kind === 'err' ? 'log-err' : kind === 'info' ? 'log-info' : '');
+function log(msg, kind = "") {
+  const line = document.createElement("div");
+  line.className =
+    "log-line " +
+    (kind === "err" ? "log-err" : kind === "info" ? "log-info" : "");
   const ts = new Date().toLocaleTimeString();
   line.textContent = `[${ts}] ${msg}`;
   logBody.appendChild(line);
-  while (logBody.childElementCount > 500) logBody.removeChild(logBody.firstChild);
+  while (logBody.childElementCount > 500)
+    logBody.removeChild(logBody.firstChild);
   logBody.scrollTop = logBody.scrollHeight;
   if (window.api && window.api.logAppend) {
-    window.api.logAppend(`${kind ? '[' + kind + '] ' : ''}${msg}`).catch(() => {});
+    window.api
+      .logAppend(`${kind ? "[" + kind + "] " : ""}${msg}`)
+      .catch(() => {});
   }
 }
 
@@ -672,8 +761,8 @@ async function loadPersistedLog() {
     if (!lines || lines.length === 0) return;
     if (logBody.childElementCount > 0) return;
     for (const raw of lines) {
-      const div = document.createElement('div');
-      div.className = 'log-line log-info';
+      const div = document.createElement("div");
+      div.className = "log-line log-info";
       div.textContent = raw;
       logBody.appendChild(div);
     }
@@ -683,8 +772,8 @@ async function loadPersistedLog() {
 
 async function refreshModeUI() {
   mode = await window.api.getMode();
-  modeVoice.checked = mode !== 'caption';
-  modeCaption.checked = mode === 'caption';
+  modeVoice.checked = mode !== "caption";
+  modeCaption.checked = mode === "caption";
   updateRecTitle();
   updateTabVisibility(mode);
   updateModeToggleBtn();
@@ -693,34 +782,45 @@ async function refreshModeUI() {
 function updateTabVisibility(activeMode) {
   const voiceBtn = document.querySelector('.tab-btn[data-tab="voice"]');
   const captionBtn = document.querySelector('.tab-btn[data-tab="caption"]');
-  const isCaption = activeMode === 'caption';
-  if (voiceBtn) voiceBtn.style.display = isCaption ? 'none' : '';
-  if (captionBtn) captionBtn.style.display = isCaption ? '' : 'none';
-  const hiddenActive = document.querySelector('.tab-btn.active');
-  if (hiddenActive && hiddenActive.style.display === 'none') activateTab('general');
+  const isCaption = activeMode === "caption";
+  if (voiceBtn) voiceBtn.style.display = isCaption ? "none" : "";
+  if (captionBtn) captionBtn.style.display = isCaption ? "" : "none";
+  const hiddenActive = document.querySelector(".tab-btn.active");
+  if (hiddenActive && hiddenActive.style.display === "none")
+    activateTab("general");
 }
 
 function updateRecTitle() {
-  const verb = recState || captureRunning ? 'Stop' : 'Start';
-  const what = mode === 'caption' ? 'caption capture' : 'voice transcription';
+  const verb = recState || captureRunning ? "Stop" : "Start";
+  const what = mode === "caption" ? "caption capture" : "voice transcription";
   recBtn.title = `${verb} ${what}`;
 }
 
-modeVoice.addEventListener('change', async () => {
-  if (modeVoice.checked) { mode = 'voice'; await window.api.setMode('voice'); updateRecTitle(); updateTabVisibility('voice'); }
+modeVoice.addEventListener("change", async () => {
+  if (modeVoice.checked) {
+    mode = "voice";
+    await window.api.setMode("voice");
+    updateRecTitle();
+    updateTabVisibility("voice");
+  }
 });
-modeCaption.addEventListener('change', async () => {
-  if (modeCaption.checked) { mode = 'caption'; await window.api.setMode('caption'); updateRecTitle(); updateTabVisibility('caption'); }
+modeCaption.addEventListener("change", async () => {
+  if (modeCaption.checked) {
+    mode = "caption";
+    await window.api.setMode("caption");
+    updateRecTitle();
+    updateTabVisibility("caption");
+  }
 });
 
 async function refreshTranscriptionUI() {
   txCfg = await window.api.getTranscriptionConfig();
-  engineDeepgram.checked = txCfg.engine !== 'local';
-  engineLocal.checked = txCfg.engine === 'local';
-  deepgramKeyEl.value = txCfg.deepgramApiKey || '';
-  whisperExeEl.value = txCfg.whisperExe || '';
-  whisperModelEl.value = txCfg.whisperModel || '';
-  languageSelect.value = txCfg.language || 'auto';
+  engineDeepgram.checked = txCfg.engine !== "local";
+  engineLocal.checked = txCfg.engine === "local";
+  deepgramKeyEl.value = txCfg.deepgramApiKey || "";
+  whisperExeEl.value = txCfg.whisperExe || "";
+  whisperModelEl.value = txCfg.whisperModel || "";
+  languageSelect.value = txCfg.language || "auto";
   captureMicEl.checked = txCfg.captureMic !== false;
   captureSystemEl.checked = txCfg.captureSystem !== false;
 }
@@ -730,28 +830,54 @@ async function persistTx(patch) {
   await window.api.setTranscriptionConfig(patch);
 }
 
-engineDeepgram.addEventListener('change', () => engineDeepgram.checked && persistTx({ engine: 'deepgram' }));
-engineLocal.addEventListener('change', () => engineLocal.checked && persistTx({ engine: 'local' }));
-deepgramKeyEl.addEventListener('change', () => persistTx({ deepgramApiKey: deepgramKeyEl.value.trim() }));
-whisperExeEl.addEventListener('change', () => persistTx({ whisperExe: whisperExeEl.value.trim() }));
-whisperModelEl.addEventListener('change', () => persistTx({ whisperModel: whisperModelEl.value.trim() }));
-languageSelect.addEventListener('change', () => persistTx({ language: languageSelect.value }));
-captureMicEl.addEventListener('change', () => persistTx({ captureMic: captureMicEl.checked }));
-captureSystemEl.addEventListener('change', () => persistTx({ captureSystem: captureSystemEl.checked }));
-micSelect.addEventListener('change', () => persistTx({ micDeviceId: micSelect.value }));
+engineDeepgram.addEventListener(
+  "change",
+  () => engineDeepgram.checked && persistTx({ engine: "deepgram" }),
+);
+engineLocal.addEventListener(
+  "change",
+  () => engineLocal.checked && persistTx({ engine: "local" }),
+);
+deepgramKeyEl.addEventListener("change", () =>
+  persistTx({ deepgramApiKey: deepgramKeyEl.value.trim() }),
+);
+whisperExeEl.addEventListener("change", () =>
+  persistTx({ whisperExe: whisperExeEl.value.trim() }),
+);
+whisperModelEl.addEventListener("change", () =>
+  persistTx({ whisperModel: whisperModelEl.value.trim() }),
+);
+languageSelect.addEventListener("change", () =>
+  persistTx({ language: languageSelect.value }),
+);
+captureMicEl.addEventListener("change", () =>
+  persistTx({ captureMic: captureMicEl.checked }),
+);
+captureSystemEl.addEventListener("change", () =>
+  persistTx({ captureSystem: captureSystemEl.checked }),
+);
+micSelect.addEventListener("change", () =>
+  persistTx({ micDeviceId: micSelect.value }),
+);
 
-whisperExeBrowse.addEventListener('click', async () => {
-  const p = await window.api.pickFile('exe');
-  if (p) { whisperExeEl.value = p; persistTx({ whisperExe: p }); }
+whisperExeBrowse.addEventListener("click", async () => {
+  const p = await window.api.pickFile("exe");
+  if (p) {
+    whisperExeEl.value = p;
+    persistTx({ whisperExe: p });
+  }
 });
-whisperModelBrowse.addEventListener('click', async () => {
-  const p = await window.api.pickFile('model');
-  if (p) { whisperModelEl.value = p; persistTx({ whisperModel: p }); }
+whisperModelBrowse.addEventListener("click", async () => {
+  const p = await window.api.pickFile("model");
+  if (p) {
+    whisperModelEl.value = p;
+    persistTx({ whisperModel: p });
+  }
 });
 
 async function refreshCaptureUI() {
   capCfg = await window.api.getCaptureConfig();
-  captureLanguageEl.value = capCfg.language || 'English';
+  captureLanguageEl.value = capCfg.language || "English";
   capturePollMsEl.value = capCfg.pollMs || 700;
   if (captureShowOverlayEl) captureShowOverlayEl.checked = !!capCfg.showOverlay;
   renderCaptureRect(capCfg.rect);
@@ -759,12 +885,12 @@ async function refreshCaptureUI() {
 
 function renderCaptureRect(rect) {
   if (!rect) {
-    captureRectEl.value = '';
-    captureRectEl.placeholder = 'No area selected';
+    captureRectEl.value = "";
+    captureRectEl.placeholder = "No area selected";
   } else {
     const w = rect.x2 - rect.x1;
     const h = rect.y2 - rect.y1;
-    captureRectEl.value = `(${rect.x1}, ${rect.y1}) ${w}×${h}${rect.scaleFactor && rect.scaleFactor !== 1 ? ` @${rect.scaleFactor}x` : ''}`;
+    captureRectEl.value = `(${rect.x1}, ${rect.y1}) ${w}×${h}${rect.scaleFactor && rect.scaleFactor !== 1 ? ` @${rect.scaleFactor}x` : ""}`;
   }
 }
 
@@ -773,61 +899,77 @@ async function persistCap(patch) {
   await window.api.setCaptureConfig(patch);
 }
 
-captureLanguageEl.addEventListener('change', () => persistCap({ language: captureLanguageEl.value }));
-if (captureShowOverlayEl) captureShowOverlayEl.addEventListener('change', () => persistCap({ showOverlay: captureShowOverlayEl.checked }));
-capturePollMsEl.addEventListener('change', () => {
+captureLanguageEl.addEventListener("change", () =>
+  persistCap({ language: captureLanguageEl.value }),
+);
+if (captureShowOverlayEl)
+  captureShowOverlayEl.addEventListener("change", () =>
+    persistCap({ showOverlay: captureShowOverlayEl.checked }),
+  );
+capturePollMsEl.addEventListener("change", () => {
   const v = parseInt(capturePollMsEl.value, 10);
   if (Number.isFinite(v) && v >= 200) persistCap({ pollMs: v });
 });
-selectAreaBtn.addEventListener('click', async () => {
-  log('Selecting capture area — drag a rectangle, Esc to cancel', 'info');
+selectAreaBtn.addEventListener("click", async () => {
+  log("Selecting capture area — drag a rectangle, Esc to cancel", "info");
   await window.api.selectCaptureArea();
 });
 
 window.api.onCaptureRectChanged((rect) => {
   capCfg = { ...(capCfg || {}), rect };
   renderCaptureRect(rect);
-  log(`Capture area set: ${rect.x1},${rect.y1} → ${rect.x2},${rect.y2}`, 'info');
+  log(
+    `Capture area set: ${rect.x1},${rect.y1} → ${rect.x2},${rect.y2}`,
+    "info",
+  );
   if (pendingCaptureStart) {
     pendingCaptureStart = false;
     window.api.startCaptureLoop();
-    log('Auto-starting caption capture with new area', 'info');
+    log("Auto-starting caption capture with new area", "info");
   }
 });
 
 const HOTKEY_LABELS = {
-  toggleVisibility: 'Toggle window visibility',
-  moveLeft: 'Move window left',
-  moveRight: 'Move window right',
-  moveUp: 'Move window up',
-  moveDown: 'Move window down',
-  opacityUp: 'Opacity up',
-  opacityDown: 'Opacity down',
-  scrollUp: 'Scroll page up',
-  scrollDown: 'Scroll page down',
-  resetCaptureArea: 'Reset capture area (re-pick)',
-  reloadSite: 'Reload site',
-  toggleStealth: 'Toggle stealth',
-  toggleRecording: 'Start/stop voice or caption',
-  toggleMode: 'Toggle OCR ↔ Voice mode',
-  pushToTalk: 'Push-to-talk (toggle supporter mic)',
+  toggleVisibility: "Toggle window visibility",
+  moveLeft: "Move window left",
+  moveRight: "Move window right",
+  moveUp: "Move window up",
+  moveDown: "Move window down",
+  opacityUp: "Opacity up",
+  opacityDown: "Opacity down",
+  scrollUp: "Scroll page up",
+  scrollDown: "Scroll page down",
+  resetCaptureArea: "Reset capture area (re-pick)",
+  reloadSite: "Reload site",
+  toggleStealth: "Toggle stealth",
+  toggleRecording: "Start/stop voice or caption",
+  toggleMode: "Toggle OCR ↔ Voice mode",
+  pushToTalk: "Push-to-talk (toggle supporter mic)",
 };
 
 function eventToBinding(e) {
   const key = e.key;
-  if (['Control', 'Alt', 'Shift', 'Meta', 'Dead'].includes(key)) return null;
+  if (["Control", "Alt", "Shift", "Meta", "Dead"].includes(key)) return null;
   const parts = [];
-  if (e.ctrlKey) parts.push('Ctrl');
-  if (e.altKey) parts.push('Alt');
-  if (e.shiftKey) parts.push('Shift');
-  if (e.metaKey) parts.push('Super');
+  if (e.ctrlKey) parts.push("Ctrl");
+  if (e.altKey) parts.push("Alt");
+  if (e.shiftKey) parts.push("Shift");
+  if (e.metaKey) parts.push("Super");
   const map = {
-    'ArrowLeft': 'Left', 'ArrowRight': 'Right',
-    'ArrowUp': 'Up', 'ArrowDown': 'Down',
-    ' ': 'Space', 'Escape': 'Esc',
-    'Enter': 'Return', 'Tab': 'Tab', 'Backspace': 'Backspace',
-    'Delete': 'Delete', 'Home': 'Home', 'End': 'End',
-    'PageUp': 'PageUp', 'PageDown': 'PageDown',
+    ArrowLeft: "Left",
+    ArrowRight: "Right",
+    ArrowUp: "Up",
+    ArrowDown: "Down",
+    " ": "Space",
+    Escape: "Esc",
+    Enter: "Return",
+    Tab: "Tab",
+    Backspace: "Backspace",
+    Delete: "Delete",
+    Home: "Home",
+    End: "End",
+    PageUp: "PageUp",
+    PageDown: "PageDown",
   };
   let k;
   if (map[key]) k = map[key];
@@ -835,7 +977,7 @@ function eventToBinding(e) {
   else if (/^F\d{1,2}$/.test(key)) k = key;
   else k = key;
   parts.push(k);
-  return parts.join('+');
+  return parts.join("+");
 }
 
 let hotkeyState = { current: {}, defaults: {}, failures: {} };
@@ -848,40 +990,41 @@ async function refreshHotkeysUI() {
 }
 
 function renderHotkeyList() {
-  hotkeyList.innerHTML = '';
+  hotkeyList.innerHTML = "";
   for (const action of Object.keys(HOTKEY_LABELS)) {
-    const row = document.createElement('div');
-    row.className = 'hotkey-row';
+    const row = document.createElement("div");
+    row.className = "hotkey-row";
 
-    const label = document.createElement('span');
-    label.className = 'hotkey-label';
+    const label = document.createElement("span");
+    label.className = "hotkey-label";
     label.textContent = HOTKEY_LABELS[action];
     row.appendChild(label);
 
-    const binding = document.createElement('button');
-    binding.className = 'hotkey-binding';
-    const combo = hotkeyState.current[action] || '';
+    const binding = document.createElement("button");
+    binding.className = "hotkey-binding";
+    const combo = hotkeyState.current[action] || "";
     if (capturingFor === action) {
-      binding.textContent = 'Press keys…';
-      binding.classList.add('capturing');
+      binding.textContent = "Press keys…";
+      binding.classList.add("capturing");
     } else if (!combo) {
-      binding.textContent = '(disabled)';
-      binding.classList.add('empty');
+      binding.textContent = "(disabled)";
+      binding.classList.add("empty");
     } else {
       binding.textContent = combo;
       if (hotkeyState.failures && hotkeyState.failures[action]) {
-        binding.classList.add('failed');
+        binding.classList.add("failed");
         binding.title = hotkeyState.failures[action];
       }
     }
-    binding.addEventListener('click', () => beginCapture(action));
+    binding.addEventListener("click", () => beginCapture(action));
     row.appendChild(binding);
 
-    const reset = document.createElement('button');
-    reset.className = 'hotkey-reset';
-    reset.textContent = 'reset';
-    reset.title = 'Reset to default: ' + (hotkeyState.defaults[action] || '(none)');
-    reset.addEventListener('click', async () => {
+    const reset = document.createElement("button");
+    reset.className = "hotkey-reset";
+    reset.textContent = "reset";
+    reset.title =
+      "Reset to default: " + (hotkeyState.defaults[action] || "(none)");
+    reset.addEventListener("click", async () => {
       cancelCapture();
       await window.api.resetHotkey(action);
     });
@@ -898,15 +1041,27 @@ function beginCapture(action) {
   captureKeyHandler = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
+    if (
+      e.key === "Escape" &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.shiftKey &&
+      !e.metaKey
+    ) {
       cancelCapture();
       renderHotkeyList();
       return;
     }
-    if (e.key === 'Backspace' && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
+    if (
+      e.key === "Backspace" &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.shiftKey &&
+      !e.metaKey
+    ) {
       const a = capturingFor;
       cancelCapture();
-      await window.api.setHotkey(a, '');
+      await window.api.setHotkey(a, "");
       return;
     }
     const combo = eventToBinding(e);
@@ -915,18 +1070,18 @@ function beginCapture(action) {
     cancelCapture();
     await window.api.setHotkey(a, combo);
   };
-  document.addEventListener('keydown', captureKeyHandler, true);
+  document.addEventListener("keydown", captureKeyHandler, true);
 }
 
 function cancelCapture() {
   if (captureKeyHandler) {
-    document.removeEventListener('keydown', captureKeyHandler, true);
+    document.removeEventListener("keydown", captureKeyHandler, true);
     captureKeyHandler = null;
   }
   capturingFor = null;
 }
 
-resetAllHotkeysBtn.addEventListener('click', async () => {
+resetAllHotkeysBtn.addEventListener("click", async () => {
   cancelCapture();
   await window.api.resetAllHotkeys();
 });
@@ -949,82 +1104,104 @@ window.api.onSelectorClosed(() => {
 });
 
 let interimEl = null;
+let voiceSegmentWords = [];
+function voiceEmitNewTail(text) {
+  const words = (text || "").split(/\s+/).filter(Boolean);
+  if (words.length === 0) return;
+  let common = 0;
+  const max = Math.min(words.length, voiceSegmentWords.length);
+  while (
+    common < max &&
+    words[common].toLowerCase() === voiceSegmentWords[common].toLowerCase()
+  )
+    common++;
+  const newTail = words.slice(common);
+  voiceSegmentWords = words;
+  if (newTail.length > 0) window.api.injectToWebview(newTail.join(" ") + " ");
+}
 window.api.onTranscriptLive(({ text, isFinal }) => {
   if (!text) return;
   if (isFinal) {
-    if (interimEl) { interimEl.remove(); interimEl = null; }
+    if (interimEl) {
+      interimEl.remove();
+      interimEl = null;
+    }
     log(text);
-    window.api.injectToWebview(text + ' ');
+    voiceEmitNewTail(text);
+    voiceSegmentWords = [];
   } else {
     if (!interimEl) {
-      interimEl = document.createElement('div');
-      interimEl.className = 'log-entry log-interim';
+      interimEl = document.createElement("div");
+      interimEl.className = "log-entry log-interim";
       logBody.appendChild(interimEl);
     }
-    interimEl.textContent = '⟳ ' + text;
+    interimEl.textContent = "⟳ " + text;
     logBody.scrollTop = logBody.scrollHeight;
+    voiceEmitNewTail(text);
   }
 });
 window.api.onTranscriptLiveError((msg) => {
-  log('Deepgram error: ' + msg, 'err');
+  log("Deepgram error: " + msg, "err");
   if (recState && recState.deepgram) {
     recState = null;
-    recBtn.classList.remove('on');
+    recBtn.classList.remove("on");
     updateRecTitle();
   }
 });
 
 window.api.onCaptureText((text) => {
-  log('OCR: ' + text);
-  window.api.sessionLogAdd({ ts: Date.now(), kind: 'ocr', text });
+  log("OCR: " + text);
+  window.api.sessionLogAdd({ ts: Date.now(), kind: "ocr", text });
 });
-window.api.onCaptureError((msg) => log('OCR error: ' + msg, 'err'));
+window.api.onCaptureError((msg) => log("OCR error: " + msg, "err"));
 window.api.onCaptureState((on) => {
   captureRunning = !!on;
-  recBtn.classList.toggle('on', captureRunning);
+  recBtn.classList.toggle("on", captureRunning);
   updateRecTitle();
 });
 
 async function refreshMicList() {
   try {
-    await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
+    await navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((s) => s.getTracks().forEach((t) => t.stop()));
     const devices = await navigator.mediaDevices.enumerateDevices();
-    const mics = devices.filter(d => d.kind === 'audioinput');
-    micSelect.innerHTML = '';
-    const def = document.createElement('option');
-    def.value = '';
-    def.textContent = 'System default';
+    const mics = devices.filter((d) => d.kind === "audioinput");
+    micSelect.innerHTML = "";
+    const def = document.createElement("option");
+    def.value = "";
+    def.textContent = "System default";
     micSelect.appendChild(def);
-    mics.forEach(m => {
-      const o = document.createElement('option');
+    mics.forEach((m) => {
+      const o = document.createElement("option");
       o.value = m.deviceId;
       o.textContent = m.label || `Microphone (${m.deviceId.slice(0, 6)})`;
       micSelect.appendChild(o);
     });
     if (txCfg && txCfg.micDeviceId) micSelect.value = txCfg.micDeviceId;
   } catch (e) {
-    log('Mic enumeration failed: ' + e.message, 'err');
+    log("Mic enumeration failed: " + e.message, "err");
   }
 }
 
 let recState = null;
 let captureRunning = false;
 
-const modeToggleBtn = document.getElementById('modeToggleBtn');
-const selectAreaRailBtn = document.getElementById('selectAreaRailBtn');
+const modeToggleBtn = document.getElementById("modeToggleBtn");
+const selectAreaRailBtn = document.getElementById("selectAreaRailBtn");
 
 function updateModeToggleBtn() {
   if (!modeToggleBtn) return;
-  const isVoice = mode === 'voice';
-  modeToggleBtn.textContent = isVoice ? 'Voice' : 'OCR';
-  modeToggleBtn.classList.toggle('mode-voice', isVoice);
+  const isVoice = mode === "voice";
+  modeToggleBtn.textContent = isVoice ? "Voice" : "OCR";
+  modeToggleBtn.classList.toggle("mode-voice", isVoice);
   modeToggleBtn.title = isVoice
-    ? 'Currently: Voice — click or Alt+D to switch to OCR mode'
-    : 'Currently: OCR — click or Alt+D to switch to Voice mode';
+    ? "Currently: Voice — click or Alt+D to switch to OCR mode"
+    : "Currently: OCR — click or Alt+D to switch to Voice mode";
 }
 
 async function doToggleMode() {
-  const newMode = mode === 'voice' ? 'caption' : 'voice';
+  const newMode = mode === "voice" ? "caption" : "voice";
   const wasRunning = !!(recState || captureRunning);
   if (recState) await stopVoice().catch(() => {});
   if (captureRunning) await stopCaption().catch(() => {});
@@ -1033,28 +1210,35 @@ async function doToggleMode() {
   updateRecTitle();
   updateTabVisibility(newMode);
   updateModeToggleBtn();
-  log('Mode switched to ' + (newMode === 'voice' ? 'Voice' : 'OCR'), 'info');
+  log("Mode switched to " + (newMode === "voice" ? "Voice" : "OCR"), "info");
   if (wasRunning) {
-    if (newMode === 'voice') {
-      startVoice().catch(e => log('Auto-start voice failed: ' + e.message, 'err'));
+    if (newMode === "voice") {
+      startVoice().catch((e) =>
+        log("Auto-start voice failed: " + e.message, "err"),
+      );
     } else {
-      startCaption().catch(e => log('Auto-start caption failed: ' + e.message, 'err'));
+      startCaption().catch((e) =>
+        log("Auto-start caption failed: " + e.message, "err"),
+      );
     }
   }
 }
 
-if (modeToggleBtn) modeToggleBtn.addEventListener('click', doToggleMode);
+if (modeToggleBtn) modeToggleBtn.addEventListener("click", doToggleMode);
 
 async function startVoice() {
   if (recState) return;
   txCfg = await window.api.getTranscriptionConfig();
 
-  if (txCfg.engine === 'deepgram') {
-    if (!txCfg.deepgramApiKey) { log('Deepgram API key not set', 'err'); return; }
+  if (txCfg.engine === "deepgram") {
+    if (!txCfg.deepgramApiKey) {
+      log("Deepgram API key not set", "err");
+      return;
+    }
 
     await window.api.startDeepgramStream({
       apiKey: txCfg.deepgramApiKey,
-      language: txCfg.language || 'auto',
+      language: txCfg.language || "auto",
     });
 
     const ctx = new AudioContext({ sampleRate: 16000 });
@@ -1063,44 +1247,68 @@ async function startVoice() {
 
     if (txCfg.captureMic !== false) {
       try {
-        const constraints = { audio: txCfg.micDeviceId
-          ? { deviceId: { exact: txCfg.micDeviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-          : { echoCancellation: false, noiseSuppression: false, autoGainControl: false } };
+        const constraints = {
+          audio: txCfg.micDeviceId
+            ? {
+                deviceId: { exact: txCfg.micDeviceId },
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+              }
+            : {
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+              },
+        };
         const mic = await navigator.mediaDevices.getUserMedia(constraints);
         streams.push(mic);
         ctx.createMediaStreamSource(mic).connect(dest);
-        log('Mic capture started', 'info');
-      } catch (e) { log('Mic failed: ' + e.message, 'err'); }
+        log("Mic capture started", "info");
+      } catch (e) {
+        log("Mic failed: " + e.message, "err");
+      }
     }
 
     if (txCfg.captureSystem !== false) {
       try {
-        const sys = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-        sys.getVideoTracks().forEach(t => t.stop());
+        const sys = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: true,
+        });
+        sys.getVideoTracks().forEach((t) => t.stop());
         const audioTracks = sys.getAudioTracks();
         if (audioTracks.length > 0) {
           streams.push(sys);
-          ctx.createMediaStreamSource(new MediaStream(audioTracks)).connect(dest);
-          log('System audio capture started', 'info');
-        } else { log('System audio: no audio track returned', 'err'); }
-      } catch (e) { log('System audio failed: ' + e.message, 'err'); }
+          ctx
+            .createMediaStreamSource(new MediaStream(audioTracks))
+            .connect(dest);
+          log("System audio capture started", "info");
+        } else {
+          log("System audio: no audio track returned", "err");
+        }
+      } catch (e) {
+        log("System audio failed: " + e.message, "err");
+      }
     }
 
     const processor = ctx.createScriptProcessor(512, 1, 1);
     ctx.createMediaStreamSource(dest.stream).connect(processor);
-    const sink = ctx.createGain(); sink.gain.value = 0;
+    const sink = ctx.createGain();
+    sink.gain.value = 0;
     processor.connect(sink).connect(ctx.destination);
     processor.onaudioprocess = (e) => {
       const f32 = e.inputBuffer.getChannelData(0);
       const i16 = new Int16Array(f32.length);
-      for (let i = 0; i < f32.length; i++) i16[i] = Math.max(-32768, Math.min(32767, f32[i] * 32767));
+      for (let i = 0; i < f32.length; i++)
+        i16[i] = Math.max(-32768, Math.min(32767, f32[i] * 32767));
       window.api.sendAudioChunk(i16.buffer);
     };
 
     recState = { ctx, streams, processor, deepgram: true };
-    recBtn.classList.add('on');
+    recBtn.classList.add("on");
     updateRecTitle();
-    log('Voice transcription started (Deepgram live)', 'info');
+    log("Voice transcription started (Deepgram live)", "info");
     return;
   }
 
@@ -1117,43 +1325,52 @@ async function startVoiceChunked() {
     try {
       const constraints = {
         audio: txCfg.micDeviceId
-          ? { deviceId: { exact: txCfg.micDeviceId }, echoCancellation: true, noiseSuppression: true }
+          ? {
+              deviceId: { exact: txCfg.micDeviceId },
+              echoCancellation: true,
+              noiseSuppression: true,
+            }
           : { echoCancellation: true, noiseSuppression: true },
       };
       const mic = await navigator.mediaDevices.getUserMedia(constraints);
       streams.push(mic);
       const src = ctx.createMediaStreamSource(mic);
-      const g = ctx.createGain(); g.gain.value = 1.0;
+      const g = ctx.createGain();
+      g.gain.value = 1.0;
       src.connect(g).connect(dest);
       sources.push(src);
-      log('Mic capture started', 'info');
+      log("Mic capture started", "info");
     } catch (e) {
-      log('Mic capture failed: ' + e.message, 'err');
+      log("Mic capture failed: " + e.message, "err");
     }
   }
 
   if (txCfg.captureSystem !== false) {
     try {
-      const sys = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-      sys.getVideoTracks().forEach(t => t.stop());
+      const sys = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true,
+      });
+      sys.getVideoTracks().forEach((t) => t.stop());
       const audioOnly = new MediaStream(sys.getAudioTracks());
       if (audioOnly.getAudioTracks().length === 0) {
-        log('System loopback returned no audio track', 'err');
+        log("System loopback returned no audio track", "err");
       } else {
         streams.push(sys);
         const src = ctx.createMediaStreamSource(audioOnly);
-        const g = ctx.createGain(); g.gain.value = 1.0;
+        const g = ctx.createGain();
+        g.gain.value = 1.0;
         src.connect(g).connect(dest);
         sources.push(src);
-        log('System loopback started', 'info');
+        log("System loopback started", "info");
       }
     } catch (e) {
-      log('System loopback failed: ' + e.message, 'err');
+      log("System loopback failed: " + e.message, "err");
     }
   }
 
   if (sources.length === 0) {
-    log('No audio sources — aborting', 'err');
+    log("No audio sources — aborting", "err");
     ctx.close();
     return;
   }
@@ -1163,12 +1380,13 @@ async function startVoiceChunked() {
   const processor = ctx.createScriptProcessor(bufferSize, 1, 1);
   const mixSource = ctx.createMediaStreamSource(dest.stream);
   mixSource.connect(processor);
-  const sink = ctx.createGain(); sink.gain.value = 0;
+  const sink = ctx.createGain();
+  sink.gain.value = 0;
   processor.connect(sink).connect(ctx.destination);
 
   let buffered = [];
   let bufferedLen = 0;
-  const CHUNK_SECONDS = 5;
+  const CHUNK_SECONDS = 0.5;
   const targetSamples = sampleRate * CHUNK_SECONDS;
 
   processor.onaudioprocess = (e) => {
@@ -1182,37 +1400,49 @@ async function startVoiceChunked() {
       const mono16k = downsampleTo16k(samples, sampleRate);
       if (!isSilent(mono16k)) {
         const wav = encodeWav(mono16k, 16000);
-        runTranscription(wav).catch(err => log('Transcribe error: ' + err.message, 'err'));
+        runTranscription(wav).catch((err) =>
+          log("Transcribe error: " + err.message, "err"),
+        );
       }
     }
   };
 
   recState = { ctx, streams, processor };
-  recBtn.classList.add('on');
+  recBtn.classList.add("on");
   updateRecTitle();
-  log('Voice transcription started (engine: ' + txCfg.engine + ')', 'info');
+  log("Voice transcription started (engine: " + txCfg.engine + ")", "info");
 }
 
 async function stopVoice() {
   if (!recState) return;
   if (recState.deepgram) {
-    try { recState.processor.disconnect(); } catch {}
-    recState.streams.forEach(s => s.getTracks ? s.getTracks().forEach(t => t.stop()) : null);
-    try { await recState.ctx.close(); } catch {}
+    try {
+      recState.processor.disconnect();
+    } catch {}
+    recState.streams.forEach((s) =>
+      s.getTracks ? s.getTracks().forEach((t) => t.stop()) : null,
+    );
+    try {
+      await recState.ctx.close();
+    } catch {}
     await window.api.stopDeepgramStream();
     recState = null;
-    recBtn.classList.remove('on');
+    recBtn.classList.remove("on");
     updateRecTitle();
-    log('Voice transcription stopped', 'info');
+    log("Voice transcription stopped", "info");
     return;
   }
-  try { recState.processor.disconnect(); } catch {}
-  recState.streams.forEach(s => s.getTracks().forEach(t => t.stop()));
-  try { await recState.ctx.close(); } catch {}
+  try {
+    recState.processor.disconnect();
+  } catch {}
+  recState.streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+  try {
+    await recState.ctx.close();
+  } catch {}
   recState = null;
-  recBtn.classList.remove('on');
+  recBtn.classList.remove("on");
   updateRecTitle();
-  log('Voice transcription stopped', 'info');
+  log("Voice transcription stopped", "info");
 }
 
 let pendingCaptureStart = false;
@@ -1220,22 +1450,32 @@ let pendingCaptureStart = false;
 async function startCaption() {
   capCfg = await window.api.getCaptureConfig();
   if (!capCfg.rect) {
-    log('No capture area — opening selector. Capture will auto-start once you pick.', 'info');
+    log(
+      "No capture area — opening selector. Capture will auto-start once you pick.",
+      "info",
+    );
     pendingCaptureStart = true;
     await window.api.selectCaptureArea();
     return;
   }
   await window.api.startCaptureLoop();
-  log('Caption capture started (' + (capCfg.language || 'English') + ', poll ' + (capCfg.pollMs || 700) + 'ms)', 'info');
+  log(
+    "Caption capture started (" +
+      (capCfg.language || "English") +
+      ", poll " +
+      (capCfg.pollMs || 700) +
+      "ms)",
+    "info",
+  );
 }
 
 async function stopCaption() {
   await window.api.stopCaptureLoop();
-  log('Caption capture stopped', 'info');
+  log("Caption capture stopped", "info");
 }
 
-recBtn.addEventListener('click', async () => {
-  if (mode === 'caption') {
+recBtn.addEventListener("click", async () => {
+  if (mode === "caption") {
     if (captureRunning) stopCaption();
     else startCaption();
   } else {
@@ -1248,14 +1488,17 @@ async function runTranscription(wavBuf) {
   const text = await window.api.transcribe(wavBuf);
   if (text && text.trim()) {
     log(text);
-    await window.api.injectToWebview(text + ' ');
+    await window.api.injectToWebview(text + " ");
   }
 }
 
 function flatten(chunks, total) {
   const out = new Float32Array(total);
   let off = 0;
-  for (const c of chunks) { out.set(c, off); off += c.length; }
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.length;
+  }
   return out;
 }
 
@@ -1286,94 +1529,100 @@ let netCfg = null;
 (async () => {
   try {
     netCfg = await window.api.getNetworkConfig();
-    log(`Init: netCfg loaded (role=${netCfg.role || 'none'})`, 'info');
-  } catch (e) { log('Init: netCfg load failed: ' + e.message, 'err'); }
+    log(`Init: netCfg loaded (role=${netCfg.role || "none"})`, "info");
+  } catch (e) {
+    log("Init: netCfg load failed: " + e.message, "err");
+  }
 })();
 
 async function refreshNetworkUI() {
   netCfg = await window.api.getNetworkConfig();
   const status = await window.api.getNetworkStatus();
-  roleSpeaker.checked = netCfg.role === 'speaker' || !netCfg.role;
-  roleSupporter.checked = netCfg.role === 'supporter';
-  netAddressEl.value = netCfg.address || '';
+  roleSpeaker.checked = netCfg.role === "speaker" || !netCfg.role;
+  roleSupporter.checked = netCfg.role === "supporter";
+  netAddressEl.value = netCfg.address || "";
   const port = parsePort(netCfg.address) || 2000;
   if (netPortEl) netPortEl.value = port;
   maxSupportersEl.value = netCfg.maxSupporters || 1;
   if (twoWayEl) twoWayEl.checked = true;
   const v = Math.round((netCfg.incomingVolume ?? 1) * 100);
   incomingVolumeEl.value = v;
-  incomingVolumeVal.textContent = v + '%';
+  incomingVolumeVal.textContent = v + "%";
   applyIncomingVolume(netCfg.incomingVolume ?? 1);
   updateRoleVisibility();
   renderNetStatus(status);
 }
 
 function parsePort(addr) {
-  const m = String(addr || '').match(/:(\d+)$/);
+  const m = String(addr || "").match(/:(\d+)$/);
   return m ? parseInt(m[1], 10) : null;
 }
 
 function parseHost(addr) {
-  const m = String(addr || '').match(/^([^:]+):/);
-  return m ? m[1] : '';
+  const m = String(addr || "").match(/^([^:]+):/);
+  return m ? m[1] : "";
 }
 
 function updateRoleVisibility() {
-  const isSpeaker = netCfg && netCfg.role === 'speaker';
-  const isSupporter = netCfg && netCfg.role === 'supporter';
-  if (maxSupportersField) maxSupportersField.style.display = isSpeaker ? '' : 'none';
-  if (netPortField) netPortField.style.display = isSpeaker ? '' : 'none';
-  if (netAddressField) netAddressField.style.display = isSupporter ? '' : 'none';
+  const isSpeaker = netCfg && netCfg.role === "speaker";
+  const isSupporter = netCfg && netCfg.role === "supporter";
+  if (maxSupportersField)
+    maxSupportersField.style.display = isSpeaker ? "" : "none";
+  if (netPortField) netPortField.style.display = isSpeaker ? "" : "none";
+  if (netAddressField)
+    netAddressField.style.display = isSupporter ? "" : "none";
   if (!netCfg || !netCfg.role) {
-    netActionBtn.textContent = 'Pick a role first';
+    netActionBtn.textContent = "Pick a role first";
     netActionBtn.disabled = true;
   } else {
     netActionBtn.disabled = false;
-    netActionBtn.textContent = isSpeaker ? 'Start hosting' : 'Connect to speaker';
+    netActionBtn.textContent = isSpeaker
+      ? "Start hosting"
+      : "Connect to speaker";
   }
 }
 
 function renderSupportersList(status) {
   if (!supportersBlock || !supportersList) return;
   const role = (netCfg && netCfg.role) || status.role;
-  const isSpeaker = role === 'speaker' && status.bound;
+  const isSpeaker = role === "speaker" && status.bound;
   if (!isSpeaker) {
     supportersBlock.hidden = true;
     return;
   }
   supportersBlock.hidden = false;
-  supportersList.innerHTML = '';
+  supportersList.innerHTML = "";
   const ids = status.supporters || [];
   if (ids.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'supporters-empty';
-    empty.textContent = 'Waiting for supporters…';
+    const empty = document.createElement("div");
+    empty.className = "supporters-empty";
+    empty.textContent = "Waiting for supporters…";
     supportersList.appendChild(empty);
     return;
   }
   ids.forEach((entry) => {
-    const id = typeof entry === 'object' ? entry.id : entry;
-    const ip = (typeof entry === 'object' && entry.ip) ? entry.ip : null;
-    const row = document.createElement('div');
-    row.className = 'supporter-row';
-    const dot = document.createElement('span');
-    dot.className = 'supporter-dot';
-    const label = document.createElement('span');
-    label.className = 'supporter-label';
+    const id = typeof entry === "object" ? entry.id : entry;
+    const ip = typeof entry === "object" && entry.ip ? entry.ip : null;
+    const row = document.createElement("div");
+    row.className = "supporter-row";
+    const dot = document.createElement("span");
+    dot.className = "supporter-dot";
+    const label = document.createElement("span");
+    label.className = "supporter-label";
     label.textContent = `#${id}`;
-    const ipEl = document.createElement('span');
-    ipEl.className = 'supporter-ip';
-    ipEl.textContent = ip || 'unknown IP';
-    if (!ip) ipEl.classList.add('unknown');
-    const kick = document.createElement('button');
-    kick.className = 'supporter-kick';
-    kick.textContent = 'Kick';
-    kick.title = ip ? `Disconnect ${ip}` : 'Disconnect this supporter';
-    kick.addEventListener('click', async () => {
+    const ipEl = document.createElement("span");
+    ipEl.className = "supporter-ip";
+    ipEl.textContent = ip || "unknown IP";
+    if (!ip) ipEl.classList.add("unknown");
+    const kick = document.createElement("button");
+    kick.className = "supporter-kick";
+    kick.textContent = "Kick";
+    kick.title = ip ? `Disconnect ${ip}` : "Disconnect this supporter";
+    kick.addEventListener("click", async () => {
       const who = ip ? `Supporter #${id} (${ip})` : `Supporter #${id}`;
       if (!window.confirm(`Disconnect ${who}?`)) return;
       await window.api.kickSupporter(id);
-      log(`Kicked ${who}`, 'info');
+      log(`Kicked ${who}`, "info");
     });
     row.appendChild(dot);
     row.appendChild(label);
@@ -1385,41 +1634,43 @@ function renderSupportersList(status) {
 
 function renderNetStatus(status) {
   if (!netStatusEl || !netFlag) return;
-  let flagText = 'IDLE';
-  let flagCls = '';
+  let flagText = "IDLE";
+  let flagCls = "";
   let txt;
   const role = (netCfg && netCfg.role) || status.role;
-  if (status.bound && role === 'speaker') {
+  if (status.bound && role === "speaker") {
     const hasSupporters = status.supporters.length > 0;
-    flagText = hasSupporters ? 'CONNECTED' : 'HOSTING';
-    flagCls = hasSupporters ? 'connected' : 'hosting';
+    flagText = hasSupporters ? "CONNECTED" : "HOSTING";
+    flagCls = hasSupporters ? "connected" : "hosting";
     txt = `Hosting on ${status.address} · ${status.supporters.length}/${status.maxSupporters} supporter(s)`;
     netActionBtn.hidden = true;
     netStopBtn.hidden = false;
-    netStopBtn.textContent = 'Stop hosting';
-  } else if (role === 'supporter' && status.connected) {
-    flagText = 'CONNECTED';
-    flagCls = 'connected';
+    netStopBtn.textContent = "Stop hosting";
+  } else if (role === "supporter" && status.connected) {
+    flagText = "CONNECTED";
+    flagCls = "connected";
     txt = `Connected to ${status.address}`;
     netActionBtn.hidden = true;
     netStopBtn.hidden = false;
-    netStopBtn.textContent = 'Disconnect';
-  } else if (role === 'supporter' && netActionBtn.dataset.connecting === '1') {
-    flagText = 'DIALING';
-    flagCls = 'connecting';
+    netStopBtn.textContent = "Disconnect";
+  } else if (role === "supporter" && netActionBtn.dataset.connecting === "1") {
+    flagText = "DIALING";
+    flagCls = "connecting";
     txt = `Dialing ${status.address}…`;
     netActionBtn.hidden = true;
     netStopBtn.hidden = false;
-    netStopBtn.textContent = 'Cancel';
+    netStopBtn.textContent = "Cancel";
   } else {
-    flagText = 'IDLE';
-    flagCls = '';
-    txt = role ? `Idle. Press the action button to start.` : `Pick a role and start.`;
+    flagText = "IDLE";
+    flagCls = "";
+    txt = role
+      ? `Idle. Press the action button to start.`
+      : `Pick a role and start.`;
     netActionBtn.hidden = false;
     netStopBtn.hidden = true;
   }
   netFlag.textContent = flagText;
-  netFlag.className = 'status-flag' + (flagCls ? ' ' + flagCls : '');
+  netFlag.className = "status-flag" + (flagCls ? " " + flagCls : "");
   netStatusEl.textContent = txt;
   renderSupportersList(status);
 }
@@ -1429,8 +1680,8 @@ async function persistNet(patch) {
   await window.api.setNetworkConfig(patch);
 }
 
-[roleSpeaker, roleSupporter].forEach(el => {
-  el.addEventListener('change', async () => {
+[roleSpeaker, roleSupporter].forEach((el) => {
+  el.addEventListener("change", async () => {
     if (!el.checked) return;
     const role = el.value;
     if (netActionBtn && !netActionBtn.hidden) {
@@ -1442,9 +1693,13 @@ async function persistNet(patch) {
       renderNetStatus(status);
     } else {
       // Mid-session role change — confirm and stop everything
-      if (!window.confirm('Switching role will disconnect the current session. Continue?')) {
-        roleSpeaker.checked = netCfg.role === 'speaker';
-        roleSupporter.checked = netCfg.role === 'supporter';
+      if (
+        !window.confirm(
+          "Switching role will disconnect the current session. Continue?",
+        )
+      ) {
+        roleSpeaker.checked = netCfg.role === "speaker";
+        roleSupporter.checked = netCfg.role === "supporter";
         return;
       }
       await window.api.stopNetwork();
@@ -1455,23 +1710,27 @@ async function persistNet(patch) {
   });
 });
 
-netActionBtn.addEventListener('click', async () => {
+netActionBtn.addEventListener("click", async () => {
   if (!netCfg || !netCfg.role) return;
   const role = netCfg.role;
   const addr = netAddressEl.value.trim();
-  if (!addr) { window.alert('Enter an address first.'); return; }
+  if (!addr) {
+    window.alert("Enter an address first.");
+    return;
+  }
   await persistNet({ address: addr });
-  const msg = role === 'speaker'
-    ? `Start hosting on ${addr}?\n\nThis will:\n  • Bind a WebSocket server on the port\n  • Capture your microphone + system audio when a supporter connects\n  • Stream audio to up to ${netCfg.maxSupporters || 1} supporter(s)`
-    : `Connect to ${addr}?\n\nThis will:\n  • Open a WebSocket connection to the speaker\n  • Receive their microphone + system audio\n  • Auto-reconnect every 5s if dropped`;
+  const msg =
+    role === "speaker"
+      ? `Start hosting on ${addr}?\n\nThis will:\n  • Bind a WebSocket server on the port\n  • Capture your microphone + system audio when a supporter connects\n  • Stream audio to up to ${netCfg.maxSupporters || 1} supporter(s)`
+      : `Connect to ${addr}?\n\nThis will:\n  • Open a WebSocket connection to the speaker\n  • Receive their microphone + system audio\n  • Auto-reconnect every 5s if dropped`;
   if (!window.confirm(msg)) return;
-  if (role === 'supporter') netActionBtn.dataset.connecting = '1';
+  if (role === "supporter") netActionBtn.dataset.connecting = "1";
   await window.api.startNetwork();
   const status = await window.api.getNetworkStatus();
   renderNetStatus(status);
 });
 
-netStopBtn.addEventListener('click', async () => {
+netStopBtn.addEventListener("click", async () => {
   await window.api.stopNetwork();
   teardownPeers();
   delete netActionBtn.dataset.connecting;
@@ -1479,49 +1738,61 @@ netStopBtn.addEventListener('click', async () => {
   renderNetStatus(status);
 });
 
-if (muteToggleBtn) muteToggleBtn.addEventListener('click', () => toggleMicMute());
+if (muteToggleBtn)
+  muteToggleBtn.addEventListener("click", () => toggleMicMute());
 
-netAddressEl.addEventListener('change', () => persistNet({ address: netAddressEl.value.trim() }));
-if (netPortEl) netPortEl.addEventListener('change', () => {
-  const port = parseInt(netPortEl.value, 10);
-  if (!Number.isFinite(port) || port < 1 || port > 65535) return;
-  const host = parseHost(netCfg && netCfg.address) || '0.0.0.0';
-  persistNet({ address: `${host}:${port}` });
-  netAddressEl.value = `${host}:${port}`;
-});
-maxSupportersEl.addEventListener('change', () => {
+netAddressEl.addEventListener("change", () =>
+  persistNet({ address: netAddressEl.value.trim() }),
+);
+if (netPortEl)
+  netPortEl.addEventListener("change", () => {
+    const port = parseInt(netPortEl.value, 10);
+    if (!Number.isFinite(port) || port < 1 || port > 65535) return;
+    const host = parseHost(netCfg && netCfg.address) || "0.0.0.0";
+    persistNet({ address: `${host}:${port}` });
+    netAddressEl.value = `${host}:${port}`;
+  });
+maxSupportersEl.addEventListener("change", () => {
   const n = parseInt(maxSupportersEl.value, 10);
   if (Number.isFinite(n) && n >= 1) persistNet({ maxSupporters: n });
 });
-if (twoWayEl) twoWayEl.addEventListener('change', () => {});
+if (twoWayEl) twoWayEl.addEventListener("change", () => {});
 
-incomingVolumeEl.addEventListener('input', () => {
+incomingVolumeEl.addEventListener("input", () => {
   const v = Math.min(100, parseInt(incomingVolumeEl.value, 10)) / 100;
-  incomingVolumeVal.textContent = Math.round(v * 100) + '%';
+  incomingVolumeVal.textContent = Math.round(v * 100) + "%";
   applyIncomingVolume(v);
   persistNet({ incomingVolume: v });
 });
 
 window.api.onNetworkStatus((status) => renderNetStatus(status));
 window.api.onNetworkError((msg) => {
-  log('Network: ' + msg, 'err');
+  log("Network: " + msg, "err");
   if (netStatusEl) {
-    netStatusEl.textContent = 'Status: ' + msg;
-    netStatusEl.classList.remove('live');
-    netStatusEl.classList.add('error');
+    netStatusEl.textContent = "Status: " + msg;
+    netStatusEl.classList.remove("live");
+    netStatusEl.classList.add("error");
   }
 });
 
 const RTC_CONFIG = {
   iceServers: [
-    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] },
+    {
+      urls: [
+        "stun:stun.l.google.com:19302",
+        "stun:stun1.l.google.com:19302",
+        "stun:stun.cloudflare.com:3478",
+      ],
+    },
   ],
-  iceTransportPolicy: 'all',
+  iceTransportPolicy: "all",
 };
 
 function describeCandidate(c) {
-  const m = (c || '').match(/candidate:\S+\s+\d+\s+(\S+)\s+\d+\s+(\S+)\s+(\d+)\s+typ\s+(\S+)/);
-  if (!m) return c || '';
+  const m = (c || "").match(
+    /candidate:\S+\s+\d+\s+(\S+)\s+\d+\s+(\S+)\s+(\d+)\s+typ\s+(\S+)/,
+  );
+  if (!m) return c || "";
   return `${m[4]} ${m[1]} ${m[2]}:${m[3]}`;
 }
 
@@ -1529,26 +1800,42 @@ function attachPcDiagnostics(peer, label) {
   const tryAttach = () => {
     const pc = peer && peer._pc;
     if (!pc) return false;
-    pc.addEventListener('iceconnectionstatechange', () =>
-      log(`${label}: iceConnectionState=${pc.iceConnectionState}`, 'info'));
-    pc.addEventListener('connectionstatechange', () =>
-      log(`${label}: connectionState=${pc.connectionState}`, 'info'));
-    pc.addEventListener('icegatheringstatechange', () =>
-      log(`${label}: iceGatheringState=${pc.iceGatheringState}`, 'info'));
-    pc.addEventListener('icecandidateerror', (ev) =>
-      log(`${label}: ICE candidate error: ${ev.errorText || ev.errorCode || 'unknown'} (host=${ev.hostCandidate || ''})`, 'err'));
-    pc.addEventListener('icecandidate', (ev) => {
+    pc.addEventListener("iceconnectionstatechange", () =>
+      log(`${label}: iceConnectionState=${pc.iceConnectionState}`, "info"),
+    );
+    pc.addEventListener("connectionstatechange", () =>
+      log(`${label}: connectionState=${pc.connectionState}`, "info"),
+    );
+    pc.addEventListener("icegatheringstatechange", () =>
+      log(`${label}: iceGatheringState=${pc.iceGatheringState}`, "info"),
+    );
+    pc.addEventListener("icecandidateerror", (ev) =>
+      log(
+        `${label}: ICE candidate error: ${ev.errorText || ev.errorCode || "unknown"} (host=${ev.hostCandidate || ""})`,
+        "err",
+      ),
+    );
+    pc.addEventListener("icecandidate", (ev) => {
       if (ev.candidate && ev.candidate.candidate) {
-        log(`${label}: ICE local candidate gathered: ${describeCandidate(ev.candidate.candidate)}`, 'info');
+        log(
+          `${label}: ICE local candidate gathered: ${describeCandidate(ev.candidate.candidate)}`,
+          "info",
+        );
       } else if (!ev.candidate) {
-        log(`${label}: ICE gathering complete`, 'info');
+        log(`${label}: ICE gathering complete`, "info");
       }
     });
-    log(`${label}: PC diagnostics attached (initial iceConnectionState=${pc.iceConnectionState})`, 'info');
+    log(
+      `${label}: PC diagnostics attached (initial iceConnectionState=${pc.iceConnectionState})`,
+      "info",
+    );
     return true;
   };
   if (!tryAttach()) {
-    setTimeout(() => { if (!tryAttach()) log(`${label}: PC diagnostics could not attach (no _pc)`, 'err'); }, 0);
+    setTimeout(() => {
+      if (!tryAttach())
+        log(`${label}: PC diagnostics could not attach (no _pc)`, "err");
+    }, 0);
   }
 }
 const speakerPeers = new Map();
@@ -1574,7 +1861,7 @@ function startLevelMeter(stream) {
   stopLevelMeter();
   try {
     if (!levelCtx) levelCtx = new AudioContext();
-    if (levelCtx.state === 'suspended') levelCtx.resume().catch(() => {});
+    if (levelCtx.state === "suspended") levelCtx.resume().catch(() => {});
     const src = levelCtx.createMediaStreamSource(stream);
     levelAnalyser = levelCtx.createAnalyser();
     levelAnalyser.fftSize = 512;
@@ -1592,32 +1879,37 @@ function startLevelMeter(stream) {
       }
       const rms = Math.sqrt(sum / data.length);
       const pct = Math.min(100, Math.round(rms * 250));
-      if (incomingLevelFill) incomingLevelFill.style.width = pct + '%';
+      if (incomingLevelFill) incomingLevelFill.style.width = pct + "%";
       levelTickHandle = requestAnimationFrame(tick);
     };
     tick();
   } catch (e) {
-    log('Level meter setup failed: ' + e.message, 'err');
+    log("Level meter setup failed: " + e.message, "err");
   }
 }
 
 function stopLevelMeter() {
-  if (levelTickHandle) { cancelAnimationFrame(levelTickHandle); levelTickHandle = null; }
+  if (levelTickHandle) {
+    cancelAnimationFrame(levelTickHandle);
+    levelTickHandle = null;
+  }
   levelAnalyser = null;
   levelSourceStream = null;
-  if (incomingLevelFill) incomingLevelFill.style.width = '0%';
+  if (incomingLevelFill) incomingLevelFill.style.width = "0%";
 }
 
 function setPttStatus(active) {
   if (!pttStatusEl) return;
-  pttStatusEl.textContent = active ? 'Mic: ACTIVE (transmitting)' : 'Mic: MUTED';
-  pttStatusEl.classList.toggle('on', active);
-  if (muteToggleBtn) muteToggleBtn.textContent = active ? 'Mute' : 'Unmute';
+  pttStatusEl.textContent = active
+    ? "Mic: ACTIVE (transmitting)"
+    : "Mic: MUTED";
+  pttStatusEl.classList.toggle("on", active);
+  if (muteToggleBtn) muteToggleBtn.textContent = active ? "Mute" : "Unmute";
 }
 
 function toggleMicMute() {
   if (!supporterMicTrack) {
-    log('Mute toggle: two-way not active or mic not captured yet', 'info');
+    log("Mute toggle: two-way not active or mic not captured yet", "info");
     return;
   }
   supporterMicTrack.enabled = !supporterMicTrack.enabled;
@@ -1630,7 +1922,8 @@ let speakerMicOnlyStream = null;
 async function captureSpeakerStream() {
   if (speakerLocalStream) return speakerLocalStream;
   const tracks = [];
-  let micOk = false, sysOk = false;
+  let micOk = false,
+    sysOk = false;
   try {
     const mic = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -1640,59 +1933,116 @@ async function captureSpeakerStream() {
       },
     });
     speakerMicOnlyStream = mic;
-    mic.getAudioTracks().forEach(t => tracks.push(t));
+    mic.getAudioTracks().forEach((t) => tracks.push(t));
     micOk = tracks.length > 0;
-  } catch (e) { log('Speaker mic capture failed: ' + e.message, 'err'); }
+  } catch (e) {
+    log("Speaker mic capture failed: " + e.message, "err");
+  }
   try {
-    const sys = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-    sys.getVideoTracks().forEach(t => t.stop());
+    const sys = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: true,
+    });
+    sys.getVideoTracks().forEach((t) => t.stop());
     const sysAudio = sys.getAudioTracks();
     if (sysAudio.length > 0) {
-      sysAudio.forEach(t => tracks.push(t));
+      sysAudio.forEach((t) => tracks.push(t));
       sysOk = true;
     } else {
-      log('Speaker: getDisplayMedia returned no audio track (system loopback unavailable)', 'err');
+      log(
+        "Speaker: getDisplayMedia returned no audio track (system loopback unavailable)",
+        "err",
+      );
     }
-  } catch (e) { log('Speaker system capture failed: ' + e.message, 'err'); }
+  } catch (e) {
+    log("Speaker system capture failed: " + e.message, "err");
+  }
   if (tracks.length === 0) return null;
   speakerLocalStream = new MediaStream(tracks);
-  log(`Speaker capture ready (mic:${micOk ? 'ok' : 'no'}, system:${sysOk ? 'ok' : 'no'}, ${tracks.length} track(s) sending)`, 'info');
-  if (netCfg && netCfg.virtualCableId && typeof ensureCableMixer === 'function') {
+  log(
+    `Speaker capture ready (mic:${micOk ? "ok" : "no"}, system:${sysOk ? "ok" : "no"}, ${tracks.length} track(s) sending)`,
+    "info",
+  );
+  if (
+    netCfg &&
+    netCfg.virtualCableId &&
+    typeof ensureCableMixer === "function"
+  ) {
     setTimeout(() => ensureCableMixer().catch(() => {}), 100);
   }
   return speakerLocalStream;
 }
 
 function teardownPeers() {
-  speakerPeers.forEach(entry => { try { entry.peer.destroy(); } catch {} });
+  speakerPeers.forEach((entry) => {
+    try {
+      entry.peer.destroy();
+    } catch {}
+  });
   speakerPeers.clear();
-  if (supporterPeer) { try { supporterPeer.destroy(); } catch {} supporterPeer = null; }
-  if (speakerLocalStream) { speakerLocalStream.getTracks().forEach(t => t.stop()); speakerLocalStream = null; }
+  if (supporterPeer) {
+    try {
+      supporterPeer.destroy();
+    } catch {}
+    supporterPeer = null;
+  }
+  if (speakerLocalStream) {
+    speakerLocalStream.getTracks().forEach((t) => t.stop());
+    speakerLocalStream = null;
+  }
   speakerMicOnlyStream = null;
-  if (supporterMicStream) { supporterMicStream.getTracks().forEach(t => t.stop()); supporterMicStream = null; }
+  if (supporterMicStream) {
+    supporterMicStream.getTracks().forEach((t) => t.stop());
+    supporterMicStream = null;
+  }
   supporterMicTrack = null;
   setPttStatus(false);
-  if (remoteAudioEl) { try { remoteAudioEl.srcObject = null; } catch {} }
-  if (speakerInAudioEl) { try { speakerInAudioEl.srcObject = null; } catch {} }
+  if (remoteAudioEl) {
+    try {
+      remoteAudioEl.srcObject = null;
+    } catch {}
+  }
+  if (speakerInAudioEl) {
+    try {
+      speakerInAudioEl.srcObject = null;
+    } catch {}
+  }
   stopLevelMeter();
-  if (cableCtx) { try { cableCtx.close(); } catch {} cableCtx = null; }
+  if (cableCtx) {
+    try {
+      cableCtx.close();
+    } catch {}
+    cableCtx = null;
+  }
   cableAGain = null;
   cableBGain = null;
   cableDest = null;
-  if (bIncomingSrcNode) { try { bIncomingSrcNode.disconnect(); } catch {} bIncomingSrcNode = null; }
+  if (bIncomingSrcNode) {
+    try {
+      bIncomingSrcNode.disconnect();
+    } catch {}
+    bIncomingSrcNode = null;
+  }
   bIncomingForCable = null;
-  if (cableOutEl) { try { cableOutEl.srcObject = null; } catch {} }
+  if (cableOutEl) {
+    try {
+      cableOutEl.srcObject = null;
+    } catch {}
+  }
 }
 
 async function speakerHandleOpened(connId) {
-  if (!SimplePeerLib) { log('SimplePeer not loaded', 'err'); return; }
+  if (!SimplePeerLib) {
+    log("SimplePeer not loaded", "err");
+    return;
+  }
   const stream = await captureSpeakerStream();
   if (!stream) {
-    log('Speaker: nothing to stream — aborting connection ' + connId, 'err');
+    log("Speaker: nothing to stream — aborting connection " + connId, "err");
     return;
   }
   const tracks = stream.getTracks();
-  log(`Speaker[${connId}]: streaming ${tracks.length} track(s)`, 'info');
+  log(`Speaker[${connId}]: streaming ${tracks.length} track(s)`, "info");
 
   const peer = new SimplePeerLib({
     initiator: true,
@@ -1703,34 +2053,54 @@ async function speakerHandleOpened(connId) {
   speakerPeers.set(connId, { peer });
   attachPcDiagnostics(peer, `Speaker[${connId}]`);
 
-  peer.on('signal', (sig) => {
+  peer.on("signal", (sig) => {
     if (sig && sig.candidate && sig.candidate.candidate) {
-      log(`Speaker[${connId}]: ICE local candidate: ${describeCandidate(sig.candidate.candidate)}`, 'info');
+      log(
+        `Speaker[${connId}]: ICE local candidate: ${describeCandidate(sig.candidate.candidate)}`,
+        "info",
+      );
     }
-    window.api.sendSignaling({ connId, type: 'signal', payload: sig });
+    window.api.sendSignaling({ connId, type: "signal", payload: sig });
   });
-  peer.on('connect', () => log(`Speaker[${connId}]: P2P connected`, 'info'));
+  peer.on("connect", () => log(`Speaker[${connId}]: P2P connected`, "info"));
   const speakerSeenStreams = new Set();
   const attachRemote = (remote, src) => {
     if (speakerSeenStreams.has(remote.id)) return;
     speakerSeenStreams.add(remote.id);
-    log(`Speaker[${connId}]: receiving supporter audio via ${src} (${remote.getAudioTracks().length} track)`, 'info');
+    log(
+      `Speaker[${connId}]: receiving supporter audio via ${src} (${remote.getAudioTracks().length} track)`,
+      "info",
+    );
     applyListenSink(speakerInAudioEl).catch(() => {});
     speakerInAudioEl.srcObject = remote;
-    const vol = Math.min(1, (netCfg && netCfg.incomingVolume != null) ? netCfg.incomingVolume : 1);
+    const vol = Math.min(
+      1,
+      netCfg && netCfg.incomingVolume != null ? netCfg.incomingVolume : 1,
+    );
     speakerInAudioEl.volume = vol;
     speakerInAudioEl.muted = false;
     const p = speakerInAudioEl.play();
-    if (p && p.then) p.then(() => log(`Speaker[${connId}]: <audio> play() resolved`, 'info'))
-                     .catch((err) => log(`Speaker[${connId}]: <audio>.play() rejected: ${err.message}`, 'err'));
+    if (p && p.then)
+      p.then(() =>
+        log(`Speaker[${connId}]: <audio> play() resolved`, "info"),
+      ).catch((err) =>
+        log(
+          `Speaker[${connId}]: <audio>.play() rejected: ${err.message}`,
+          "err",
+        ),
+      );
     startLevelMeter(remote);
-    if (typeof attachBToCable === 'function') attachBToCable(remote);
+    if (typeof attachBToCable === "function") attachBToCable(remote);
   };
-  peer.on('stream', (remote) => attachRemote(remote, 'stream'));
-  peer.on('track', (track, remote) => attachRemote(remote, `track[${track.kind}]`));
-  peer.on('error', (err) => log(`Speaker[${connId}] peer error: ${err.message}`, 'err'));
-  peer.on('close', () => {
-    log(`Speaker[${connId}]: peer closed`, 'info');
+  peer.on("stream", (remote) => attachRemote(remote, "stream"));
+  peer.on("track", (track, remote) =>
+    attachRemote(remote, `track[${track.kind}]`),
+  );
+  peer.on("error", (err) =>
+    log(`Speaker[${connId}] peer error: ${err.message}`, "err"),
+  );
+  peer.on("close", () => {
+    log(`Speaker[${connId}]: peer closed`, "info");
     speakerPeers.delete(connId);
   });
 }
@@ -1738,14 +2108,19 @@ async function speakerHandleOpened(connId) {
 function speakerHandleSignal(connId, payload) {
   const entry = speakerPeers.get(connId);
   if (!entry) return;
-  try { entry.peer.signal(payload); }
-  catch (e) { log(`Speaker[${connId}] signal err: ${e.message}`, 'err'); }
+  try {
+    entry.peer.signal(payload);
+  } catch (e) {
+    log(`Speaker[${connId}] signal err: ${e.message}`, "err");
+  }
 }
 
 function speakerHandleClosed(connId) {
   const entry = speakerPeers.get(connId);
   if (entry) {
-    try { entry.peer.destroy(); } catch {}
+    try {
+      entry.peer.destroy();
+    } catch {}
     speakerPeers.delete(connId);
   }
 }
@@ -1766,10 +2141,10 @@ async function ensureSupporterMic() {
       supporterMicTrack = supporterMicStream.getAudioTracks()[0];
       supporterMicTrack.enabled = true;
       setPttStatus(true);
-      log('Supporter mic active (transmitting to speaker)', 'info');
+      log("Supporter mic active (transmitting to speaker)", "info");
       return supporterMicTrack;
     } catch (e) {
-      log('Supporter mic capture failed: ' + e.message, 'err');
+      log("Supporter mic capture failed: " + e.message, "err");
       return null;
     } finally {
       supporterMicPromise = null;
@@ -1782,12 +2157,17 @@ let supporterPeerPromise = null;
 async function ensureSupporterPeer() {
   if (supporterPeer) return supporterPeer;
   if (supporterPeerPromise) return supporterPeerPromise;
-  if (!SimplePeerLib) { log('SimplePeer not loaded', 'err'); return null; }
+  if (!SimplePeerLib) {
+    log("SimplePeer not loaded", "err");
+    return null;
+  }
   supporterPeerPromise = (async () => {
     const micTrack = await ensureSupporterMic();
     const localStream = micTrack ? supporterMicStream : undefined;
     return _createSupporterPeer(localStream);
-  })().finally(() => { supporterPeerPromise = null; });
+  })().finally(() => {
+    supporterPeerPromise = null;
+  });
   return supporterPeerPromise;
 }
 
@@ -1799,83 +2179,121 @@ function _createSupporterPeer(localStream) {
     config: RTC_CONFIG,
   });
 
-  attachPcDiagnostics(supporterPeer, 'Supporter');
-  supporterPeer.on('signal', (sig) => {
+  attachPcDiagnostics(supporterPeer, "Supporter");
+  supporterPeer.on("signal", (sig) => {
     if (sig && sig.candidate && sig.candidate.candidate) {
-      log(`Supporter: ICE local candidate: ${describeCandidate(sig.candidate.candidate)}`, 'info');
+      log(
+        `Supporter: ICE local candidate: ${describeCandidate(sig.candidate.candidate)}`,
+        "info",
+      );
     }
-    window.api.sendSignaling({ type: 'signal', payload: sig });
+    window.api.sendSignaling({ type: "signal", payload: sig });
   });
-  supporterPeer.on('connect', () => log('Supporter: P2P connected', 'info'));
+  supporterPeer.on("connect", () => log("Supporter: P2P connected", "info"));
   const supSeenStreams = new Set();
   const attachRemote = (remote, src) => {
     if (supSeenStreams.has(remote.id)) return;
     supSeenStreams.add(remote.id);
-    log(`Supporter: received remote stream via ${src} (${remote.getAudioTracks().length} audio track)`, 'info');
+    log(
+      `Supporter: received remote stream via ${src} (${remote.getAudioTracks().length} audio track)`,
+      "info",
+    );
     applyListenSink(remoteAudioEl).catch(() => {});
     remoteAudioEl.srcObject = remote;
-    const vol = Math.min(1, (netCfg && netCfg.incomingVolume != null) ? netCfg.incomingVolume : 1);
+    const vol = Math.min(
+      1,
+      netCfg && netCfg.incomingVolume != null ? netCfg.incomingVolume : 1,
+    );
     remoteAudioEl.volume = vol;
     remoteAudioEl.muted = false;
     const p = remoteAudioEl.play();
-    if (p && p.then) p.then(() => log(`Supporter: <audio> play() resolved`, 'info'))
-                     .catch((err) => log('Supporter: <audio>.play() rejected: ' + err.message, 'err'));
-    log(`Supporter: <audio> attached (volume=${vol})`, 'info');
+    if (p && p.then)
+      p.then(() => log(`Supporter: <audio> play() resolved`, "info")).catch(
+        (err) =>
+          log("Supporter: <audio>.play() rejected: " + err.message, "err"),
+      );
+    log(`Supporter: <audio> attached (volume=${vol})`, "info");
     startLevelMeter(remote);
   };
-  supporterPeer.on('stream', (remote) => attachRemote(remote, 'stream'));
-  supporterPeer.on('track', (track, remote) => attachRemote(remote, `track[${track.kind}]`));
-  supporterPeer.on('error', (err) => log('Supporter peer error: ' + err.message, 'err'));
-  supporterPeer.on('close', () => {
-    log('Supporter: peer closed', 'info');
+  supporterPeer.on("stream", (remote) => attachRemote(remote, "stream"));
+  supporterPeer.on("track", (track, remote) =>
+    attachRemote(remote, `track[${track.kind}]`),
+  );
+  supporterPeer.on("error", (err) =>
+    log("Supporter peer error: " + err.message, "err"),
+  );
+  supporterPeer.on("close", () => {
+    log("Supporter: peer closed", "info");
     supporterPeer = null;
     stopLevelMeter();
   });
 
-  remoteAudioEl.onplaying = () => log('Supporter: <audio> is playing', 'info');
-  remoteAudioEl.oncanplay = () => log('Supporter: <audio> canplay', 'info');
-  remoteAudioEl.onerror = () => log('Supporter: <audio> error: ' + (remoteAudioEl.error?.message || 'unknown'), 'err');
+  remoteAudioEl.onplaying = () => log("Supporter: <audio> is playing", "info");
+  remoteAudioEl.oncanplay = () => log("Supporter: <audio> canplay", "info");
+  remoteAudioEl.onerror = () =>
+    log(
+      "Supporter: <audio> error: " +
+        (remoteAudioEl.error?.message || "unknown"),
+      "err",
+    );
 
   return supporterPeer;
 }
 
 function supporterHandleSignal(payload) {
-  ensureSupporterPeer().then(peer => {
+  ensureSupporterPeer().then((peer) => {
     if (!peer) return;
-    try { peer.signal(payload); }
-    catch (e) { log('Supporter signal err: ' + e.message, 'err'); }
+    try {
+      peer.signal(payload);
+    } catch (e) {
+      log("Supporter signal err: " + e.message, "err");
+    }
   });
 }
 
 window.api.onSignaling((msg) => {
   const type = msg.type;
-  if (type === 'opened') {
-    if (netCfg && netCfg.role === 'speaker') speakerHandleOpened(msg.connId);
-  } else if (type === 'closed') {
-    if (netCfg && netCfg.role === 'speaker' && msg.connId) speakerHandleClosed(msg.connId);
-    else if (netCfg && netCfg.role === 'supporter') {
-      if (supporterPeer) { try { supporterPeer.destroy(); } catch {} supporterPeer = null; }
-      if (remoteAudioEl) { try { remoteAudioEl.srcObject = null; } catch {} }
+  if (type === "opened") {
+    if (netCfg && netCfg.role === "speaker") speakerHandleOpened(msg.connId);
+  } else if (type === "closed") {
+    if (netCfg && netCfg.role === "speaker" && msg.connId)
+      speakerHandleClosed(msg.connId);
+    else if (netCfg && netCfg.role === "supporter") {
+      if (supporterPeer) {
+        try {
+          supporterPeer.destroy();
+        } catch {}
+        supporterPeer = null;
+      }
+      if (remoteAudioEl) {
+        try {
+          remoteAudioEl.srcObject = null;
+        } catch {}
+      }
       stopLevelMeter();
     }
-  } else if (type === 'signal') {
-    if (netCfg && netCfg.role === 'speaker') speakerHandleSignal(msg.connId, msg.payload);
-    else if (netCfg && netCfg.role === 'supporter') supporterHandleSignal(msg.payload);
-  } else if (type === 'reject') {
-    log('Network: rejected (' + (msg.reason || 'unknown') + ')', 'err');
-  } else if (type === 'hello') {
-    log('Network: connected as supporter (peer id ' + msg.id + ')', 'info');
+  } else if (type === "signal") {
+    if (netCfg && netCfg.role === "speaker")
+      speakerHandleSignal(msg.connId, msg.payload);
+    else if (netCfg && netCfg.role === "supporter")
+      supporterHandleSignal(msg.payload);
+  } else if (type === "reject") {
+    log("Network: rejected (" + (msg.reason || "unknown") + ")", "err");
+  } else if (type === "hello") {
+    log("Network: connected as supporter (peer id " + msg.id + ")", "info");
   }
 });
 
 function encodeWav(samples, sampleRate) {
   const buffer = new ArrayBuffer(44 + samples.length * 2);
   const view = new DataView(buffer);
-  const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
-  writeStr(0, 'RIFF');
+  const writeStr = (off, s) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+  };
+  writeStr(0, "RIFF");
   view.setUint32(4, 36 + samples.length * 2, true);
-  writeStr(8, 'WAVE');
-  writeStr(12, 'fmt ');
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
   view.setUint32(16, 16, true);
   view.setUint16(20, 1, true);
   view.setUint16(22, 1, true);
@@ -1883,30 +2301,30 @@ function encodeWav(samples, sampleRate) {
   view.setUint32(28, sampleRate * 2, true);
   view.setUint16(32, 2, true);
   view.setUint16(34, 16, true);
-  writeStr(36, 'data');
+  writeStr(36, "data");
   view.setUint32(40, samples.length * 2, true);
   let off = 44;
   for (let i = 0; i < samples.length; i++) {
     const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
     off += 2;
   }
   return buffer;
 }
 
-const chatMainEl = document.getElementById('chatMain');
-const chatHistoryEl = document.getElementById('chatHistory');
-const chatEmptyEl = document.getElementById('chatEmpty');
-const chatInputEl = document.getElementById('chatInput');
-const chatSendBtn = document.getElementById('chatSendBtn');
-const chatAttachBtn = document.getElementById('chatAttachBtn');
-const chatFileInput = document.getElementById('chatFileInput');
-const chatDropOverlay = document.getElementById('chatDropOverlay');
-const chatHeaderStatus = document.getElementById('chatHeaderStatus');
+const chatMainEl = document.getElementById("chatMain");
+const chatHistoryEl = document.getElementById("chatHistory");
+const chatEmptyEl = document.getElementById("chatEmpty");
+const chatInputEl = document.getElementById("chatInput");
+const chatSendBtn = document.getElementById("chatSendBtn");
+const chatAttachBtn = document.getElementById("chatAttachBtn");
+const chatFileInput = document.getElementById("chatFileInput");
+const chatDropOverlay = document.getElementById("chatDropOverlay");
+const chatHeaderStatus = document.getElementById("chatHeaderStatus");
 
 function chatTime(ts) {
   const d = new Date(ts || Date.now());
-  const pad = (n) => String(n).padStart(2, '0');
+  const pad = (n) => String(n).padStart(2, "0");
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
@@ -1917,13 +2335,13 @@ function chatRemoveEmpty() {
 function chatAddText(text, ok = true) {
   if (!chatHistoryEl) return;
   chatRemoveEmpty();
-  const wrap = document.createElement('div');
-  wrap.className = 'chat-msg' + (ok ? '' : ' failed');
+  const wrap = document.createElement("div");
+  wrap.className = "chat-msg" + (ok ? "" : " failed");
   wrap.textContent = text;
   chatHistoryEl.appendChild(wrap);
-  const meta = document.createElement('div');
-  meta.className = 'chat-msg-meta';
-  meta.textContent = chatTime(Date.now()) + (ok ? '' : ' · failed');
+  const meta = document.createElement("div");
+  meta.className = "chat-msg-meta";
+  meta.textContent = chatTime(Date.now()) + (ok ? "" : " · failed");
   chatHistoryEl.appendChild(meta);
   chatHistoryEl.scrollTop = chatHistoryEl.scrollHeight;
 }
@@ -1931,15 +2349,15 @@ function chatAddText(text, ok = true) {
 function chatAddImage(dataUrl, ok = true) {
   if (!chatHistoryEl) return;
   chatRemoveEmpty();
-  const wrap = document.createElement('div');
-  wrap.className = 'chat-msg-image' + (ok ? '' : ' failed');
-  const img = document.createElement('img');
+  const wrap = document.createElement("div");
+  wrap.className = "chat-msg-image" + (ok ? "" : " failed");
+  const img = document.createElement("img");
   img.src = dataUrl;
   wrap.appendChild(img);
   chatHistoryEl.appendChild(wrap);
-  const meta = document.createElement('div');
-  meta.className = 'chat-msg-meta';
-  meta.textContent = chatTime(Date.now()) + (ok ? '' : ' · failed');
+  const meta = document.createElement("div");
+  meta.className = "chat-msg-meta";
+  meta.textContent = chatTime(Date.now()) + (ok ? "" : " · failed");
   chatHistoryEl.appendChild(meta);
   chatHistoryEl.scrollTop = chatHistoryEl.scrollHeight;
 }
@@ -1952,11 +2370,11 @@ async function chatSendText() {
   if (!chatInputEl) return;
   const text = chatInputEl.value;
   if (!text || !text.trim()) return;
-  chatInputEl.value = '';
+  chatInputEl.value = "";
   const ok = await window.api.sendChatText(text).catch(() => false);
   chatAddText(text, ok);
-  if (!ok) chatSetStatus('Send failed (not connected)');
-  else chatSetStatus('Sent');
+  if (!ok) chatSetStatus("Send failed (not connected)");
+  else chatSetStatus("Sent");
 }
 
 async function downscaleImage(dataUrl, maxW = 1280, quality = 0.85) {
@@ -1966,11 +2384,12 @@ async function downscaleImage(dataUrl, maxW = 1280, quality = 0.85) {
       const scale = Math.min(1, maxW / img.width);
       const w = Math.round(img.width * scale);
       const h = Math.round(img.height * scale);
-      const c = document.createElement('canvas');
-      c.width = w; c.height = h;
-      const ctx = c.getContext('2d');
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext("2d");
       ctx.drawImage(img, 0, 0, w, h);
-      resolve(c.toDataURL('image/jpeg', quality));
+      resolve(c.toDataURL("image/jpeg", quality));
     };
     img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;
@@ -1979,55 +2398,76 @@ async function downscaleImage(dataUrl, maxW = 1280, quality = 0.85) {
 
 async function chatSendFile(file) {
   if (!file) return;
-  if (!file.type || !file.type.startsWith('image/')) {
-    chatSetStatus('Only image files supported');
-    if (typeof toast === 'function') toast('Only image files are supported', 'warn');
+  if (!file.type || !file.type.startsWith("image/")) {
+    chatSetStatus("Only image files supported");
+    if (typeof toast === "function")
+      toast("Only image files are supported", "warn");
     return;
   }
   if (file.size > 5 * 1024 * 1024) {
-    if (typeof toast === 'function') toast(`Large image (${Math.round(file.size/1024/1024)} MB) — downscaling first…`, 'warn');
+    if (typeof toast === "function")
+      toast(
+        `Large image (${Math.round(file.size / 1024 / 1024)} MB) — downscaling first…`,
+        "warn",
+      );
   }
-  chatSetStatus('Encoding image…');
+  chatSetStatus("Encoding image…");
   const reader = new FileReader();
   reader.onload = async (e) => {
     const raw = e.target.result;
     const small = await downscaleImage(raw);
     const ok = await window.api.sendChatImage(small).catch(() => false);
     chatAddImage(small, ok);
-    chatSetStatus(ok ? 'Image sent' : 'Image send failed (not connected)');
+    chatSetStatus(ok ? "Image sent" : "Image send failed (not connected)");
   };
   reader.readAsDataURL(file);
 }
 
-if (chatSendBtn) chatSendBtn.addEventListener('click', () => chatSendText());
-if (chatInputEl) chatInputEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    chatSendText();
-  }
-});
+if (chatSendBtn) chatSendBtn.addEventListener("click", () => chatSendText());
+if (chatInputEl)
+  chatInputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      chatSendText();
+    }
+  });
 
-if (chatAttachBtn) chatAttachBtn.addEventListener('click', () => chatFileInput && chatFileInput.click());
-if (chatFileInput) chatFileInput.addEventListener('change', () => {
-  if (chatFileInput.files && chatFileInput.files[0]) chatSendFile(chatFileInput.files[0]);
-  chatFileInput.value = '';
-});
+if (chatAttachBtn)
+  chatAttachBtn.addEventListener(
+    "click",
+    () => chatFileInput && chatFileInput.click(),
+  );
+if (chatFileInput)
+  chatFileInput.addEventListener("change", () => {
+    if (chatFileInput.files && chatFileInput.files[0])
+      chatSendFile(chatFileInput.files[0]);
+    chatFileInput.value = "";
+  });
 
 if (chatMainEl) {
   let dragCounter = 0;
-  chatMainEl.addEventListener('dragenter', (e) => {
-    e.preventDefault(); e.stopPropagation();
+  chatMainEl.addEventListener("dragenter", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     dragCounter++;
     if (chatDropOverlay) chatDropOverlay.hidden = false;
   });
-  chatMainEl.addEventListener('dragleave', (e) => {
-    e.preventDefault(); e.stopPropagation();
+  chatMainEl.addEventListener("dragleave", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     dragCounter--;
-    if (dragCounter <= 0 && chatDropOverlay) { chatDropOverlay.hidden = true; dragCounter = 0; }
+    if (dragCounter <= 0 && chatDropOverlay) {
+      chatDropOverlay.hidden = true;
+      dragCounter = 0;
+    }
   });
-  chatMainEl.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
-  chatMainEl.addEventListener('drop', (e) => {
-    e.preventDefault(); e.stopPropagation();
+  chatMainEl.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  chatMainEl.addEventListener("drop", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     dragCounter = 0;
     if (chatDropOverlay) chatDropOverlay.hidden = true;
     if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
@@ -2036,26 +2476,29 @@ if (chatMainEl) {
   });
 }
 
-if (chatInputEl) chatInputEl.addEventListener('paste', (e) => {
-  if (!e.clipboardData) return;
-  for (const item of e.clipboardData.items) {
-    if (item.kind === 'file' && item.type.startsWith('image/')) {
-      e.preventDefault();
-      chatSendFile(item.getAsFile());
-      return;
+if (chatInputEl)
+  chatInputEl.addEventListener("paste", (e) => {
+    if (!e.clipboardData) return;
+    for (const item of e.clipboardData.items) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        e.preventDefault();
+        chatSendFile(item.getAsFile());
+        return;
+      }
     }
-  }
-});
+  });
 
 window.api.onKickedBySpeaker(() => {
-  log('Disconnected by speaker — auto-reconnect disabled', 'err');
-  if (typeof teardownPeers === 'function') teardownPeers();
+  log("Disconnected by speaker — auto-reconnect disabled", "err");
+  if (typeof teardownPeers === "function") teardownPeers();
   if (netActionBtn) delete netActionBtn.dataset.connecting;
-  window.alert('You were disconnected by the speaker. Click End to reconfigure or reconnect.');
+  window.alert(
+    "You were disconnected by the speaker. Click End to reconfigure or reconnect.",
+  );
 });
 
-const helpAlertEl = document.getElementById('helpAlert');
-const helpAlertDismissEl = document.getElementById('helpAlertDismiss');
+const helpAlertEl = document.getElementById("helpAlert");
+const helpAlertDismissEl = document.getElementById("helpAlertDismiss");
 let helpAlertTimer = null;
 
 function playHelpBeep() {
@@ -2065,7 +2508,7 @@ function playHelpBeep() {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.frequency.value = freq;
-      osc.type = 'sine';
+      osc.type = "sine";
       gain.gain.setValueAtTime(0, ctx.currentTime + start);
       gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + start + 0.02);
       gain.gain.linearRampToValueAtTime(0, ctx.currentTime + start + dur);
@@ -2076,7 +2519,11 @@ function playHelpBeep() {
     playTone(880, 0, 0.18);
     playTone(660, 0.22, 0.18);
     playTone(880, 0.44, 0.22);
-    setTimeout(() => { try { ctx.close(); } catch {} }, 800);
+    setTimeout(() => {
+      try {
+        ctx.close();
+      } catch {}
+    }, 800);
   } catch {}
 }
 
@@ -2085,32 +2532,42 @@ function showHelpAlert() {
   helpAlertEl.hidden = false;
   playHelpBeep();
   if (helpAlertTimer) clearTimeout(helpAlertTimer);
-  helpAlertTimer = setTimeout(() => { helpAlertEl.hidden = true; }, 8000);
-  log('HELP REQUEST received from speaker', 'err');
+  helpAlertTimer = setTimeout(() => {
+    helpAlertEl.hidden = true;
+  }, 8000);
+  log("HELP REQUEST received from speaker", "err");
 }
 
-if (helpAlertDismissEl) helpAlertDismissEl.addEventListener('click', () => {
-  if (helpAlertEl) helpAlertEl.hidden = true;
-  if (helpAlertTimer) { clearTimeout(helpAlertTimer); helpAlertTimer = null; }
-});
+if (helpAlertDismissEl)
+  helpAlertDismissEl.addEventListener("click", () => {
+    if (helpAlertEl) helpAlertEl.hidden = true;
+    if (helpAlertTimer) {
+      clearTimeout(helpAlertTimer);
+      helpAlertTimer = null;
+    }
+  });
 
 window.api.onHelpRequestReceived(() => showHelpAlert());
 
 // ── Mic mode pill + virtual cable mixer ─────────────────────────────────────
-const micPillEl = document.getElementById('micPill');
-const micPillIconEl = document.getElementById('micPillIcon');
-const micPillLabelEl = document.getElementById('micPillLabel');
-const netVirtualCableEl = document.getElementById('netVirtualCable');
-const netCableStatusEl = document.getElementById('netCableStatus');
-const getVbCableBtnEl = document.getElementById('getVbCableBtn');
-const netListenDeviceEl = document.getElementById('netListenDevice');
-const netListenStatusEl = document.getElementById('netListenStatus');
-const testListenBtnEl = document.getElementById('testListenBtn');
+const micPillEl = document.getElementById("micPill");
+const micPillIconEl = document.getElementById("micPillIcon");
+const micPillLabelEl = document.getElementById("micPillLabel");
+const netVirtualCableEl = document.getElementById("netVirtualCable");
+const netCableStatusEl = document.getElementById("netCableStatus");
+const getVbCableBtnEl = document.getElementById("getVbCableBtn");
+const netListenDeviceEl = document.getElementById("netListenDevice");
+const netListenStatusEl = document.getElementById("netListenStatus");
+const testListenBtnEl = document.getElementById("testListenBtn");
 
-const MIC_MODE_LABELS = { mute: 'MUTE', aOnly: 'TO A', aAndC: 'TO A+C' };
-const MIC_MODE_ICONS = { mute: '\u{1F507}', aOnly: '\u{1F512}', aAndC: '\u{1F4E2}' };
-const MIC_MODES_R = ['mute', 'aOnly', 'aAndC'];
-let currentMicMode = 'aOnly';
+const MIC_MODE_LABELS = { mute: "MUTE", aOnly: "TO A", aAndC: "TO A+C" };
+const MIC_MODE_ICONS = {
+  mute: "\u{1F507}",
+  aOnly: "\u{1F512}",
+  aAndC: "\u{1F4E2}",
+};
+const MIC_MODES_R = ["mute", "aOnly", "aAndC"];
+let currentMicMode = "aOnly";
 
 let cableCtx = null;
 let cableAGain = null;
@@ -2123,74 +2580,92 @@ let bIncomingSrcNode = null;
 
 function updateMicPillUI(mode) {
   if (!micPillEl) return;
-  const m = MIC_MODES_R.includes(mode) ? mode : 'aOnly';
+  const m = MIC_MODES_R.includes(mode) ? mode : "aOnly";
   if (micPillIconEl) micPillIconEl.textContent = MIC_MODE_ICONS[m];
   if (micPillLabelEl) micPillLabelEl.textContent = MIC_MODE_LABELS[m];
-  micPillEl.classList.remove('mode-mute', 'mode-aOnly', 'mode-aAndC');
-  micPillEl.classList.add('mode-' + m);
-  const role = (netCfg && netCfg.role) || '';
-  micPillEl.disabled = !(role === 'speaker' || role === 'supporter');
+  micPillEl.classList.remove("mode-mute", "mode-aOnly", "mode-aAndC");
+  micPillEl.classList.add("mode-" + m);
+  const role = (netCfg && netCfg.role) || "";
+  micPillEl.disabled = !(role === "speaker" || role === "supporter");
 }
 
 function applyMicModeLocally(mode) {
   currentMicMode = mode;
-  if (typeof supporterMicTrack !== 'undefined' && supporterMicTrack) {
-    supporterMicTrack.enabled = mode !== 'mute';
+  if (typeof supporterMicTrack !== "undefined" && supporterMicTrack) {
+    supporterMicTrack.enabled = mode !== "mute";
   }
   applyMicModeToCableMixer(mode);
 }
 
 function applyMicModeToCableMixer(mode) {
-  if (cableAGain) cableAGain.gain.value = mode === 'aAndC' ? 0 : 1;
-  if (cableBGain) cableBGain.gain.value = mode === 'aAndC' ? 1 : 0;
+  if (cableAGain) cableAGain.gain.value = mode === "aAndC" ? 0 : 1;
+  if (cableBGain) cableBGain.gain.value = mode === "aAndC" ? 1 : 0;
 }
 
-if (micPillEl) micPillEl.addEventListener('click', async () => {
-  if (micPillEl.disabled) return;
-  await window.api.cycleMicMode();
-});
+if (micPillEl)
+  micPillEl.addEventListener("click", async () => {
+    if (micPillEl.disabled) return;
+    await window.api.cycleMicMode();
+  });
 
 window.api.onMicModeChanged((info) => {
-  const mode = MIC_MODES_R.includes(info.mode) ? info.mode : 'aOnly';
+  const mode = MIC_MODES_R.includes(info.mode) ? info.mode : "aOnly";
   applyMicModeLocally(mode);
   updateMicPillUI(mode);
   updateMicModeBanner(mode);
-  const role = (netCfg && netCfg.role) || '';
-  let icon = MIC_MODE_ICONS[mode] || '';
+  const role = (netCfg && netCfg.role) || "";
+  let icon = MIC_MODE_ICONS[mode] || "";
   let msg;
-  if (mode === 'mute') msg = role === 'supporter' ? `${icon} You are MUTED — nobody hears you` : `${icon} Supporter is MUTED`;
-  else if (mode === 'aOnly') msg = role === 'supporter' ? `${icon} You speak to A only — C cannot hear you` : `${icon} Supporter is private (A only)`;
-  else if (mode === 'aAndC') msg = role === 'supporter' ? `${icon} You are LIVE — A + C hear you` : `${icon} Supporter is LIVE to A + C`;
+  if (mode === "mute")
+    msg =
+      role === "supporter"
+        ? `${icon} You are MUTED — nobody hears you`
+        : `${icon} Supporter is MUTED`;
+  else if (mode === "aOnly")
+    msg =
+      role === "supporter"
+        ? `${icon} You speak to A only — C cannot hear you`
+        : `${icon} Supporter is private (A only)`;
+  else if (mode === "aAndC")
+    msg =
+      role === "supporter"
+        ? `${icon} You are LIVE — A + C hear you`
+        : `${icon} Supporter is LIVE to A + C`;
   toast(msg, mode);
-  log(msg, 'info');
+  log(msg, "info");
 });
 
 function toast(message, kind) {
-  const container = document.getElementById('toastContainer');
+  const container = document.getElementById("toastContainer");
   if (!container) return;
-  const el = document.createElement('div');
-  el.className = 'toast ' + (kind ? 'toast-' + kind : 'toast-info');
+  const el = document.createElement("div");
+  el.className = "toast " + (kind ? "toast-" + kind : "toast-info");
   el.textContent = message;
   container.appendChild(el);
-  setTimeout(() => el.classList.add('toast-out'), 2700);
-  setTimeout(() => { try { el.remove(); } catch {} }, 3000);
+  setTimeout(() => el.classList.add("toast-out"), 2700);
+  setTimeout(() => {
+    try {
+      el.remove();
+    } catch {}
+  }, 3000);
 }
 
 function updateMicModeBanner(mode) {
-  const banner = document.getElementById('micModeBanner');
-  const icon = document.getElementById('micModeBannerIcon');
-  const text = document.getElementById('micModeBannerText');
+  const banner = document.getElementById("micModeBanner");
+  const icon = document.getElementById("micModeBannerIcon");
+  const text = document.getElementById("micModeBannerText");
   if (!banner || !icon || !text) return;
-  banner.classList.remove('mode-mute', 'mode-aOnly', 'mode-aAndC');
-  banner.classList.add('mode-' + mode);
-  icon.textContent = MIC_MODE_ICONS[mode] || '';
-  if (mode === 'mute') text.textContent = 'You are MUTED — nobody hears you';
-  else if (mode === 'aOnly') text.textContent = 'You speak to A only — C cannot hear you';
-  else if (mode === 'aAndC') text.textContent = 'You are LIVE — A + C hear you';
+  banner.classList.remove("mode-mute", "mode-aOnly", "mode-aAndC");
+  banner.classList.add("mode-" + mode);
+  icon.textContent = MIC_MODE_ICONS[mode] || "";
+  if (mode === "mute") text.textContent = "You are MUTED — nobody hears you";
+  else if (mode === "aOnly")
+    text.textContent = "You speak to A only — C cannot hear you";
+  else if (mode === "aAndC") text.textContent = "You are LIVE — A + C hear you";
 }
 
 async function refreshMicPill() {
-  const mode = await window.api.getMicMode().catch(() => 'aOnly');
+  const mode = await window.api.getMicMode().catch(() => "aOnly");
   currentMicMode = mode;
   updateMicPillUI(mode);
   applyMicModeLocally(mode);
@@ -2201,47 +2676,69 @@ const CABLE_RE = /(cable input|vb-audio|voicemeeter input|virtual cable)/i;
 async function refreshCablePicker() {
   if (!netVirtualCableEl) return;
   try {
-    await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
+    await navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((s) => s.getTracks().forEach((t) => t.stop()));
   } catch {}
   let devs = [];
   try {
-    devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audiooutput');
+    devs = (await navigator.mediaDevices.enumerateDevices()).filter(
+      (d) => d.kind === "audiooutput",
+    );
   } catch {}
-  const cables = devs.filter(d => CABLE_RE.test(d.label || ''));
-  const others = devs.filter(d => !CABLE_RE.test(d.label || ''));
-  const populate = (selectEl, currentId, noneLabel, cablesGroupLabel, othersGroupLabel) => {
-    selectEl.innerHTML = '';
-    const none = document.createElement('option');
-    none.value = '';
+  const cables = devs.filter((d) => CABLE_RE.test(d.label || ""));
+  const others = devs.filter((d) => !CABLE_RE.test(d.label || ""));
+  const populate = (
+    selectEl,
+    currentId,
+    noneLabel,
+    cablesGroupLabel,
+    othersGroupLabel,
+  ) => {
+    selectEl.innerHTML = "";
+    const none = document.createElement("option");
+    none.value = "";
     none.textContent = noneLabel;
     selectEl.appendChild(none);
     if (cables.length) {
-      const grp = document.createElement('optgroup');
+      const grp = document.createElement("optgroup");
       grp.label = cablesGroupLabel;
-      cables.forEach(d => {
-        const o = document.createElement('option');
+      cables.forEach((d) => {
+        const o = document.createElement("option");
         o.value = d.deviceId;
-        o.textContent = d.label || ('Virtual ' + d.deviceId.slice(0, 6));
+        o.textContent = d.label || "Virtual " + d.deviceId.slice(0, 6);
         grp.appendChild(o);
       });
       selectEl.appendChild(grp);
     }
     if (others.length) {
-      const grp = document.createElement('optgroup');
+      const grp = document.createElement("optgroup");
       grp.label = othersGroupLabel;
-      others.forEach(d => {
-        const o = document.createElement('option');
+      others.forEach((d) => {
+        const o = document.createElement("option");
         o.value = d.deviceId;
-        o.textContent = d.label || ('Output ' + d.deviceId.slice(0, 6));
+        o.textContent = d.label || "Output " + d.deviceId.slice(0, 6);
         grp.appendChild(o);
       });
       selectEl.appendChild(grp);
     }
-    selectEl.value = currentId || '';
+    selectEl.value = currentId || "";
   };
-  populate(netVirtualCableEl, (netCfg && netCfg.virtualCableId) || '', '-- None --', 'Virtual cables (recommended)', 'Other output devices');
+  populate(
+    netVirtualCableEl,
+    (netCfg && netCfg.virtualCableId) || "",
+    "-- None --",
+    "Virtual cables (recommended)",
+    "Other output devices",
+  );
   if (netListenDeviceEl) {
-    populate(netListenDeviceEl, (netCfg && netCfg.listenDeviceId) || '', '-- Windows default --', 'Virtual cables (NOT recommended for listening)', 'Headphones / speakers (recommended)');
+    populate(
+      netListenDeviceEl,
+      (netCfg && netCfg.listenDeviceId) || "",
+      "-- Windows default --",
+      "Virtual cables (NOT recommended for listening)",
+      "Headphones / speakers (recommended)",
+    );
   }
   updateCableStatus();
   updateListenStatus();
@@ -2249,35 +2746,44 @@ async function refreshCablePicker() {
 
 function updateListenStatus() {
   if (!netListenStatusEl) return;
-  const id = (netCfg && netCfg.listenDeviceId) || '';
+  const id = (netCfg && netCfg.listenDeviceId) || "";
   if (!id) {
-    netListenStatusEl.textContent = 'Defaults to Windows default output if blank.';
-    netListenStatusEl.className = 'net-cable-status';
+    netListenStatusEl.textContent =
+      "Defaults to Windows default output if blank.";
+    netListenStatusEl.className = "net-cable-status";
     return;
   }
   let label = id;
   if (netListenDeviceEl) {
-    for (const o of netListenDeviceEl.options) { if (o.value === id) { label = o.textContent; break; } }
+    for (const o of netListenDeviceEl.options) {
+      if (o.value === id) {
+        label = o.textContent;
+        break;
+      }
+    }
   }
   if (CABLE_RE.test(label)) {
-    netListenStatusEl.textContent = '⚠ Listening on a virtual cable: ' + label + '. You will not hear the other side through your headphones.';
-    netListenStatusEl.className = 'net-cable-status err';
+    netListenStatusEl.textContent =
+      "⚠ Listening on a virtual cable: " +
+      label +
+      ". You will not hear the other side through your headphones.";
+    netListenStatusEl.className = "net-cable-status err";
   } else {
-    netListenStatusEl.textContent = 'Listening on: ' + label;
-    netListenStatusEl.className = 'net-cable-status ok';
+    netListenStatusEl.textContent = "Listening on: " + label;
+    netListenStatusEl.className = "net-cable-status ok";
   }
 }
 
 async function applyListenSink(audioEl) {
   if (!audioEl) return;
-  const id = (netCfg && netCfg.listenDeviceId) || '';
+  const id = (netCfg && netCfg.listenDeviceId) || "";
   if (!id) return;
-  if (typeof audioEl.setSinkId !== 'function') return;
+  if (typeof audioEl.setSinkId !== "function") return;
   try {
     await audioEl.setSinkId(id);
-    log('Listen sink set on <audio>', 'info');
+    log("Listen sink set on <audio>", "info");
   } catch (e) {
-    log('Listen sink failed: ' + e.message, 'err');
+    log("Listen sink failed: " + e.message, "err");
   }
 }
 
@@ -2288,22 +2794,31 @@ async function reapplyListenSinkAll() {
 
 function updateCableStatus() {
   if (!netCableStatusEl) return;
-  const id = (netCfg && netCfg.virtualCableId) || '';
+  const id = (netCfg && netCfg.virtualCableId) || "";
   if (!id) {
-    netCableStatusEl.textContent = 'No output device selected. Pick CABLE Input above.';
-    netCableStatusEl.className = 'net-cable-status warn';
+    netCableStatusEl.textContent =
+      "No output device selected. Pick CABLE Input above.";
+    netCableStatusEl.className = "net-cable-status warn";
     return;
   }
   let label = id;
   if (netVirtualCableEl) {
-    for (const o of netVirtualCableEl.options) { if (o.value === id) { label = o.textContent; break; } }
+    for (const o of netVirtualCableEl.options) {
+      if (o.value === id) {
+        label = o.textContent;
+        break;
+      }
+    }
   }
   if (CABLE_RE.test(label)) {
-    netCableStatusEl.textContent = 'Routed to: ' + label + ' OK';
-    netCableStatusEl.className = 'net-cable-status ok';
+    netCableStatusEl.textContent = "Routed to: " + label + " OK";
+    netCableStatusEl.className = "net-cable-status ok";
   } else {
-    netCableStatusEl.textContent = 'Selected device is NOT a virtual cable: ' + label + '. Meeting will not hear our app.';
-    netCableStatusEl.className = 'net-cable-status err';
+    netCableStatusEl.textContent =
+      "Selected device is NOT a virtual cable: " +
+      label +
+      ". Meeting will not hear our app.";
+    netCableStatusEl.className = "net-cable-status err";
   }
 }
 
@@ -2311,67 +2826,100 @@ async function isDeviceWindowsDefault(deviceId) {
   if (!deviceId) return false;
   try {
     const devs = await navigator.mediaDevices.enumerateDevices();
-    const outs = devs.filter(d => d.kind === 'audiooutput');
-    const defAlias = outs.find(d => d.deviceId === 'default');
+    const outs = devs.filter((d) => d.kind === "audiooutput");
+    const defAlias = outs.find((d) => d.deviceId === "default");
     if (!defAlias) return false;
-    const target = outs.find(d => d.deviceId === deviceId);
+    const target = outs.find((d) => d.deviceId === deviceId);
     if (!target) return false;
-    return defAlias.groupId && target.groupId && defAlias.groupId === target.groupId;
-  } catch { return false; }
+    return (
+      defAlias.groupId && target.groupId && defAlias.groupId === target.groupId
+    );
+  } catch {
+    return false;
+  }
 }
 
-if (netVirtualCableEl) netVirtualCableEl.addEventListener('change', async () => {
-  const id = netVirtualCableEl.value || '';
-  await window.api.setNetworkConfig({ virtualCableId: id });
-  netCfg = await window.api.getNetworkConfig();
-  updateCableStatus();
-  if (id && (netCfg.role === 'speaker')) ensureCableMixer();
-  if (id && (await isDeviceWindowsDefault(id))) {
-    toast('⚠ This virtual cable is also your Windows default output. Open System → Sound → Output and pick your headphones as default — otherwise A cannot hear B and system loopback will feed back.', 'warn');
-    log('WARN: virtual cable matches Windows default output device — misconfiguration', 'err');
-  }
-});
+if (netVirtualCableEl)
+  netVirtualCableEl.addEventListener("change", async () => {
+    const id = netVirtualCableEl.value || "";
+    await window.api.setNetworkConfig({ virtualCableId: id });
+    netCfg = await window.api.getNetworkConfig();
+    updateCableStatus();
+    if (id && netCfg.role === "speaker") ensureCableMixer();
+    if (id && (await isDeviceWindowsDefault(id))) {
+      toast(
+        "⚠ This virtual cable is also your Windows default output. Open System → Sound → Output and pick your headphones as default — otherwise A cannot hear B and system loopback will feed back.",
+        "warn",
+      );
+      log(
+        "WARN: virtual cable matches Windows default output device — misconfiguration",
+        "err",
+      );
+    }
+  });
 
-if (getVbCableBtnEl) getVbCableBtnEl.addEventListener('click', () => {
-  window.api.openExternal('https://vb-audio.com/Cable/');
-});
+if (getVbCableBtnEl)
+  getVbCableBtnEl.addEventListener("click", () => {
+    window.api.openExternal("https://vb-audio.com/Cable/");
+  });
 
-if (netListenDeviceEl) netListenDeviceEl.addEventListener('change', async () => {
-  const id = netListenDeviceEl.value || '';
-  await window.api.setNetworkConfig({ listenDeviceId: id });
-  netCfg = await window.api.getNetworkConfig();
-  updateListenStatus();
-  await reapplyListenSinkAll();
-});
+if (netListenDeviceEl)
+  netListenDeviceEl.addEventListener("change", async () => {
+    const id = netListenDeviceEl.value || "";
+    await window.api.setNetworkConfig({ listenDeviceId: id });
+    netCfg = await window.api.getNetworkConfig();
+    updateListenStatus();
+    await reapplyListenSinkAll();
+  });
 
-if (testListenBtnEl) testListenBtnEl.addEventListener('click', async () => {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const dest = ctx.createMediaStreamDestination();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.frequency.value = 660;
-    gain.gain.value = 0.2;
-    osc.connect(gain).connect(dest);
-    osc.start();
-    setTimeout(() => { osc.stop(); }, 1000);
-    const audio = new Audio();
-    audio.srcObject = dest.stream;
-    const id = (netCfg && netCfg.listenDeviceId) || '';
-    if (id) { try { await audio.setSinkId(id); } catch (e) { toast('setSinkId failed: ' + e.message, 'warn'); } }
-    audio.play();
-    setTimeout(() => { try { ctx.close(); audio.srcObject = null; } catch {} }, 1300);
-    toast('🔊 Test tone played to listen device (you should hear a 660 Hz beep)', 'info');
-  } catch (e) {
-    toast('Test listen failed: ' + e.message, 'warn');
-  }
-});
+if (testListenBtnEl)
+  testListenBtnEl.addEventListener("click", async () => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const dest = ctx.createMediaStreamDestination();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 660;
+      gain.gain.value = 0.2;
+      osc.connect(gain).connect(dest);
+      osc.start();
+      setTimeout(() => {
+        osc.stop();
+      }, 1000);
+      const audio = new Audio();
+      audio.srcObject = dest.stream;
+      const id = (netCfg && netCfg.listenDeviceId) || "";
+      if (id) {
+        try {
+          await audio.setSinkId(id);
+        } catch (e) {
+          toast("setSinkId failed: " + e.message, "warn");
+        }
+      }
+      audio.play();
+      setTimeout(() => {
+        try {
+          ctx.close();
+          audio.srcObject = null;
+        } catch {}
+      }, 1300);
+      toast(
+        "🔊 Test tone played to listen device (you should hear a 660 Hz beep)",
+        "info",
+      );
+    } catch (e) {
+      toast("Test listen failed: " + e.message, "warn");
+    }
+  });
 
 async function ensureCableMixer() {
   if (cableCtx) return;
   if (!netCfg || !netCfg.virtualCableId) return;
   if (!speakerMicOnlyStream) {
-    log('Cable mixer waiting for speaker mic capture (will retry after first supporter connects)', 'info');
+    log(
+      "Cable mixer waiting for speaker mic capture (will retry after first supporter connects)",
+      "info",
+    );
     return;
   }
   cableCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -2382,18 +2930,20 @@ async function ensureCableMixer() {
   aSrc.connect(cableAGain).connect(cableDest);
   cableBGain.connect(cableDest);
   applyMicModeToCableMixer(currentMicMode);
-  cableOutEl = document.getElementById('cableOutAudio');
+  cableOutEl = document.getElementById("cableOutAudio");
   if (cableOutEl) {
     cableOutEl.srcObject = cableDest.stream;
     cableOutEl.muted = false;
     cableOutEl.volume = 1;
     try {
       await cableOutEl.setSinkId(netCfg.virtualCableId);
-      log('Cable mixer routed to selected output device', 'info');
+      log("Cable mixer routed to selected output device", "info");
     } catch (e) {
-      log('setSinkId failed: ' + e.message, 'err');
+      log("setSinkId failed: " + e.message, "err");
     }
-    cableOutEl.play().catch((e) => log('Cable output play failed: ' + e.message, 'err'));
+    cableOutEl
+      .play()
+      .catch((e) => log("Cable output play failed: " + e.message, "err"));
   }
   if (bIncomingForCable) attachBToCable(bIncomingForCable);
 }
@@ -2401,35 +2951,51 @@ async function ensureCableMixer() {
 function attachBToCable(stream) {
   bIncomingForCable = stream;
   if (!cableCtx) return;
-  if (bIncomingSrcNode) { try { bIncomingSrcNode.disconnect(); } catch {} }
+  if (bIncomingSrcNode) {
+    try {
+      bIncomingSrcNode.disconnect();
+    } catch {}
+  }
   try {
     bIncomingSrcNode = cableCtx.createMediaStreamSource(stream);
     bIncomingSrcNode.connect(cableBGain);
-  } catch (e) { log('Cable B attach failed: ' + e.message, 'err'); }
+  } catch (e) {
+    log("Cable B attach failed: " + e.message, "err");
+  }
 }
 
-if (settingsBtn) settingsBtn.addEventListener('click', () => {
-  refreshCablePicker().catch(() => {});
-  refreshMicPill().catch(() => {});
-  (async () => {
-    const id = (netCfg && netCfg.virtualCableId) || '';
-    if (id && (await isDeviceWindowsDefault(id))) {
-      toast('⚠ Virtual cable matches Windows default output. Pick your headphones as Windows default in System → Sound → Output.', 'warn');
-    }
-  })();
-});
+if (settingsBtn)
+  settingsBtn.addEventListener("click", () => {
+    refreshCablePicker().catch(() => {});
+    refreshMicPill().catch(() => {});
+    (async () => {
+      const id = (netCfg && netCfg.virtualCableId) || "";
+      if (id && (await isDeviceWindowsDefault(id))) {
+        toast(
+          "⚠ Virtual cable matches Windows default output. Pick your headphones as Windows default in System → Sound → Output.",
+          "warn",
+        );
+      }
+    })();
+  });
 
 window.api.onNetworkStatus((status) => {
   if (status && status.role && (!netCfg || netCfg.role !== status.role)) {
-    window.api.getNetworkConfig().then(c => {
-      netCfg = c;
-      log(`Sync: netCfg.role refreshed from network-status (role=${netCfg.role || 'none'})`, 'info');
-    }).catch(() => {});
+    window.api
+      .getNetworkConfig()
+      .then((c) => {
+        netCfg = c;
+        log(
+          `Sync: netCfg.role refreshed from network-status (role=${netCfg.role || "none"})`,
+          "info",
+        );
+      })
+      .catch(() => {});
   }
-  if (status && (status.role === 'speaker' || status.role === 'supporter')) {
+  if (status && (status.role === "speaker" || status.role === "supporter")) {
     refreshMicPill().catch(() => {});
   }
-  if (status && status.role === 'speaker' && netCfg && netCfg.virtualCableId) {
+  if (status && status.role === "speaker" && netCfg && netCfg.virtualCableId) {
     setTimeout(() => ensureCableMixer().catch(() => {}), 200);
   }
   updateNetStatusPill(status);
@@ -2437,99 +3003,122 @@ window.api.onNetworkStatus((status) => {
 });
 
 function updateNetStatusPill(status) {
-  const pill = document.getElementById('netStatusPill');
+  const pill = document.getElementById("netStatusPill");
   if (!pill || !status) return;
-  pill.classList.remove('live', 'warn', 'err');
-  if (status.role === 'speaker') {
+  pill.classList.remove("live", "warn", "err");
+  if (status.role === "speaker") {
     if (status.bound) {
       const n = (status.supporters || []).length;
-      pill.textContent = n > 0 ? `\u{1F7E2} ${n} supporter` : '\u{1F7E1} hosting';
-      pill.classList.add(n > 0 ? 'live' : 'warn');
+      pill.textContent =
+        n > 0 ? `\u{1F7E2} ${n} supporter` : "\u{1F7E1} hosting";
+      pill.classList.add(n > 0 ? "live" : "warn");
       pill.title = `Hosting on ${status.address} — ${n}/1 supporter connected`;
     } else {
-      pill.textContent = '⚠ not bound';
-      pill.classList.add('err');
-      pill.title = 'Speaker mode but server not bound';
+      pill.textContent = "⚠ not bound";
+      pill.classList.add("err");
+      pill.title = "Speaker mode but server not bound";
     }
-  } else if (status.role === 'supporter') {
+  } else if (status.role === "supporter") {
     if (status.connected) {
-      pill.textContent = '\u{1F7E2} connected';
-      pill.classList.add('live');
+      pill.textContent = "\u{1F7E2} connected";
+      pill.classList.add("live");
       pill.title = `Connected to ${status.address}`;
     } else {
-      pill.textContent = '\u{1F7E1} dialing';
-      pill.classList.add('warn');
+      pill.textContent = "\u{1F7E1} dialing";
+      pill.classList.add("warn");
       pill.title = `Dialing ${status.address}…`;
     }
   } else {
-    pill.textContent = 'idle';
-    pill.title = 'No active session';
+    pill.textContent = "idle";
+    pill.title = "No active session";
   }
 }
 
 let cableNudgeDismissed = false;
 function updateCableNudge(status) {
-  const banner = document.getElementById('cableNudge');
+  const banner = document.getElementById("cableNudge");
   if (!banner) return;
-  if (cableNudgeDismissed) { banner.hidden = true; return; }
-  const role = (status && status.role) || (netCfg && netCfg.role) || '';
+  if (cableNudgeDismissed) {
+    banner.hidden = true;
+    return;
+  }
+  const role = (status && status.role) || (netCfg && netCfg.role) || "";
   const hasCable = !!(netCfg && netCfg.virtualCableId);
-  const inInterview = document.body.classList.contains('in-interview');
-  banner.hidden = !(inInterview && role === 'speaker' && !hasCable);
+  const inInterview = document.body.classList.contains("in-interview");
+  banner.hidden = !(inInterview && role === "speaker" && !hasCable);
 }
 
-const cableNudgeGetEl = document.getElementById('cableNudgeGet');
-const cableNudgeDismissEl = document.getElementById('cableNudgeDismiss');
-if (cableNudgeGetEl) cableNudgeGetEl.addEventListener('click', () => window.api.openExternal('https://vb-audio.com/Cable/'));
-if (cableNudgeDismissEl) cableNudgeDismissEl.addEventListener('click', () => {
-  cableNudgeDismissed = true;
-  document.getElementById('cableNudge').hidden = true;
-});
+const cableNudgeGetEl = document.getElementById("cableNudgeGet");
+const cableNudgeDismissEl = document.getElementById("cableNudgeDismiss");
+if (cableNudgeGetEl)
+  cableNudgeGetEl.addEventListener("click", () =>
+    window.api.openExternal("https://vb-audio.com/Cable/"),
+  );
+if (cableNudgeDismissEl)
+  cableNudgeDismissEl.addEventListener("click", () => {
+    cableNudgeDismissed = true;
+    document.getElementById("cableNudge").hidden = true;
+  });
 
-const testCableBtnEl = document.getElementById('testCableBtn');
-if (testCableBtnEl) testCableBtnEl.addEventListener('click', async () => {
-  if (!netCfg || !netCfg.virtualCableId) { toast('Pick a virtual cable first', 'warn'); return; }
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const dest = ctx.createMediaStreamDestination();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.frequency.value = 440;
-    gain.gain.value = 0.2;
-    osc.connect(gain).connect(dest);
-    osc.start();
-    setTimeout(() => { osc.stop(); }, 1000);
-    const audio = new Audio();
-    audio.srcObject = dest.stream;
-    await audio.setSinkId(netCfg.virtualCableId);
-    audio.play();
-    setTimeout(() => { try { ctx.close(); audio.srcObject = null; } catch {} }, 1300);
-    toast('\u{1F50A} Test tone played to virtual cable (check meeting mic level)', 'info');
-  } catch (e) {
-    toast('Test cable failed: ' + e.message, 'warn');
-  }
-});
+const testCableBtnEl = document.getElementById("testCableBtn");
+if (testCableBtnEl)
+  testCableBtnEl.addEventListener("click", async () => {
+    if (!netCfg || !netCfg.virtualCableId) {
+      toast("Pick a virtual cable first", "warn");
+      return;
+    }
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const dest = ctx.createMediaStreamDestination();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 440;
+      gain.gain.value = 0.2;
+      osc.connect(gain).connect(dest);
+      osc.start();
+      setTimeout(() => {
+        osc.stop();
+      }, 1000);
+      const audio = new Audio();
+      audio.srcObject = dest.stream;
+      await audio.setSinkId(netCfg.virtualCableId);
+      audio.play();
+      setTimeout(() => {
+        try {
+          ctx.close();
+          audio.srcObject = null;
+        } catch {}
+      }, 1300);
+      toast(
+        "\u{1F50A} Test tone played to virtual cable (check meeting mic level)",
+        "info",
+      );
+    } catch (e) {
+      toast("Test cable failed: " + e.message, "warn");
+    }
+  });
 
 // Welcome / first-run modal
 (async () => {
   try {
     const seen = await window.api.getWelcomeSeen().catch(() => true);
     if (!seen) {
-      const overlay = document.getElementById('welcomeOverlay');
+      const overlay = document.getElementById("welcomeOverlay");
       if (overlay) overlay.hidden = false;
     }
   } catch {}
 })();
-const welcomeDismissEl = document.getElementById('welcomeDismiss');
-if (welcomeDismissEl) welcomeDismissEl.addEventListener('click', () => {
-  const overlay = document.getElementById('welcomeOverlay');
-  if (overlay) overlay.hidden = true;
-  window.api.setWelcomeSeen(true).catch(() => {});
-});
+const welcomeDismissEl = document.getElementById("welcomeDismiss");
+if (welcomeDismissEl)
+  welcomeDismissEl.addEventListener("click", () => {
+    const overlay = document.getElementById("welcomeOverlay");
+    if (overlay) overlay.hidden = true;
+    window.api.setWelcomeSeen(true).catch(() => {});
+  });
 
 // PTT hotkey label in mic-pill tooltip
 async function refreshMicPillTooltip() {
-  const pill = document.getElementById('micPill');
+  const pill = document.getElementById("micPill");
   if (!pill) return;
   try {
     const data = await window.api.getHotkeys();
