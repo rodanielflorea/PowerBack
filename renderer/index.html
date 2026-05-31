@@ -25,6 +25,12 @@
         <path class="shield-slash" d="M7 7 l10 10" />
       </svg>
     </button>
+    <button class="btn clickthrough-btn" id="clickThroughBtn" title="Toggle click-through (Alt+Q) — when on, mouse passes through this window">
+      <svg class="cursor-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path class="cursor-body" d="M5 3 L5 17 L9 13 L11.5 19 L13.5 18 L11 12 L17 12 Z" />
+        <path class="cursor-slash" d="M4 4 L20 20" />
+      </svg>
+    </button>
     <button class="btn mic-pill iv-btn" id="micPill" title="Cycle B's mic mode: mute → A only → A+C">
       <span class="mic-pill-icon" id="micPillIcon">🔒</span><span class="mic-pill-label" id="micPillLabel">TO A</span>
     </button>
@@ -40,6 +46,9 @@
     <button class="rail-btn mode-toggle-btn" id="modeToggleBtn" title="Toggle mode: OCR ↔ Voice (Alt+D)">OCR</button>
     <button class="rail-btn rec-btn" id="recBtn" title="Start transcription">
       <span class="rec-dot"></span>
+    </button>
+    <button class="rail-btn chunk-btn" id="chunkRailBtn" hidden title="Whisper.cpp chunk length — click to edit in Settings → Voice">
+      <span id="chunkRailValue">3.0</span><span class="chunk-rail-unit">s</span>
     </button>
   </aside>
 
@@ -148,6 +157,14 @@
               <option value="uk">Ukrainian</option>
             </select>
           </div>
+          <div class="field" id="chunkSecondsField">
+            <label for="chunkSecondsRange">Chunk length (whisper.cpp only) &mdash; <span id="chunkSecondsValue">3.0</span> s</label>
+            <input type="range" id="chunkSecondsRange" min="1" max="10" step="0.5" value="3" />
+            <p class="hint">How much audio to batch before each whisper.cpp pass. Adjustable while recording — takes effect on the next chunk.
+              <br />&bull; <b>Slow CPU</b> (no GPU, integrated graphics): try <b>4&ndash;6 s</b>. Smaller chunks back the queue up and drop words.
+              <br />&bull; <b>Fast CPU</b> or small model: <b>2&ndash;3 s</b> gives lower latency without losing words.
+              <br />&bull; Below 1.5 s whisper almost always drops words for lack of context. Ignored when Deepgram is selected (Deepgram streams live).</p>
+          </div>
           <p class="hint">Click the rail dot to start/stop. Transcribed text auto-pastes into the foreground app at the cursor.</p>
         </section>
       </div>
@@ -228,6 +245,10 @@
           <div class="field">
             <button class="action-btn" id="netActionBtn">Start hosting</button>
             <button class="action-btn-secondary" id="netStopBtn" hidden>Stop</button>
+          </div>
+          <div class="field" id="firewallField">
+            <button class="action-btn-secondary" id="firewallBtn">Allow through Windows Firewall</button>
+            <p class="hint">If supporters on other machines can't connect when this PC is the Speaker, click this once and accept the Windows admin (UAC) prompt. It adds an inbound rule so the port isn't blocked. Only needed on the Speaker machine.</p>
           </div>
         </section>
 
@@ -331,6 +352,7 @@
             <li><b>&#9881;</b> &mdash; open Settings.</li>
             <li><b>&#9679;</b> rec dot &mdash; start/stop the active mode (Voice or Caption). Pulsing red = running.</li>
             <li><b>Stealth shield</b> &mdash; <span style="color:#16a34a">green check</span> = invisible to screen capture; <span style="color:#dc2626">red slash</span> = visible. Click to toggle.</li>
+            <li><b>Cursor toggle</b> &mdash; <span style="color:#16a34a">green cursor</span> = window receives clicks (normal); <span style="color:#dc2626">red cursor with slash</span> = click-through ON (clicks pass through to apps behind). Hotkey <span class="kbd">Alt+Q</span>.</li>
             <li><b>Mode toggle</b> (shows <span class="kbd">OCR</span> or <span class="kbd">Voice</span>) &mdash; click or press <span class="kbd">Alt+D</span> to switch between Caption and Voice mode. Switches the active mode and restarts capture automatically.</li>
             <li><b>Mic pill</b> (Supporter only) &mdash; cycles B's mic between <b>&#128263; MUTE</b>, <b>&#128274; TO A</b>, <b>&#128226; TO A+C</b>. See "Mic modes" below.</li>
             <li><b>End</b> &mdash; stops the session and returns to Setup. Confirms first.</li>
@@ -408,13 +430,16 @@
             <li>Click the &#128206; attach button to pick a file.</li>
           </ul>
           <p>Everything B sends shows up on A's <b>Sticky note</b> window.</p>
-          <h4>Sticky note (A's helper window)</h4>
-          <p>A small white window with a yellow header that floats next to the main window on A's machine. It receives every chat message from B (text and images), preserves history, and:</p>
+          <h4>Sticky note (bidirectional chat — A &harr; B)</h4>
+          <p>A small floating window with a yellow header. It now acts as a two-way chat:</p>
           <ul>
+            <li><b>Receives</b> every text / image message from B (blue bubbles = from B).</li>
+            <li><b>Can send back</b> &mdash; type in the input at the bottom and press Enter; the message lands in B's chat-main panel (and is shown on A's sticky as a "from-me" bubble). Click the &#128206; button to send an image.</li>
             <li>Has the same stealth + opacity behavior as the main window.</li>
-            <li>Hide / show with <span class="kbd">Ctrl+Left</span> / <span class="kbd">Ctrl+Right</span>.</li>
+            <li>Hide / show with <span class="kbd">Ctrl+Shift+Left</span> / <span class="kbd">Ctrl+Shift+Right</span>. Scroll its history with <span class="kbd">Shift+Up</span> / <span class="kbd">Shift+Down</span>.</li>
+            <li>Drag any edge/corner to resize it — the size is independent of the main window and remembered across launches.</li>
             <li>Position is remembered across launches.</li>
-            <li><b>CLEAR</b> button wipes the visible history (local + remote).</li>
+            <li><b>CLEAR</b> button wipes the visible history on both A and B.</li>
           </ul>
           <h4>1:1 supporter limit</h4>
           <p>Only one B can be connected at a time per Speaker. Additional connection attempts are rejected (close code 4002 = capacity, 4003 = duplicate IP). The Network tab shows the connected supporter and a <b>Kick</b> button (close code 4000 &mdash; kicked clients won't auto-reconnect).</p>
@@ -459,19 +484,34 @@
             <tbody>
               <tr><td>Toggle window visibility</td><td><span class="kbd">Ctrl+Alt+H</span></td></tr>
               <tr><td>Toggle stealth</td><td><span class="kbd">Ctrl+H</span></td></tr>
+              <tr><td>Toggle click-through (mouse passes through window)</td><td><span class="kbd">Alt+Q</span></td></tr>
+              <tr><td>Submit prompt in Claude / ChatGPT (works from any app)</td><td><span class="kbd">Ctrl+Enter</span></td></tr>
+              <tr><td>Screenshot active screen &rarr; paste to AI</td><td><span class="kbd">Alt+A</span></td></tr>
               <tr><td>Start / stop active mode</td><td><span class="kbd">Alt+C</span></td></tr>
               <tr><td>Toggle OCR ↔ Voice mode</td><td><span class="kbd">Alt+D</span></td></tr>
               <tr><td>Cycle B's mic mode (Mute &rarr; A &rarr; A+C)</td><td><span class="kbd">Ctrl+B</span></td></tr>
               <tr><td>Reload site</td><td><span class="kbd">Ctrl+R</span></td></tr>
               <tr><td>Reset capture area</td><td><span class="kbd">Ctrl+Q</span></td></tr>
-              <tr><td>Hide sticky note (A only)</td><td><span class="kbd">Ctrl+Left</span></td></tr>
-              <tr><td>Show sticky note (A only)</td><td><span class="kbd">Ctrl+Right</span></td></tr>
+              <tr><td>Hide sticky note</td><td><span class="kbd">Ctrl+Shift+Left</span></td></tr>
+              <tr><td>Show sticky note</td><td><span class="kbd">Ctrl+Shift+Right</span></td></tr>
+              <tr><td>Scroll sticky note up / down</td><td><span class="kbd">Shift+Up</span> / <span class="kbd">Shift+Down</span></td></tr>
               <tr><td>HELP ME alert (A &rarr; B)</td><td><span class="kbd">Win+Shift+/</span></td></tr>
               <tr><td>Move window L / R / U / D</td><td><span class="kbd">Ctrl+Alt+&larr;</span> &hellip; <span class="kbd">Ctrl+Alt+&darr;</span></td></tr>
               <tr><td>Opacity up / down</td><td><span class="kbd">Ctrl+Alt+]</span> / <span class="kbd">Ctrl+Alt+[</span></td></tr>
               <tr><td>Scroll page up / down</td><td><span class="kbd">Ctrl+&uarr;</span> / <span class="kbd">Ctrl+&darr;</span></td></tr>
             </tbody>
           </table>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>New global hotkeys</h3>
+          <h4>Submit prompt &mdash; <span class="kbd">Ctrl+Enter</span></h4>
+          <p>Submits whatever is currently typed into Claude / ChatGPT's prompt input. Works <b>even when focus is on another app</b> (your meeting window, terminal, etc.). The app finds the loaded AI site's send button and clicks it (falls back to a synthetic Enter key if no button is found).</p>
+          <h4>Screenshot active screen &mdash; <span class="kbd">Alt+A</span></h4>
+          <p>Captures a full screenshot of the display the mouse cursor is currently on (multi-monitor aware) and pastes it into the loaded AI site's prompt input as an attachment. The image goes through the system clipboard for one frame; expect it to behave exactly like Ctrl+C-then-paste from a screenshot tool.</p>
+          <h4>Toggle click-through &mdash; <span class="kbd">Alt+Q</span></h4>
+          <p>When ON, every mouse click passes <i>through</i> the app window to whatever's behind it. The window still draws on top — you can read it — but it stops blocking interaction with the meeting / editor underneath. Use this to keep notes visible while typing in another app.</p>
+          <p class="hint">&#9888; When click-through is ON, you can't click any button in the app — including the cursor toggle button itself. Use <span class="kbd">Alt+Q</span> to turn it back off.</p>
         </section>
 
         <section class="settings-section help-section">
@@ -527,7 +567,7 @@
           <h4>Hotkey shows red "register failed"</h4>
           <p>Another app already owns that combo system-wide. Pick a different one.</p>
           <h4>Sticky note isn't appearing on A's screen</h4>
-          <p>Press <span class="kbd">Ctrl+Right</span> to force-open it. If it's off-screen (e.g. after a monitor change), the saved position may be invalid &mdash; close it and reopen, or move the main window then reopen sticky.</p>
+          <p>Press <span class="kbd">Ctrl+Shift+Right</span> to force-open it. If it's off-screen (e.g. after a monitor change), the saved position may be invalid &mdash; close it and reopen, or move the main window then reopen sticky.</p>
           <h4>Supporter keeps reconnecting after I kick them</h4>
           <p>Kick uses close code 4000 which suppresses auto-reconnect on the client. If they reconnect anyway, they likely opened a fresh app instance &mdash; ban by IP isn't implemented, only by session.</p>
         </section>
@@ -643,6 +683,11 @@
                 <input type="text" id="setupWhisperModel" placeholder="C:\path\to\ggml-base.bin" spellcheck="false" />
                 <button id="setupWhisperModelBrowse">Browse</button>
               </div>
+            </div>
+            <div class="field" id="setupChunkSecondsField">
+              <label for="setupChunkSecondsRange">Chunk length (whisper.cpp only) &mdash; <span id="setupChunkSecondsValue">3.0</span> s</label>
+              <input type="range" id="setupChunkSecondsRange" min="1" max="10" step="0.5" value="3" />
+              <p class="hint">How much audio to batch before each whisper.cpp pass. Adjustable while recording. Slow CPU → 4-6 s, fast CPU → 2-3 s, below 1.5 s drops words. Ignored when Deepgram is selected.</p>
             </div>
             <div class="field">
               <label for="setupVoiceLanguage">Language</label>

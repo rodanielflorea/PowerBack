@@ -1,6 +1,7 @@
 const slider = document.getElementById("slider");
 const sliderFill = document.getElementById("sliderFill");
 const stealthBtn = document.getElementById("stealthBtn");
+const clickThroughBtn = document.getElementById("clickThroughBtn");
 const endBtn = document.getElementById("endBtn");
 const hideBtn = document.getElementById("hideBtn");
 const quitBtn = document.getElementById("quitBtn");
@@ -35,6 +36,8 @@ const setupWhisperModelBrowse = document.getElementById(
   "setupWhisperModelBrowse",
 );
 const setupVoiceLanguage = document.getElementById("setupVoiceLanguage");
+const setupChunkSecondsRange = document.getElementById("setupChunkSecondsRange");
+const setupChunkSecondsValue = document.getElementById("setupChunkSecondsValue");
 const setupMicSelect = document.getElementById("setupMicSelect");
 const setupCaptureMic = document.getElementById("setupCaptureMic");
 const setupCaptureSystem = document.getElementById("setupCaptureSystem");
@@ -66,6 +69,46 @@ const whisperExeBrowse = document.getElementById("whisperExeBrowse");
 const whisperModelEl = document.getElementById("whisperModel");
 const whisperModelBrowse = document.getElementById("whisperModelBrowse");
 const languageSelect = document.getElementById("languageSelect");
+const chunkSecondsRange = document.getElementById("chunkSecondsRange");
+const chunkSecondsValue = document.getElementById("chunkSecondsValue");
+const chunkSecondsField = document.getElementById("chunkSecondsField");
+const setupChunkSecondsField = document.getElementById("setupChunkSecondsField");
+const chunkRailBtn = document.getElementById("chunkRailBtn");
+const chunkRailValue = document.getElementById("chunkRailValue");
+let chunkSecondsRuntime = 3.0;
+
+function isWhisperEngine() {
+  return (txCfg && txCfg.engine === "local");
+}
+
+function updateChunkUiVisibility() {
+  const whisper = isWhisperEngine();
+  if (chunkSecondsField) chunkSecondsField.hidden = !whisper;
+  if (setupChunkSecondsField) setupChunkSecondsField.hidden = !whisper;
+  updateChunkRail();
+}
+
+function updateChunkRail() {
+  if (!chunkRailBtn) return;
+  const isVoice = mode === "voice";
+  chunkRailBtn.hidden = !isVoice || !isWhisperEngine();
+  if (chunkRailValue) chunkRailValue.textContent = chunkSecondsRuntime.toFixed(1);
+}
+function setChunkSecondsEverywhere(v) {
+  const clamped = Math.max(1, Math.min(10, parseFloat(v) || 3));
+  chunkSecondsRuntime = clamped;
+  if (chunkSecondsRange) chunkSecondsRange.value = String(clamped);
+  if (chunkSecondsValue) chunkSecondsValue.textContent = clamped.toFixed(1);
+  if (setupChunkSecondsRange) setupChunkSecondsRange.value = String(clamped);
+  if (setupChunkSecondsValue) setupChunkSecondsValue.textContent = clamped.toFixed(1);
+  if (chunkRailValue) chunkRailValue.textContent = clamped.toFixed(1);
+}
+if (chunkRailBtn) {
+  chunkRailBtn.addEventListener("click", () => {
+    if (typeof openSettings === "function") openSettings();
+    if (typeof activateTab === "function") activateTab("voice");
+  });
+}
 
 const captureRectEl = document.getElementById("captureRect");
 const selectAreaBtn = document.getElementById("selectAreaBtn");
@@ -150,6 +193,25 @@ stealthBtn.addEventListener("click", async () => {
   const current = await window.api.getStealth();
   window.api.setStealth(!current);
 });
+
+function updateClickThrough(on) {
+  if (!clickThroughBtn) return;
+  clickThroughBtn.classList.toggle("on", on);
+  clickThroughBtn.classList.toggle("off", !on);
+  clickThroughBtn.title = on
+    ? "Click-through ON — clicks pass through this window (Alt+Q to disable)"
+    : "Click-through OFF — window receives clicks (Alt+Q to enable)";
+}
+if (clickThroughBtn) {
+  clickThroughBtn.addEventListener("click", async () => {
+    const current = await window.api.getClickThrough();
+    window.api.setClickThrough(!current);
+  });
+  (async () => {
+    try { updateClickThrough(await window.api.getClickThrough()); } catch {}
+  })();
+}
+window.api.onClickThroughChanged((v) => updateClickThrough(v));
 
 hideBtn.addEventListener("click", () => window.api.hide());
 quitBtn.addEventListener("click", () => window.api.quit());
@@ -307,18 +369,18 @@ setupCapturePollMs.addEventListener("change", () => {
     window.api.setCaptureConfig({ pollMs: v });
 });
 
-setupEngineDeepgram.addEventListener(
-  "change",
-  () =>
-    setupEngineDeepgram.checked &&
-    window.api.setTranscriptionConfig({ engine: "deepgram" }),
-);
-setupEngineLocal.addEventListener(
-  "change",
-  () =>
-    setupEngineLocal.checked &&
-    window.api.setTranscriptionConfig({ engine: "local" }),
-);
+setupEngineDeepgram.addEventListener("change", () => {
+  if (!setupEngineDeepgram.checked) return;
+  txCfg = { ...(txCfg || {}), engine: "deepgram" };
+  window.api.setTranscriptionConfig({ engine: "deepgram" });
+  updateChunkUiVisibility();
+});
+setupEngineLocal.addEventListener("change", () => {
+  if (!setupEngineLocal.checked) return;
+  txCfg = { ...(txCfg || {}), engine: "local" };
+  window.api.setTranscriptionConfig({ engine: "local" });
+  updateChunkUiVisibility();
+});
 setupDeepgramKey.addEventListener("change", () =>
   window.api.setTranscriptionConfig({
     deepgramApiKey: setupDeepgramKey.value.trim(),
@@ -348,6 +410,10 @@ setupCaptureSystem.addEventListener("change", () =>
 setupMicSelect.addEventListener("change", () =>
   window.api.setTranscriptionConfig({ micDeviceId: setupMicSelect.value }),
 );
+if (setupChunkSecondsRange) {
+  setupChunkSecondsRange.addEventListener("input", () => setChunkSecondsEverywhere(setupChunkSecondsRange.value));
+  setupChunkSecondsRange.addEventListener("change", () => window.api.setTranscriptionConfig({ chunkSeconds: chunkSecondsRuntime }));
+}
 
 setupWhisperExeBrowse.addEventListener("click", async () => {
   const p = await window.api.pickFile("exe");
@@ -404,6 +470,8 @@ async function refreshSetupUI() {
   setupVoiceLanguage.value = tx.language || "auto";
   setupCaptureMic.checked = tx.captureMic !== false;
   setupCaptureSystem.checked = tx.captureSystem !== false;
+  setChunkSecondsEverywhere(tx.chunkSeconds);
+  updateChunkUiVisibility();
 
   const cap = await window.api.getCaptureConfig();
   capCfg = cap;
@@ -777,6 +845,7 @@ async function refreshModeUI() {
   updateRecTitle();
   updateTabVisibility(mode);
   updateModeToggleBtn();
+  updateChunkRail();
 }
 
 function updateTabVisibility(activeMode) {
@@ -823,6 +892,8 @@ async function refreshTranscriptionUI() {
   languageSelect.value = txCfg.language || "auto";
   captureMicEl.checked = txCfg.captureMic !== false;
   captureSystemEl.checked = txCfg.captureSystem !== false;
+  setChunkSecondsEverywhere(txCfg.chunkSeconds);
+  updateChunkUiVisibility();
 }
 
 async function persistTx(patch) {
@@ -830,14 +901,16 @@ async function persistTx(patch) {
   await window.api.setTranscriptionConfig(patch);
 }
 
-engineDeepgram.addEventListener(
-  "change",
-  () => engineDeepgram.checked && persistTx({ engine: "deepgram" }),
-);
-engineLocal.addEventListener(
-  "change",
-  () => engineLocal.checked && persistTx({ engine: "local" }),
-);
+engineDeepgram.addEventListener("change", () => {
+  if (!engineDeepgram.checked) return;
+  persistTx({ engine: "deepgram" });
+  updateChunkUiVisibility();
+});
+engineLocal.addEventListener("change", () => {
+  if (!engineLocal.checked) return;
+  persistTx({ engine: "local" });
+  updateChunkUiVisibility();
+});
 deepgramKeyEl.addEventListener("change", () =>
   persistTx({ deepgramApiKey: deepgramKeyEl.value.trim() }),
 );
@@ -859,6 +932,10 @@ captureSystemEl.addEventListener("change", () =>
 micSelect.addEventListener("change", () =>
   persistTx({ micDeviceId: micSelect.value }),
 );
+if (chunkSecondsRange) {
+  chunkSecondsRange.addEventListener("input", () => setChunkSecondsEverywhere(chunkSecondsRange.value));
+  chunkSecondsRange.addEventListener("change", () => persistTx({ chunkSeconds: chunkSecondsRuntime }));
+}
 
 whisperExeBrowse.addEventListener("click", async () => {
   const p = await window.api.pickFile("exe");
@@ -945,6 +1022,14 @@ const HOTKEY_LABELS = {
   toggleRecording: "Start/stop voice or caption",
   toggleMode: "Toggle OCR ↔ Voice mode",
   pushToTalk: "Push-to-talk (toggle supporter mic)",
+  closeSticky: "Close sticky note",
+  openSticky: "Open sticky note",
+  stickyScrollUp: "Scroll sticky note up",
+  stickyScrollDown: "Scroll sticky note down",
+  helpRequest: "Send help request (speaker → supporter)",
+  submitPrompt: "Submit prompt in Claude/ChatGPT",
+  screenshotToAI: "Screenshot active screen → paste to AI",
+  toggleClickThrough: "Toggle click-through (mouse passes through)",
 };
 
 function eventToBinding(e) {
@@ -1386,13 +1471,14 @@ async function startVoiceChunked() {
 
   let buffered = [];
   let bufferedLen = 0;
-  const CHUNK_SECONDS = 0.5;
-  const targetSamples = sampleRate * CHUNK_SECONDS;
+  const initialCs = Math.max(1, Math.min(10, parseFloat(txCfg.chunkSeconds) || 3));
+  chunkSecondsRuntime = initialCs;
 
   processor.onaudioprocess = (e) => {
     const data = e.inputBuffer.getChannelData(0);
     buffered.push(new Float32Array(data));
     bufferedLen += data.length;
+    const targetSamples = sampleRate * chunkSecondsRuntime;
     if (bufferedLen >= targetSamples) {
       const samples = flatten(buffered, bufferedLen);
       buffered = [];
@@ -2332,34 +2418,56 @@ function chatRemoveEmpty() {
   if (chatEmptyEl && chatEmptyEl.parentNode) chatEmptyEl.remove();
 }
 
-function chatAddText(text, ok = true) {
+function chatAddText(text, ok = true, fromMe = true, ts) {
   if (!chatHistoryEl) return;
   chatRemoveEmpty();
   const wrap = document.createElement("div");
-  wrap.className = "chat-msg" + (ok ? "" : " failed");
+  wrap.className = "chat-msg" + (ok ? "" : " failed") + (fromMe ? " from-me" : " from-them");
   wrap.textContent = text;
   chatHistoryEl.appendChild(wrap);
   const meta = document.createElement("div");
-  meta.className = "chat-msg-meta";
-  meta.textContent = chatTime(Date.now()) + (ok ? "" : " · failed");
+  meta.className = "chat-msg-meta" + (fromMe ? " from-me" : " from-them");
+  meta.textContent = chatTime(ts || Date.now()) + (ok ? "" : " · failed");
   chatHistoryEl.appendChild(meta);
   chatHistoryEl.scrollTop = chatHistoryEl.scrollHeight;
 }
 
-function chatAddImage(dataUrl, ok = true) {
+function chatAddImage(dataUrl, ok = true, fromMe = true, ts) {
   if (!chatHistoryEl) return;
   chatRemoveEmpty();
   const wrap = document.createElement("div");
-  wrap.className = "chat-msg-image" + (ok ? "" : " failed");
+  wrap.className = "chat-msg-image" + (ok ? "" : " failed") + (fromMe ? " from-me" : " from-them");
   const img = document.createElement("img");
   img.src = dataUrl;
   wrap.appendChild(img);
   chatHistoryEl.appendChild(wrap);
   const meta = document.createElement("div");
-  meta.className = "chat-msg-meta";
-  meta.textContent = chatTime(Date.now()) + (ok ? "" : " · failed");
+  meta.className = "chat-msg-meta" + (fromMe ? " from-me" : " from-them");
+  meta.textContent = chatTime(ts || Date.now()) + (ok ? "" : " · failed");
   chatHistoryEl.appendChild(meta);
   chatHistoryEl.scrollTop = chatHistoryEl.scrollHeight;
+}
+
+function chatClearAll() {
+  if (!chatHistoryEl) return;
+  chatHistoryEl.innerHTML = "";
+  const empty = document.createElement("div");
+  empty.id = "chatEmpty";
+  empty.className = "chat-empty";
+  empty.textContent = "No messages yet. Type below or drop an image anywhere.";
+  chatHistoryEl.appendChild(empty);
+  chatEmptyEl = empty;
+}
+
+if (window.api && typeof window.api.onChatIncoming === "function") {
+  window.api.onChatIncoming((msg) => {
+    if (!msg) return;
+    if (msg.type === "chat-text") chatAddText(msg.text || "", true, false, msg.ts);
+    else if (msg.type === "chat-image") chatAddImage(msg.dataUrl || "", true, false, msg.ts);
+  });
+}
+if (window.api && typeof window.api.onChatClear === "function") {
+  window.api.onChatClear(() => chatClearAll());
 }
 
 function chatSetStatus(text) {
@@ -2861,6 +2969,18 @@ if (netVirtualCableEl)
 if (getVbCableBtnEl)
   getVbCableBtnEl.addEventListener("click", () => {
     window.api.openExternal("https://vb-audio.com/Cable/");
+  });
+
+const firewallBtnEl = document.getElementById("firewallBtn");
+if (firewallBtnEl)
+  firewallBtnEl.addEventListener("click", async () => {
+    firewallBtnEl.disabled = true;
+    firewallBtnEl.textContent = "Requesting admin…";
+    try { await window.api.configureFirewall(); } catch {}
+    setTimeout(() => {
+      firewallBtnEl.disabled = false;
+      firewallBtnEl.textContent = "Allow through Windows Firewall";
+    }, 2500);
   });
 
 if (netListenDeviceEl)

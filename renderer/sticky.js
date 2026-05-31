@@ -2,6 +2,12 @@ const stickyBody = document.getElementById('stickyBody');
 const stickyEmpty = document.getElementById('stickyEmpty');
 const stickyClose = document.getElementById('stickyClose');
 const stickyClear = document.getElementById('stickyClear');
+const stickyInput = document.getElementById('stickyInput');
+const stickySend = document.getElementById('stickySend');
+const stickyAttach = document.getElementById('stickyAttach');
+const stickyFileInput = document.getElementById('stickyFileInput');
+
+console.log('[sticky] script loaded; window.sticky =', typeof window.sticky);
 
 function fmtTime(ts) {
   const d = new Date(ts || Date.now());
@@ -17,7 +23,7 @@ function clearEmpty() {
 function renderMessage(msg) {
   clearEmpty();
   const wrap = document.createElement('div');
-  wrap.className = 'msg';
+  wrap.className = 'msg' + (msg.fromMe ? ' from-me' : ' from-them');
 
   const time = document.createElement('div');
   time.className = 'msg-time';
@@ -33,7 +39,7 @@ function renderMessage(msg) {
     const img = document.createElement('img');
     img.className = 'msg-image';
     img.src = msg.dataUrl || '';
-    img.alt = 'image from supporter';
+    img.alt = 'image';
     wrap.appendChild(img);
   }
   stickyBody.appendChild(wrap);
@@ -56,15 +62,66 @@ function renderHistory(history) {
 window.applyStickyHistory = function(history) { renderHistory(history); };
 window.applyStickyMessage = function(msg) { renderMessage(msg); };
 
-window.sticky.onHistory((history) => renderHistory(history));
-window.sticky.onMessage((msg) => renderMessage(msg));
+async function doSendText() {
+  console.log('[sticky] doSendText fired');
+  if (!stickyInput) return;
+  const text = (stickyInput.value || '').trim();
+  if (!text) return;
+  stickyInput.value = '';
+  renderMessage({ type: 'chat-text', text, ts: Date.now(), fromMe: true });
+  if (window.sticky && typeof window.sticky.send === 'function') {
+    try { await window.sticky.send(text); } catch (e) { console.error('[sticky] send failed:', e); }
+  } else {
+    console.error('[sticky] window.sticky.send is unavailable');
+  }
+}
 
-stickyClose.addEventListener('click', () => window.sticky.close());
-stickyClear.addEventListener('click', () => {
+async function doSendImage(file) {
+  if (!file || !file.type || !file.type.startsWith('image/')) return;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const dataUrl = e.target.result;
+    if (window.sticky && typeof window.sticky.sendImage === 'function') {
+      try { await window.sticky.sendImage(dataUrl); } catch (err) { console.error('[sticky] sendImage failed:', err); }
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+function doClear() {
+  console.log('[sticky] doClear fired');
   renderHistory([]);
   window.__stickyHistory = [];
-  try { window.sticky.clear(); } catch {}
+  if (window.sticky && typeof window.sticky.clear === 'function') {
+    try { window.sticky.clear(); } catch (e) { console.error('[sticky] clear failed:', e); }
+  }
+}
+
+function doClose() {
+  if (window.sticky && typeof window.sticky.close === 'function') {
+    try { window.sticky.close(); } catch {}
+  }
+}
+
+if (stickyClose) stickyClose.addEventListener('click', doClose);
+if (stickyClear) stickyClear.addEventListener('click', doClear);
+if (stickySend) stickySend.addEventListener('click', doSendText);
+if (stickyInput) stickyInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); doSendText(); }
 });
+if (stickyAttach) stickyAttach.addEventListener('click', () => stickyFileInput && stickyFileInput.click());
+if (stickyFileInput) stickyFileInput.addEventListener('change', (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (f) doSendImage(f);
+  e.target.value = '';
+});
+
+if (window.sticky && typeof window.sticky.onHistory === 'function') {
+  window.sticky.onHistory((history) => renderHistory(history));
+}
+if (window.sticky && typeof window.sticky.onMessage === 'function') {
+  window.sticky.onMessage((msg) => renderMessage(msg));
+}
 
 if (window.__stickyHistory && Array.isArray(window.__stickyHistory)) {
   renderHistory(window.__stickyHistory);

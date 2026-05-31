@@ -1,6 +1,6 @@
 {
   "name": "stealth-support",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "Stealth always-on-top assistant window",
   "main": "main.js",
   "scripts": {

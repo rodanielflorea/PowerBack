@@ -7,13 +7,19 @@
 </head>
 <body>
   <header class="sticky-header">
-    <span class="sticky-title">&#128221; Notes from B</span>
+    <span class="sticky-title">&#128221; Chat</span>
     <button class="sticky-clear" id="stickyClear" title="Clear all messages">clear</button>
     <button class="sticky-close" id="stickyClose" title="Close (Ctrl+Right reopens)">&times;</button>
   </header>
   <main class="sticky-body" id="stickyBody">
     <div class="sticky-empty" id="stickyEmpty">No messages yet.</div>
   </main>
+  <footer class="sticky-input-area">
+    <textarea id="stickyInput" rows="1" placeholder="Type & press Enter to send" spellcheck="false"></textarea>
+    <input type="file" id="stickyFileInput" accept="image/*" hidden />
+    <button class="sticky-attach-btn" id="stickyAttach" title="Send image">&#128206;</button>
+    <button class="sticky-send-btn" id="stickySend" title="Send (Enter)">Send</button>
+  </footer>
   <script src="sticky.js"></script>
 </body>
 </html>

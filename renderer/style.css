@@ -159,6 +159,35 @@ body:not(.in-interview) .right-rail { display: none !important; }
 }
 .stealth-btn.off .shield-slash { display: inline; }
 
+.clickthrough-btn { padding: 0 6px; }
+.cursor-icon {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+.cursor-body {
+  fill: var(--track);
+  stroke: var(--muted);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+.cursor-slash {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  display: none;
+}
+.clickthrough-btn.off .cursor-body {
+  fill: #16a34a;
+  stroke: #15803d;
+}
+.clickthrough-btn.on .cursor-body {
+  fill: #dc2626;
+  stroke: #b91c1c;
+}
+.clickthrough-btn.on .cursor-slash { display: inline; }
+
 .rec-dot {
   width: 10px;
   height: 10px;
@@ -841,6 +870,24 @@ body:not(.in-interview) .right-rail { display: none !important; }
 }
 .mode-toggle-btn:hover { filter: brightness(0.95); }
 
+.chunk-btn {
+  font-size: 9px;
+  font-weight: 700;
+  color: #713f12;
+  background: #fef9c3;
+  border-radius: 3px;
+  border: 1px solid #fde047;
+  padding: 1px 2px;
+  line-height: 1.1;
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+}
+.chunk-btn .chunk-rail-unit { font-size: 8px; opacity: 0.7; }
+.chunk-btn:hover { filter: brightness(0.95); }
+
 .log-interim {
   color: #6366f1;
   font-style: italic;
@@ -1207,9 +1254,7 @@ body.in-interview .end-btn.live::before {
 .setup-section .field { margin-top: 8px; }
 
 body.in-interview .tab-btn[data-tab="general"],
-body.in-interview .tab-btn[data-tab="voice"],
 body.in-interview .settings-tab[data-tab="general"],
-body.in-interview .settings-tab[data-tab="voice"],
 body.in-interview .caption-options-block,
 body.in-interview .setup-only {
   display: none !important;
@@ -1310,6 +1355,15 @@ body.role-supporter .live-pill-label { }
 }
 
 .chat-msg.failed { background: var(--rec-on); opacity: 0.85; }
+
+.chat-msg.from-them {
+  align-self: flex-start;
+  background: #374151;
+  color: #fff;
+  border-radius: 10px 10px 10px 2px;
+}
+.chat-msg-image.from-them { align-self: flex-start; }
+.chat-msg-meta.from-them { align-self: flex-start; }
 
 @keyframes chatMsgIn {
   from { opacity: 0; transform: translateY(4px); }

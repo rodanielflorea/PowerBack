@@ -39,14 +39,19 @@ const HOTKEY_DEFAULTS = {
   toggleRecording: 'Alt+C',
   toggleMode: 'Alt+D',
   pushToTalk: 'Ctrl+B',
-  closeSticky: 'Ctrl+Left',
-  openSticky: 'Ctrl+Right',
+  closeSticky: 'Ctrl+Shift+Left',
+  openSticky: 'Ctrl+Shift+Right',
+  stickyScrollUp: 'Shift+Up',
+  stickyScrollDown: 'Shift+Down',
   helpRequest: 'Super+Shift+/',
+  submitPrompt: 'CommandOrControl+Return',
+  screenshotToAI: 'Alt+A',
+  toggleClickThrough: 'Alt+Q',
 };
 
 const DEFAULT_STATE = {
   x: null, y: null, width: 400, height: 700,
-  opacity: 1.0, stealth: true,
+  opacity: 1.0, stealth: true, clickThrough: false,
   urls: [], currentUrlIndex: 0,
   mode: 'caption',
   transcription: {
@@ -58,6 +63,7 @@ const DEFAULT_STATE = {
     micDeviceId: '',
     captureSystem: true,
     captureMic: true,
+    chunkSeconds: 3,
   },
   capture: {
     rect: null,
@@ -70,6 +76,7 @@ const DEFAULT_STATE = {
     address: '172.16.98.11:2000',
     speakerPort: 2000,
     supporterAddress: '172.16.98.11:2000',
+    firewallConfiguredFor: '',
     incomingVolume: 1.0,
     outgoingVolume: 1.0,
     virtualCableId: '',
@@ -77,6 +84,7 @@ const DEFAULT_STATE = {
   },
   welcomeSeen: false,
   stickyAnchor: null,
+  stickySize: null,
   hotkeys: { ...HOTKEY_DEFAULTS },
 };
 
@@ -419,6 +427,7 @@ function createWindow() {
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.setOpacity(Math.max(MIN_OPACITY, state.opacity));
   win.setMenuBarVisibility(false);
+  if (state.clickThrough) try { win.setIgnoreMouseEvents(true, { forward: true }); } catch {}
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.once('ready-to-show', () => {
@@ -530,8 +539,10 @@ let stickyMovingProgrammatically = 0;
 function syncStickyPosition(force) {
   if (!stickyWin || stickyWin.isDestroyed() || !win) return;
   const [mainW, mainH] = win.getSize();
-  const stickyW = mainW;
-  const stickyH = Math.max(160, Math.floor(mainH / 2));
+  // Use the sticky's own current size — it is independent of main and user-resizable.
+  const [curW, curH] = stickyWin.getSize();
+  const stickyW = curW || mainW;
+  const stickyH = curH || Math.max(160, Math.floor(mainH / 2));
   if (!state.stickyAnchor || force) {
     state.stickyAnchor = computeDefaultStickyAnchor(mainW, mainH, stickyW, stickyH);
     saveState();
@@ -559,16 +570,19 @@ function createStickyWindow() {
   if (stickyWin && !stickyWin.isDestroyed()) return;
   if (!win) return;
   const [mainW, mainH] = win.getSize();
-  const initW = mainW;
-  const initH = Math.max(160, Math.floor(mainH / 2));
+  const saved = state.stickySize;
+  const initW = (saved && saved.width) ? saved.width : mainW;
+  const initH = (saved && saved.height) ? saved.height : Math.max(160, Math.floor(mainH / 2));
   stickyWin = new BrowserWindow({
     width: initW,
     height: initH,
+    minWidth: 220,
+    minHeight: 140,
     frame: false,
     backgroundColor: '#ffffff',
     skipTaskbar: true,
     alwaysOnTop: true,
-    resizable: false,
+    resizable: true,
     show: false,
     icon: path.join(__dirname, 'build', 'icon.png'),
     webPreferences: {
@@ -580,6 +594,7 @@ function createStickyWindow() {
   stickyWin.setContentProtection(state.stealth);
   stickyWin.setAlwaysOnTop(true, 'screen-saver');
   stickyWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  if (state.clickThrough) try { stickyWin.setIgnoreMouseEvents(true, { forward: true }); } catch {}
   try { stickyWin.setOpacity(win.getOpacity()); } catch {}
   stickyWin.setMenuBarVisibility(false);
   stickyReady = false;
@@ -595,11 +610,28 @@ function createStickyWindow() {
     state.stickyAnchor = deriveStickyAnchor(sx, sy, sw, sh, mx, my, mw, mh);
     saveState();
   });
+  stickyWin.on('resize', () => {
+    if (!stickyWin || stickyWin.isDestroyed()) return;
+    if (stickyMovingProgrammatically > 0) return;
+    const [sw, sh] = stickyWin.getSize();
+    state.stickySize = { width: sw, height: sh };
+    saveState();
+  });
   stickyWin.webContents.once('did-finish-load', () => {
     if (!stickyWin || stickyWin.isDestroyed()) return;
     stickyReady = true;
     pushHistoryToStickyDom();
     syncStickyPosition();
+  });
+  stickyWin.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'F12') {
+      try { stickyWin.webContents.openDevTools({ mode: 'detach' }); } catch {}
+    }
+  });
+  stickyWin.webContents.on('console-message', (_e, level, message) => {
+    if (win && message && message.startsWith('[sticky]')) {
+      win.webContents.send('capture-text', message);
+    }
   });
 }
 
@@ -612,6 +644,13 @@ function openStickyWindow() {
 function closeStickyWindow() {
   stickyWantOpen = false;
   applyStickyState();
+}
+
+function scrollSticky(direction) {
+  if (!stickyWin || stickyWin.isDestroyed() || !stickyReady) return;
+  const dy = direction * 80;
+  const code = `(function(){var b=document.getElementById('stickyBody');if(b)b.scrollTop+=(${dy});})()`;
+  try { stickyWin.webContents.executeJavaScript(code).catch(() => {}); } catch {}
 }
 
 function pushHistoryToStickyDom() {
@@ -1066,8 +1105,81 @@ const HOTKEY_HANDLERS = {
   pushToTalk: () => cycleMicModeFromHotkey(),
   closeSticky: () => closeStickyWindow(),
   openSticky: () => openStickyWindow(),
+  stickyScrollUp: () => scrollSticky(-1),
+  stickyScrollDown: () => scrollSticky(1),
   helpRequest: () => sendHelpRequest(),
+  submitPrompt: () => submitWebviewPrompt(),
+  screenshotToAI: () => captureCursorScreenToAI().catch((e) => { if (win) win.webContents.send('capture-error', 'screenshot: ' + e.message); }),
+  toggleClickThrough: () => setClickThrough(!state.clickThrough),
 };
+
+function submitWebviewPrompt() {
+  if (!webView) {
+    if (win) win.webContents.send('capture-error', 'submit: no webview');
+    return;
+  }
+  const code = `(function(){
+    const sels=['#prompt-textarea','div[contenteditable="true"][role="textbox"]','div.ProseMirror[contenteditable="true"]','div[contenteditable="true"][data-testid*="input"]','textarea[data-testid*="input"]','main textarea','textarea','[contenteditable="true"]'];
+    let el=null;
+    for(const s of sels){const c=document.querySelector(s);if(c&&c.offsetParent!==null){el=c;break;}}
+    if(!el)return 'no-input';
+    el.focus();
+    const btnSels=['button[data-testid="send-button"]','button[aria-label*="Send" i]','button[data-testid="fruitjuice-send-button"]','form button[type="submit"]'];
+    for(const s of btnSels){const b=document.querySelector(s);if(b&&!b.disabled){b.click();return 'clicked:'+s;}}
+    const opts={key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true};
+    el.dispatchEvent(new KeyboardEvent('keydown',opts));
+    el.dispatchEvent(new KeyboardEvent('keypress',opts));
+    el.dispatchEvent(new KeyboardEvent('keyup',opts));
+    return 'enter';
+  })()`;
+  webView.webContents.executeJavaScript(code).catch((e) => {
+    if (win) win.webContents.send('capture-error', 'submit failed: ' + e.message);
+  });
+}
+
+async function captureCursorScreenToAI() {
+  if (!webView) throw new Error('no webview');
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const sf = display.scaleFactor || 1;
+  const tw = Math.round(display.size.width * sf);
+  const th = Math.round(display.size.height * sf);
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: tw, height: th },
+  });
+  let source = sources.find((s) => String(s.display_id) === String(display.id));
+  if (!source) source = sources[0];
+  if (!source) throw new Error('no display source');
+  const img = source.thumbnail;
+  if (!img || img.isEmpty()) throw new Error('empty capture');
+  clipboard.writeImage(img);
+  const focusCode = `(function(){
+    const sels=['#prompt-textarea','div[contenteditable="true"][role="textbox"]','div.ProseMirror[contenteditable="true"]','div[contenteditable="true"][data-testid*="input"]','textarea[data-testid*="input"]','main textarea','textarea','[contenteditable="true"]'];
+    let el=null;
+    for(const s of sels){const c=document.querySelector(s);if(c&&c.offsetParent!==null){el=c;break;}}
+    if(!el)return 'no-input';
+    el.focus();
+    return 'focused';
+  })()`;
+  await webView.webContents.executeJavaScript(focusCode).catch(() => {});
+  webView.webContents.focus();
+  await new Promise((r) => setTimeout(r, 80));
+  try { webView.webContents.paste(); } catch {}
+  if (win) win.webContents.send('capture-text', `[screenshot ${display.size.width}x${display.size.height} pasted to AI]`);
+}
+
+function setClickThrough(value) {
+  state.clickThrough = !!value;
+  if (win) {
+    try { win.setIgnoreMouseEvents(state.clickThrough, { forward: true }); } catch {}
+  }
+  if (stickyWin && !stickyWin.isDestroyed()) {
+    try { stickyWin.setIgnoreMouseEvents(state.clickThrough, { forward: true }); } catch {}
+  }
+  saveState();
+  if (win) win.webContents.send('click-through-changed', state.clickThrough);
+}
 
 function sendHelpRequest() {
   if (state.network.role !== 'speaker') {
@@ -1151,6 +1263,42 @@ function stopSignalingServer() {
   broadcastNetworkStatus();
 }
 
+function ensureFirewallRule(port, force) {
+  if (process.platform !== 'win32') return;
+  const exePath = process.execPath;
+  // Skip if already configured for this exe + port (unless forced via the button)
+  const tag = `${exePath}|${port}`;
+  if (!force && state.network.firewallConfiguredFor === tag) return;
+  // Write the netsh commands into a temp .ps1, then run it elevated — avoids nested quoting issues.
+  const ps1 = path.join(os.tmpdir(), `stealth-fw-${Date.now()}.ps1`);
+  const script = [
+    `$ErrorActionPreference='SilentlyContinue'`,
+    `netsh advfirewall firewall delete rule name="Stealth Support" | Out-Null`,
+    `netsh advfirewall firewall delete rule name="Stealth Support Port" | Out-Null`,
+    `netsh advfirewall firewall add rule name="Stealth Support" dir=in action=allow program="${exePath}" enable=yes profile=any | Out-Null`,
+    `netsh advfirewall firewall add rule name="Stealth Support Port" dir=in action=allow protocol=TCP localport=${port} enable=yes profile=any | Out-Null`,
+  ].join('\r\n');
+  try {
+    fs.writeFileSync(ps1, script, 'utf8');
+  } catch (e) {
+    if (win) win.webContents.send('network-error', 'Firewall: could not write script: ' + e.message);
+    return;
+  }
+  const launch = `Start-Process -Verb RunAs -WindowStyle Hidden -FilePath powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File','${ps1}'`;
+  try {
+    const p = spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', launch], { windowsHide: true });
+    p.on('error', (e) => { if (win) win.webContents.send('network-error', 'Firewall rule failed: ' + e.message); });
+    p.on('exit', () => {
+      state.network.firewallConfiguredFor = tag;
+      saveState();
+      if (win) win.webContents.send('capture-text', `[firewall rule ensured for port ${port}]`);
+      setTimeout(() => { try { fs.unlinkSync(ps1); } catch {} }, 10000);
+    });
+  } catch (e) {
+    if (win) win.webContents.send('network-error', 'Firewall rule error: ' + e.message);
+  }
+}
+
 function startSignalingServer() {
   stopSignalingServer();
   const addr = parseAddress(state.network.address);
@@ -1158,6 +1306,7 @@ function startSignalingServer() {
     if (win) win.webContents.send('network-error', 'Invalid address: ' + state.network.address);
     return;
   }
+  ensureFirewallRule(addr.port, false);
   try {
     wsServer = new WebSocket.Server({ port: addr.port, host: '0.0.0.0' });
   } catch (e) {
@@ -1191,6 +1340,16 @@ function startSignalingServer() {
     const initialMicMode = 'aOnly';
     supporterConns.set(id, { ws, ip, port, micMode: initialMicMode });
     try { ws.send(JSON.stringify({ type: 'hello', id, micMode: initialMicMode })); } catch {}
+    for (const m of chatHistory) {
+      if (!m || !m.fromMe) continue;
+      if (m.type !== 'chat-text' && m.type !== 'chat-image') continue;
+      try {
+        const payload = m.type === 'chat-text'
+          ? { type: 'chat-text', text: m.text, ts: m.ts }
+          : { type: 'chat-image', dataUrl: m.dataUrl, ts: m.ts };
+        ws.send(JSON.stringify(payload));
+      } catch {}
+    }
     if (win) win.webContents.send('signaling-in', { connId: id, type: 'opened', ip });
     broadcastNetworkStatus();
     ws.on('message', (data) => {
@@ -1202,7 +1361,17 @@ function startSignalingServer() {
       }
       if (msg && (msg.type === 'chat-text' || msg.type === 'chat-image')) {
         if (win) win.webContents.send('capture-text', `[chat received from #${id}: ${msg.type}${msg.text ? ' "' + msg.text.slice(0,40) + '"' : ''}]`);
-        pushChatToSticky({ ...msg, fromId: id, ts: msg.ts || Date.now() });
+        pushChatToSticky({ ...msg, fromId: id, fromMe: false, ts: msg.ts || Date.now() });
+        return;
+      }
+      if (msg && msg.type === 'chat-clear') {
+        chatHistory = [];
+        pushHistoryToStickyDom();
+        for (const e2 of supporterConns.values()) {
+          if (e2 && e2.ws && e2.ws.readyState === WebSocket.OPEN) {
+            try { e2.ws.send(JSON.stringify({ type: 'chat-clear', ts: Date.now() })); } catch {}
+          }
+        }
         return;
       }
       if (win) win.webContents.send('signaling-in', { connId: id, ...msg });
@@ -1254,6 +1423,14 @@ function connectSignalingClient() {
     try { msg = JSON.parse(data.toString()); } catch { return; }
     if (msg && msg.type === 'help-request') {
       if (win) win.webContents.send('help-request-received', msg);
+      return;
+    }
+    if (msg && (msg.type === 'chat-text' || msg.type === 'chat-image')) {
+      if (win) win.webContents.send('chat-incoming', { ...msg, ts: msg.ts || Date.now() });
+      return;
+    }
+    if (msg && msg.type === 'chat-clear') {
+      if (win) win.webContents.send('chat-clear');
       return;
     }
     if (msg && (msg.type === 'mic-mode' || (msg.type === 'hello' && msg.micMode))) {
@@ -1385,6 +1562,8 @@ ipcMain.handle('set-opacity', (_e, value) => setOpacity(value));
 ipcMain.handle('get-opacity', () => win?.getOpacity() ?? 1);
 ipcMain.handle('set-stealth', (_e, value) => setStealth(value));
 ipcMain.handle('get-stealth', () => state.stealth);
+ipcMain.handle('set-click-through', (_e, value) => setClickThrough(value));
+ipcMain.handle('get-click-through', () => state.clickThrough);
 ipcMain.handle('hide', () => win?.hide());
 ipcMain.handle('quit', () => app.quit());
 ipcMain.handle('get-urls', () => ({ urls: state.urls.slice(), currentIndex: state.currentUrlIndex }));
@@ -1535,6 +1714,63 @@ ipcMain.handle('sticky-close', () => closeStickyWindow());
 ipcMain.handle('sticky-clear', () => {
   chatHistory = [];
   pushHistoryToStickyDom();
+  let sent = 0;
+  if (state.network.role === 'speaker') {
+    for (const entry of supporterConns.values()) {
+      if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
+        try { entry.ws.send(JSON.stringify({ type: 'chat-clear', ts: Date.now() })); sent++; } catch {}
+      }
+    }
+  } else if (state.network.role === 'supporter') {
+    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+      try { wsClient.send(JSON.stringify({ type: 'chat-clear', ts: Date.now() })); sent++; } catch {}
+    }
+  }
+  if (win) win.webContents.send('capture-text', `[sticky cleared, broadcast to ${sent}]`);
+  return true;
+});
+
+ipcMain.handle('sticky-send-text', (_e, text) => {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  const msg = { type: 'chat-text', text: t, ts: Date.now(), fromMe: true };
+  pushChatToSticky(msg);
+  let sent = 0;
+  if (state.network.role === 'speaker') {
+    const payload = { type: 'chat-text', text: t, ts: msg.ts };
+    for (const entry of supporterConns.values()) {
+      if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
+        try { entry.ws.send(JSON.stringify(payload)); sent++; } catch {}
+      }
+    }
+  } else if (state.network.role === 'supporter') {
+    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+      try { wsClient.send(JSON.stringify({ type: 'chat-text', text: t, ts: msg.ts })); sent++; } catch {}
+    }
+  }
+  if (win) win.webContents.send('capture-text', `[sticky sent: "${t.slice(0,40)}" → ${sent}]`);
+  return true;
+});
+
+ipcMain.handle('sticky-send-image', (_e, dataUrl) => {
+  if (!dataUrl || typeof dataUrl !== 'string') return false;
+  const msg = { type: 'chat-image', dataUrl, ts: Date.now(), fromMe: true };
+  pushChatToSticky(msg);
+  let sent = 0;
+  if (state.network.role === 'speaker') {
+    const payload = { type: 'chat-image', dataUrl, ts: msg.ts };
+    for (const entry of supporterConns.values()) {
+      if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
+        try { entry.ws.send(JSON.stringify(payload)); sent++; } catch {}
+      }
+    }
+  } else if (state.network.role === 'supporter') {
+    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+      try { wsClient.send(JSON.stringify({ type: 'chat-image', dataUrl, ts: msg.ts })); sent++; } catch {}
+    }
+  }
+  if (win) win.webContents.send('capture-text', `[sticky image sent (${Math.round(dataUrl.length/1024)} KB) → ${sent}]`);
+  return true;
 });
 ipcMain.handle('inject-test-chat', (_e, payload) => {
   const text = typeof payload === 'string' ? payload : (payload && payload.text) || 'test message';
@@ -1601,6 +1837,11 @@ ipcMain.handle('set-network-config', (_e, cfg) => {
 });
 ipcMain.handle('start-network', () => { startNetwork(); });
 ipcMain.handle('stop-network', () => { stopNetwork(); });
+ipcMain.handle('configure-firewall', () => {
+  const port = (parseAddress(state.network.address) || {}).port || state.network.speakerPort || 2000;
+  ensureFirewallRule(port, true);
+  return true;
+});
 function cycleMicModeFromHotkey() {
   if (state.network.role === 'speaker') {
     const first = supporterConns.values().next().value;

@@ -14,6 +14,10 @@ html, body {
 }
 
 *, *::before, *::after { cursor: default !important; }
+.sticky-input-area textarea { cursor: text !important; }
+.sticky-input-area button,
+.sticky-clear,
+.sticky-close { cursor: pointer !important; }
 
 .sticky-header {
   height: 24px;
@@ -55,12 +59,75 @@ html, body {
 .sticky-close:hover { background: rgba(113, 63, 18, 0.12); }
 
 .sticky-body {
-  height: calc(100vh - 24px);
+  height: calc(100vh - 24px - 42px);
   overflow-y: auto;
   padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.sticky-input-area {
+  height: 42px;
+  border-top: 1px solid #fde047;
+  background: #fffbeb;
+  display: flex;
+  align-items: center;
+  padding: 4px 6px;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.sticky-input-area textarea,
+.sticky-input-area button { -webkit-app-region: no-drag; }
+
+.sticky-input-area textarea {
+  flex: 1;
+  resize: none;
+  border: 1px solid #fde047;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-family: inherit;
+  font-size: 12px;
+  background: #ffffff;
+  color: #111;
+  outline: none;
+  height: 30px;
+  line-height: 1.3;
+}
+
+.sticky-input-area textarea:focus { border-color: #f59e0b; }
+
+.sticky-attach-btn,
+.sticky-send-btn {
+  border: 1px solid #fde047;
+  background: #fef9c3;
+  color: #713f12;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  height: 30px;
+  cursor: pointer !important;
+}
+
+.sticky-attach-btn { padding: 4px 6px; font-size: 14px; }
+
+.sticky-attach-btn:hover,
+.sticky-send-btn:hover { background: #fde68a; }
+
+.msg.from-me {
+  background: #dbeafe;
+  border-color: #93c5fd;
+  align-self: flex-end;
+  max-width: 85%;
+}
+
+.msg.from-me .msg-time { color: #1e3a8a; }
+
+.msg.from-them {
+  align-self: flex-start;
+  max-width: 85%;
 }
 
 .sticky-empty {
