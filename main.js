@@ -89,9 +89,10 @@ const DEFAULT_STATE = {
 };
 
 const MIN_OPACITY = 0.05;
-const MOVE_STEP = 40;
+const MOVE_STEP_X = 40;
+const MOVE_STEP_Y = 20;
 const OPACITY_STEP = 0.05;
-const SCROLL_STEP = 100;
+const SCROLL_STEP = 50;
 const HEADER_H = 28;
 const RAIL_W = 0;
 const RIGHT_RAIL_W = 30;
@@ -1089,10 +1090,10 @@ ipcMain.on('selector-cancel', () => {
 
 const HOTKEY_HANDLERS = {
   toggleVisibility: () => toggleVisible(),
-  moveLeft: () => nudge(-MOVE_STEP, 0),
-  moveRight: () => nudge(MOVE_STEP, 0),
-  moveUp: () => nudge(0, -MOVE_STEP),
-  moveDown: () => nudge(0, MOVE_STEP),
+  moveLeft: () => nudge(-MOVE_STEP_X, 0),
+  moveRight: () => nudge(MOVE_STEP_X, 0),
+  moveUp: () => nudge(0, -MOVE_STEP_Y),
+  moveDown: () => nudge(0, MOVE_STEP_Y),
   opacityUp: () => setOpacity((win?.getOpacity() ?? 1) + OPACITY_STEP),
   opacityDown: () => setOpacity((win?.getOpacity() ?? 1) - OPACITY_STEP),
   scrollUp: () => scrollWebview(-SCROLL_STEP),

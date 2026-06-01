@@ -1377,17 +1377,26 @@ async function startVoice() {
       }
     }
 
-    const processor = ctx.createScriptProcessor(512, 1, 1);
+    try {
+      await ctx.audioWorklet.addModule("audio-capture-worklet.js");
+    } catch (e) {
+      log("AudioWorklet load failed: " + e.message, "err");
+      try { await ctx.close(); } catch {}
+      streams.forEach((s) => s.getTracks && s.getTracks().forEach((t) => t.stop()));
+      return;
+    }
+    const processor = new AudioWorkletNode(ctx, "capture-processor", {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+      processorOptions: { format: "int16", batchSize: 1600 },
+    });
     ctx.createMediaStreamSource(dest.stream).connect(processor);
     const sink = ctx.createGain();
     sink.gain.value = 0;
     processor.connect(sink).connect(ctx.destination);
-    processor.onaudioprocess = (e) => {
-      const f32 = e.inputBuffer.getChannelData(0);
-      const i16 = new Int16Array(f32.length);
-      for (let i = 0; i < f32.length; i++)
-        i16[i] = Math.max(-32768, Math.min(32767, f32[i] * 32767));
-      window.api.sendAudioChunk(i16.buffer);
+    processor.port.onmessage = (e) => {
+      window.api.sendAudioChunk(e.data);
     };
 
     recState = { ctx, streams, processor, deepgram: true };
@@ -1461,8 +1470,23 @@ async function startVoiceChunked() {
   }
 
   const sampleRate = ctx.sampleRate;
-  const bufferSize = 4096;
-  const processor = ctx.createScriptProcessor(bufferSize, 1, 1);
+  try {
+    await ctx.audioWorklet.addModule("audio-capture-worklet.js");
+  } catch (e) {
+    log("AudioWorklet load failed: " + e.message, "err");
+    streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+    try { await ctx.close(); } catch {}
+    return;
+  }
+  const processor = new AudioWorkletNode(ctx, "capture-processor", {
+    numberOfInputs: 1,
+    numberOfOutputs: 1,
+    outputChannelCount: [1],
+    processorOptions: {
+      format: "float32",
+      batchSize: Math.max(128, Math.round(sampleRate * 0.1)),
+    },
+  });
   const mixSource = ctx.createMediaStreamSource(dest.stream);
   mixSource.connect(processor);
   const sink = ctx.createGain();
@@ -1474,9 +1498,9 @@ async function startVoiceChunked() {
   const initialCs = Math.max(1, Math.min(10, parseFloat(txCfg.chunkSeconds) || 3));
   chunkSecondsRuntime = initialCs;
 
-  processor.onaudioprocess = (e) => {
-    const data = e.inputBuffer.getChannelData(0);
-    buffered.push(new Float32Array(data));
+  processor.port.onmessage = (e) => {
+    const data = new Float32Array(e.data);
+    buffered.push(data);
     bufferedLen += data.length;
     const targetSamples = sampleRate * chunkSecondsRuntime;
     if (bufferedLen >= targetSamples) {
