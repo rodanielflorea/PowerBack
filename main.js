@@ -94,6 +94,7 @@ const MOVE_STEP_Y = 20;
 const OPACITY_STEP = 0.05;
 const SCROLL_STEP = 50;
 const HEADER_H = 28;
+const URL_BAR_H = 30;
 const RAIL_W = 0;
 const RIGHT_RAIL_W = 30;
 
@@ -350,11 +351,12 @@ function saveState() {
 function layoutWebView() {
   if (!win || !webView) return;
   const [w, h] = win.getContentSize();
+  const top = HEADER_H + URL_BAR_H;
   webView.setBounds({
     x: RAIL_W,
-    y: HEADER_H,
+    y: top,
     width: Math.max(0, w - RAIL_W - RIGHT_RAIL_W),
-    height: Math.max(0, h - HEADER_H),
+    height: Math.max(0, h - top),
   });
 }
 
@@ -382,8 +384,72 @@ function ensureWebView() {
   );
   win.contentView.addChildView(webView);
   webView.setVisible(false);
+  const wc = webView.webContents;
+  wc.on('did-navigate', () => sendWebviewUrl());
+  wc.on('did-navigate-in-page', () => sendWebviewUrl());
+  wc.on('page-title-updated', () => sendWebviewUrl());
   layoutWebView();
   loadCurrentUrl();
+}
+
+function webviewNavInfo() {
+  const info = { url: '', canBack: false, canForward: false };
+  if (!webView) return info;
+  const wc = webView.webContents;
+  try { info.url = wc.getURL() || ''; } catch {}
+  try {
+    const nh = wc.navigationHistory;
+    if (nh && typeof nh.canGoBack === 'function') {
+      info.canBack = nh.canGoBack();
+      info.canForward = nh.canGoForward();
+    } else {
+      info.canBack = wc.canGoBack();
+      info.canForward = wc.canGoForward();
+    }
+  } catch {}
+  return info;
+}
+
+function sendWebviewUrl() {
+  if (win && !win.isDestroyed()) win.webContents.send('webview-url-changed', webviewNavInfo());
+}
+
+// Load an arbitrary address typed into the URL bar. Bare hostnames get https://,
+// free text becomes a Google search, so users can escape a verification page.
+function navigateToUrl(rawUrl) {
+  if (!webView) return;
+  let url = String(rawUrl || '').trim();
+  if (!url) return;
+  if (!/^[a-z]+:\/\//i.test(url)) {
+    if (/\s/.test(url) || !/\.[a-z]{2,}/i.test(url)) {
+      url = 'https://www.google.com/search?q=' + encodeURIComponent(url);
+    } else {
+      url = 'https://' + url;
+    }
+  }
+  webView.setVisible(true);
+  layoutWebView();
+  webView.webContents.loadURL(url).catch(() => {});
+}
+
+function webviewGoBack() {
+  if (!webView) return;
+  const wc = webView.webContents;
+  try {
+    const nh = wc.navigationHistory;
+    if (nh && typeof nh.goBack === 'function') { if (nh.canGoBack()) nh.goBack(); }
+    else if (wc.canGoBack()) wc.goBack();
+  } catch {}
+}
+
+function webviewGoForward() {
+  if (!webView) return;
+  const wc = webView.webContents;
+  try {
+    const nh = wc.navigationHistory;
+    if (nh && typeof nh.goForward === 'function') { if (nh.canGoForward()) nh.goForward(); }
+    else if (wc.canGoForward()) wc.goForward();
+  } catch {}
 }
 
 function createWindow() {
@@ -807,7 +873,7 @@ async function injectIntoChat(text) {
 
 async function transcribeDeepgram(wavBuffer, cfg) {
   if (!cfg.deepgramApiKey) throw new Error('Deepgram API key not set');
-  const params = new URLSearchParams({ model: 'nova-2', punctuate: 'true' });
+  const params = new URLSearchParams({ model: 'nova-2', smart_format: 'true' });
   if (cfg.language && cfg.language !== 'auto') {
     params.set('language', cfg.language);
   } else {
@@ -1579,6 +1645,10 @@ ipcMain.handle('reload-webview', () => reloadWebView());
 ipcMain.handle('set-webview-visible', (_e, visible) => {
   if (webView) webView.setVisible(!!visible);
 });
+ipcMain.handle('navigate-url', (_e, url) => navigateToUrl(url));
+ipcMain.handle('webview-back', () => webviewGoBack());
+ipcMain.handle('webview-forward', () => webviewGoForward());
+ipcMain.handle('get-webview-url', () => webviewNavInfo());
 
 ipcMain.handle('get-mode', () => state.mode);
 ipcMain.handle('set-mode', (_e, mode) => {
@@ -1600,7 +1670,7 @@ function startDeepgramWs(apiKey, language) {
   const params = new URLSearchParams({
     model: 'nova-2', encoding: 'linear16',
     sample_rate: '16000', channels: '1',
-    punctuate: 'true', interim_results: 'true',
+    smart_format: 'true', interim_results: 'true',
     endpointing: '150', no_delay: 'true', utterance_end_ms: '1000',
   });
   if (language && language !== 'auto') params.set('language', language);

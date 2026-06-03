@@ -8,6 +8,7 @@
   --track: #d4d4d8;
   --rec-on: #dc2626;
   --header-h: 28px;
+  --url-bar-h: 30px;
   --rail-w: 30px;
 }
 
@@ -123,6 +124,59 @@ input, textarea, select, button { cursor: default !important; }
 
 body:not(.in-interview) .iv-btn { display: none !important; }
 body:not(.in-interview) .right-rail { display: none !important; }
+
+.urlbar {
+  position: fixed;
+  top: var(--header-h);
+  left: 0;
+  right: var(--rail-w);
+  height: var(--url-bar-h);
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  z-index: 9;
+  -webkit-app-region: no-drag;
+}
+
+.urlbar-btn {
+  -webkit-app-region: no-drag;
+  width: 24px;
+  height: 22px;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.urlbar-btn:hover { background: rgba(0, 0, 0, 0.08); }
+.urlbar-btn:disabled { color: var(--track); }
+
+.urlbar-input {
+  -webkit-app-region: no-drag;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 0 8px;
+  outline: none;
+}
+
+.urlbar-input:focus { border-color: var(--accent); }
+.urlbar-go { color: var(--accent); }
 
 .stealth-icon {
   width: 15px;

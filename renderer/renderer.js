@@ -704,6 +704,50 @@ urlInput.addEventListener("keydown", (e) => {
 urlMenuBtn.addEventListener("click", () => window.api.showUrlMenu());
 reloadBtn.addEventListener("click", () => window.api.reloadWebview());
 
+// --- Top URL bar: type a URL to navigate the loaded page directly. Useful when
+// the site bounces to a human-verification page. ---
+const urlInputBar = document.getElementById("urlInputBar");
+const urlBackBtn = document.getElementById("urlBackBtn");
+const urlForwardBtn = document.getElementById("urlForwardBtn");
+const urlReloadBtn = document.getElementById("urlReloadBtn");
+const urlGoBtn = document.getElementById("urlGoBtn");
+let urlBarFocused = false;
+
+function goToUrlBarValue() {
+  const v = (urlInputBar.value || "").trim();
+  if (v) window.api.navigateUrl(v);
+  urlInputBar.blur();
+}
+
+if (urlInputBar) {
+  urlInputBar.addEventListener("focus", () => {
+    urlBarFocused = true;
+    urlInputBar.select();
+  });
+  urlInputBar.addEventListener("blur", () => { urlBarFocused = false; });
+  urlInputBar.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); goToUrlBarValue(); }
+    else if (e.key === "Escape") { urlInputBar.blur(); }
+  });
+}
+if (urlGoBtn) urlGoBtn.addEventListener("click", goToUrlBarValue);
+if (urlBackBtn) urlBackBtn.addEventListener("click", () => window.api.webviewBack());
+if (urlForwardBtn) urlForwardBtn.addEventListener("click", () => window.api.webviewForward());
+if (urlReloadBtn) urlReloadBtn.addEventListener("click", () => window.api.reloadWebview());
+
+function applyWebviewNav(info) {
+  if (!info) return;
+  // Don't clobber what the user is typing.
+  if (!urlBarFocused && urlInputBar && typeof info.url === "string") {
+    urlInputBar.value = info.url;
+  }
+  if (urlBackBtn) urlBackBtn.disabled = !info.canBack;
+  if (urlForwardBtn) urlForwardBtn.disabled = !info.canForward;
+}
+
+window.api.onWebviewUrlChanged(applyWebviewNav);
+if (window.api.getWebviewUrl) window.api.getWebviewUrl().then(applyWebviewNav);
+
 const tabBtns = document.querySelectorAll(".tab-btn");
 const tabPanels = document.querySelectorAll(".settings-tab");
 
@@ -1189,31 +1233,25 @@ window.api.onSelectorClosed(() => {
 });
 
 let interimEl = null;
-let voiceSegmentWords = [];
-function voiceEmitNewTail(text) {
-  const words = (text || "").split(/\s+/).filter(Boolean);
-  if (words.length === 0) return;
-  let common = 0;
-  const max = Math.min(words.length, voiceSegmentWords.length);
-  while (
-    common < max &&
-    words[common].toLowerCase() === voiceSegmentWords[common].toLowerCase()
-  )
-    common++;
-  const newTail = words.slice(common);
-  voiceSegmentWords = words;
-  if (newTail.length > 0) window.api.injectToWebview(newTail.join(" ") + " ");
+function clearInterimPreview() {
+  if (interimEl) {
+    interimEl.remove();
+    interimEl = null;
+  }
 }
+// Deepgram streams speculative interim hypotheses that it keeps revising, then a
+// stable `is_final` result per segment. We inject ONLY the finals ("the exact
+// ones") into the AI input — interim guesses are shown as a live preview but
+// never committed, so a revised word can't leave wrong text behind. The preview
+// is replaced by the corrected final when it arrives.
 window.api.onTranscriptLive(({ text, isFinal }) => {
   if (!text) return;
   if (isFinal) {
-    if (interimEl) {
-      interimEl.remove();
-      interimEl = null;
-    }
-    log(text);
-    voiceEmitNewTail(text);
-    voiceSegmentWords = [];
+    const finalText = text.trim();
+    clearInterimPreview();
+    if (!finalText) return;
+    log(finalText);
+    window.api.injectToWebview(finalText + " ");
   } else {
     if (!interimEl) {
       interimEl = document.createElement("div");
@@ -1222,7 +1260,6 @@ window.api.onTranscriptLive(({ text, isFinal }) => {
     }
     interimEl.textContent = "⟳ " + text;
     logBody.scrollTop = logBody.scrollHeight;
-    voiceEmitNewTail(text);
   }
 });
 window.api.onTranscriptLiveError((msg) => {
