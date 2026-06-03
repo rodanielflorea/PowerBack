@@ -1668,17 +1668,27 @@ ipcMain.handle('transcribe', async (_e, wavArrayBuffer) => enqueueTranscribe(wav
 function startDeepgramWs(apiKey, language) {
   if (deepgramWs) return;
   const params = new URLSearchParams({
-    model: 'nova-2', encoding: 'linear16',
+    encoding: 'linear16',
     sample_rate: '16000', channels: '1',
     smart_format: 'true', interim_results: 'true',
     endpointing: '150', no_delay: 'true', utterance_end_ms: '1000',
   });
-  if (language && language !== 'auto') params.set('language', language);
-  else params.set('detect_language', 'true');
+  // Deepgram's streaming API does NOT support `detect_language` (pre-recorded
+  // only) — sending it returns HTTP 400. For "auto" use nova-3's real-time
+  // multilingual mode (`language=multi`); for a specific language, nova-2 has
+  // the broadest per-language streaming coverage.
+  if (language && language !== 'auto') {
+    params.set('model', 'nova-2');
+    params.set('language', language);
+  } else {
+    params.set('model', 'nova-3');
+    params.set('language', 'multi');
+  }
 
   deepgramWs = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, {
     headers: { Authorization: `Token ${apiKey}` },
   });
+  let handshakeFailed = false;
   deepgramWs.on('open', () => appendLogLine('[deepgram] connected'));
   deepgramWs.on('message', (raw) => {
     try {
@@ -1690,12 +1700,48 @@ function startDeepgramWs(apiKey, language) {
       if (win && !win.isDestroyed()) win.webContents.send('transcript-live', { text, isFinal: !!msg.is_final });
     } catch {}
   });
+  // A rejected WS handshake (bad key, bad params, no credits) comes through here
+  // with the real HTTP status — turn it into a plain, actionable message.
+  deepgramWs.on('unexpected-response', (_req, res) => {
+    handshakeFailed = true;
+    let body = '';
+    res.on('data', (d) => { body += d.toString(); });
+    res.on('end', () => {
+      let detail = '';
+      try { const j = JSON.parse(body); detail = j.err_msg || j.reason || j.message || ''; } catch {}
+      const msg = friendlyDeepgramError(res.statusCode, detail);
+      appendLogLine(`[deepgram] handshake ${res.statusCode}: ${body.slice(0, 200)}`);
+      if (win && !win.isDestroyed()) win.webContents.send('transcript-live-error', msg);
+      try { if (deepgramWs) deepgramWs.terminate(); } catch {}
+      deepgramWs = null;
+    });
+  });
   deepgramWs.on('error', (e) => {
+    if (handshakeFailed) return; // friendlier message already sent above
     appendLogLine('[deepgram] error: ' + e.message);
     if (win && !win.isDestroyed()) win.webContents.send('transcript-live-error', e.message);
     deepgramWs = null;
   });
   deepgramWs.on('close', () => { deepgramWs = null; });
+}
+
+function friendlyDeepgramError(status, detail) {
+  const tail = detail ? ` — ${detail}` : '';
+  switch (status) {
+    case 400:
+      return `Deepgram rejected the request (400). Try picking a specific language in Settings → Voice.${tail}`;
+    case 401:
+      return `Deepgram rejected your API key (401). Check the key in Settings → Voice.${tail}`;
+    case 402:
+    case 403:
+      return `Deepgram access denied (${status}) — out of credits or the key lacks permission.${tail}`;
+    case 404:
+      return `Deepgram endpoint/model not found (404).${tail}`;
+    case 429:
+      return `Deepgram rate limit / out of credits (429). Try again shortly.${tail}`;
+    default:
+      return `Deepgram connection failed (${status || 'unknown'}).${tail}`;
+  }
 }
 
 ipcMain.handle('start-deepgram-stream', (_e, { apiKey, language }) => {
