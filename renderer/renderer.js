@@ -792,6 +792,144 @@ if (updaterInstallBtn)
     window.api.installUpdateNow(),
   );
 
+// ---- Session cookie export / import ----
+const cookieExportBtn = document.getElementById("cookieExportBtn");
+const cookieImportBtn = document.getElementById("cookieImportBtn");
+const cookieStatusEl = document.getElementById("cookieStatus");
+function setCookieStatus(msg) {
+  if (cookieStatusEl) cookieStatusEl.textContent = msg;
+}
+if (cookieExportBtn)
+  cookieExportBtn.addEventListener("click", async () => {
+    setCookieStatus("Exporting…");
+    const r = await window.api.exportCookies();
+    if (r && r.ok) setCookieStatus(`Exported ${r.count} cookies. Keep this file private.`);
+    else if (r && r.canceled) setCookieStatus("Export canceled.");
+    else setCookieStatus("Export failed: " + ((r && r.error) || "unknown error"));
+  });
+if (cookieImportBtn)
+  cookieImportBtn.addEventListener("click", async () => {
+    setCookieStatus("Importing…");
+    const r = await window.api.importCookies();
+    if (r && r.ok)
+      setCookieStatus(`Imported ${r.imported} cookies${r.skipped ? `, skipped ${r.skipped}` : ""}. Reloading the site…`);
+    else if (r && r.canceled) setCookieStatus("Import canceled.");
+    else setCookieStatus("Import failed: " + ((r && r.error) || "unknown error"));
+  });
+
+// Setup-wizard import (same handler) for restoring a session on a new machine.
+const setupImportCookiesBtn = document.getElementById("setupImportCookiesBtn");
+const setupCookieStatusEl = document.getElementById("setupCookieStatus");
+if (setupImportCookiesBtn)
+  setupImportCookiesBtn.addEventListener("click", async () => {
+    if (setupCookieStatusEl) setupCookieStatusEl.textContent = "Importing…";
+    const r = await window.api.importCookies();
+    if (setupCookieStatusEl) {
+      if (r && r.ok) setupCookieStatusEl.textContent = `Imported ${r.imported} cookies.`;
+      else if (r && r.canceled) setupCookieStatusEl.textContent = "";
+      else setupCookieStatusEl.textContent = "Failed: " + ((r && r.error) || "error");
+    }
+  });
+
+// ---- Prompt library ----
+const promptListEl = document.getElementById("promptList");
+const promptTitleInput = document.getElementById("promptTitleInput");
+const promptTextInput = document.getElementById("promptTextInput");
+const promptSaveBtn = document.getElementById("promptSaveBtn");
+const promptNewBtn = document.getElementById("promptNewBtn");
+const promptStatusEl = document.getElementById("promptStatus");
+const promptEditorTitle = document.getElementById("promptEditorTitle");
+const promptRailBtn = document.getElementById("promptRailBtn");
+let editingPromptId = null;
+
+function setPromptStatus(msg) {
+  if (promptStatusEl) promptStatusEl.textContent = msg || "";
+}
+function clearPromptEditor() {
+  editingPromptId = null;
+  if (promptTitleInput) promptTitleInput.value = "";
+  if (promptTextInput) promptTextInput.value = "";
+  if (promptEditorTitle) promptEditorTitle.textContent = "New prompt";
+}
+function renderPrompts(list) {
+  if (!promptListEl) return;
+  promptListEl.innerHTML = "";
+  if (!list || list.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "prompt-empty";
+    empty.textContent = "No saved prompts yet. Add one below.";
+    promptListEl.appendChild(empty);
+    return;
+  }
+  const mkBtn = (label, fn) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.addEventListener("click", fn);
+    return b;
+  };
+  for (const p of list) {
+    const row = document.createElement("div");
+    row.className = "prompt-item";
+    const title = document.createElement("span");
+    title.className = "prompt-item-title";
+    title.textContent = p.title;
+    title.title = p.text;
+    row.appendChild(title);
+    row.appendChild(
+      mkBtn("Insert", async () => {
+        setPromptStatus("Inserting…");
+        await window.api.injectToWebview(p.text);
+        setPromptStatus('Inserted "' + p.title + '".');
+      }),
+    );
+    row.appendChild(
+      mkBtn("Copy", async () => {
+        await window.api.copyText(p.text);
+        setPromptStatus('Copied "' + p.title + '".');
+      }),
+    );
+    row.appendChild(
+      mkBtn("Edit", () => {
+        editingPromptId = p.id;
+        if (promptTitleInput) promptTitleInput.value = p.title;
+        if (promptTextInput) promptTextInput.value = p.text;
+        if (promptEditorTitle) promptEditorTitle.textContent = "Edit prompt";
+        setPromptStatus('Editing "' + p.title + '".');
+      }),
+    );
+    row.appendChild(
+      mkBtn("Delete", async () => {
+        const updated = await window.api.deletePrompt(p.id);
+        renderPrompts(updated);
+        if (editingPromptId === p.id) clearPromptEditor();
+        setPromptStatus("Deleted.");
+      }),
+    );
+    promptListEl.appendChild(row);
+  }
+}
+if (promptSaveBtn)
+  promptSaveBtn.addEventListener("click", async () => {
+    const text = promptTextInput ? promptTextInput.value : "";
+    if (!text.trim()) {
+      setPromptStatus("Enter prompt text first.");
+      return;
+    }
+    const title = promptTitleInput ? promptTitleInput.value : "";
+    const updated = await window.api.savePrompt({ id: editingPromptId, title, text });
+    renderPrompts(updated);
+    clearPromptEditor();
+    setPromptStatus("Saved.");
+  });
+if (promptNewBtn)
+  promptNewBtn.addEventListener("click", () => {
+    clearPromptEditor();
+    setPromptStatus("");
+  });
+if (promptRailBtn)
+  promptRailBtn.addEventListener("click", () => window.api.showPromptMenu());
+if (window.api && window.api.getPrompts) window.api.getPrompts().then(renderPrompts);
+
 if (window.api && window.api.onUpdaterStatus) {
   window.api.onUpdaterStatus((s) => {
     if (!updaterStatusEl) return;

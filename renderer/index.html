@@ -56,9 +56,7 @@
     <button class="rail-btn rec-btn" id="recBtn" title="Start transcription">
       <span class="rec-dot"></span>
     </button>
-    <button class="rail-btn chunk-btn" id="chunkRailBtn" hidden title="Whisper.cpp chunk length — click to edit in Settings → Voice">
-      <span id="chunkRailValue">3.0</span><span class="chunk-rail-unit">s</span>
-    </button>
+    <button class="rail-btn" id="promptRailBtn" title="Insert a saved prompt">&#9998;</button>
   </aside>
 
   <section class="settings-overlay" id="settingsOverlay" hidden>
@@ -68,6 +66,8 @@
     </div>
     <nav class="settings-tabs" id="settingsTabs">
       <button class="tab-btn active" data-tab="general" type="button">General</button>
+      <button class="tab-btn" data-tab="session" type="button">Session</button>
+      <button class="tab-btn" data-tab="prompts" type="button">Prompts</button>
       <button class="tab-btn" data-tab="voice" type="button">Voice</button>
       <button class="tab-btn" data-tab="caption" type="button">Caption</button>
       <button class="tab-btn" data-tab="network" type="button">Network</button>
@@ -105,6 +105,43 @@
             <button id="updaterInstallBtn" hidden>Restart &amp; install</button>
           </div>
           <div class="updater-status" id="updaterStatus">Idle.</div>
+        </section>
+      </div>
+
+      <div class="settings-tab" data-tab="session" hidden>
+        <section class="settings-section">
+          <h3>Session cookies</h3>
+          <p class="hint">Export your signed-in session to a file, then import it on another computer to restore your logins (ChatGPT, Claude, etc.) without signing in again.</p>
+          <div class="updater-row">
+            <button id="cookieExportBtn">Export cookies&hellip;</button>
+            <button id="cookieImportBtn">Import cookies&hellip;</button>
+          </div>
+          <div class="updater-status" id="cookieStatus">Ready.</div>
+          <p class="hint">&#9888; The exported file contains your login tokens &mdash; treat it like a password. Anyone with it can access your sessions until they expire.</p>
+        </section>
+      </div>
+
+      <div class="settings-tab" data-tab="prompts" hidden>
+        <section class="settings-section">
+          <h3>Prompt library</h3>
+          <p class="hint">Save reusable prompts and insert them into the loaded ChatGPT/Claude input. The &#9998; button on the rail inserts a saved prompt without opening settings.</p>
+          <div class="prompt-list" id="promptList"></div>
+        </section>
+        <section class="settings-section">
+          <h3 id="promptEditorTitle">New prompt</h3>
+          <div class="field">
+            <label for="promptTitleInput">Title</label>
+            <input type="text" id="promptTitleInput" placeholder="e.g. Summarize, Behavioral answer&hellip;" spellcheck="false" />
+          </div>
+          <div class="field">
+            <label for="promptTextInput">Prompt text</label>
+            <textarea id="promptTextInput" rows="6" placeholder="Type the prompt to save&hellip;" spellcheck="false"></textarea>
+          </div>
+          <div class="updater-row">
+            <button id="promptSaveBtn">Save prompt</button>
+            <button id="promptNewBtn">New / Clear</button>
+          </div>
+          <div class="updater-status" id="promptStatus"></div>
         </section>
       </div>
 
@@ -745,6 +782,13 @@
           </div>
         </div>
 
+      </div>
+
+      <div class="setup-section">
+        <h4>Restore a previous session (optional)</h4>
+        <p class="hint">New computer? Import a session-cookie file you exported elsewhere to bring back your logins (ChatGPT, Claude, etc.).</p>
+        <button id="setupImportCookiesBtn">Import cookies&hellip;</button>
+        <span class="hint" id="setupCookieStatus" style="margin-left:8px"></span>
       </div>
 
       <button class="action-btn setup-start-btn" id="setupStartBtn">Start</button>

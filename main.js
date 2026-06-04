@@ -89,6 +89,7 @@ const DEFAULT_STATE = {
     listenDeviceId: '',
   },
   welcomeSeen: false,
+  prompts: [],
   stickyAnchor: null,
   stickySize: null,
   hotkeys: { ...HOTKEY_DEFAULTS },
@@ -1929,6 +1930,121 @@ ipcMain.handle('save-session-log', async () => {
 ipcMain.handle('paste-text', (_e, text) => pasteToForeground(text));
 ipcMain.handle('inject-to-webview', (_e, text) => injectIntoChat(text));
 ipcMain.handle('webview-edit-tail', (_e, { deleteCount, insert }) => webviewEditTail(deleteCount || 0, insert || ''));
+
+// ---- Session cookie export / import (portable across machines) ----
+// cookies.get() returns DECRYPTED values and cookies.set() re-encrypts with the
+// local machine's key, so the exported JSON restores the session on a different
+// computer/account (unlike copying the raw, DPAPI-bound Cookies file).
+async function serializeCookies() {
+  const cookies = await session.defaultSession.cookies.get({});
+  return cookies.map((c) => ({
+    name: c.name, value: c.value, domain: c.domain, path: c.path,
+    secure: c.secure, httpOnly: c.httpOnly,
+    expirationDate: c.expirationDate, sameSite: c.sameSite, hostOnly: c.hostOnly,
+  }));
+}
+
+async function applyCookies(list) {
+  const now = Date.now() / 1000;
+  let imported = 0, skipped = 0;
+  for (const c of (Array.isArray(list) ? list : [])) {
+    if (!c || !c.name || !c.domain) { skipped++; continue; }
+    if (c.expirationDate && c.expirationDate < now) { skipped++; continue; } // expired
+    const host = String(c.domain).replace(/^\./, '');
+    const details = {
+      url: (c.secure ? 'https://' : 'http://') + host + (c.path || '/'),
+      name: c.name,
+      value: c.value || '',
+      path: c.path || '/',
+      secure: !!c.secure,
+      httpOnly: !!c.httpOnly,
+    };
+    // host-only and __Host- cookies must NOT carry an explicit domain.
+    if (!c.hostOnly && !/^__Host-/.test(c.name)) details.domain = c.domain;
+    if (c.expirationDate) details.expirationDate = c.expirationDate;
+    if (c.sameSite) details.sameSite = c.sameSite;
+    try { await session.defaultSession.cookies.set(details); imported++; }
+    catch { skipped++; }
+  }
+  return { imported, skipped };
+}
+
+ipcMain.handle('cookies-export', async () => {
+  try {
+    const cookies = await serializeCookies();
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Export session cookies',
+      defaultPath: path.join(app.getPath('desktop'), `ace-session-${new Date().toISOString().slice(0, 10)}.json`),
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+    await fs.promises.writeFile(r.filePath, JSON.stringify(cookies, null, 2), 'utf8');
+    return { ok: true, count: cookies.length, path: r.filePath };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('cookies-import', async () => {
+  try {
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Import session cookies',
+      properties: ['openFile'],
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (r.canceled || !r.filePaths || !r.filePaths[0]) return { ok: false, canceled: true };
+    const raw = await fs.promises.readFile(r.filePaths[0], 'utf8');
+    let list;
+    try { list = JSON.parse(raw); } catch { return { ok: false, error: 'Not a valid cookie JSON file' }; }
+    const { imported, skipped } = await applyCookies(list);
+    reloadWebView(); // let the loaded site adopt the restored session
+    return { ok: true, imported, skipped };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+// ---- Prompt library: saved prompt snippets, persisted in state.json ----
+ipcMain.handle('get-prompts', () => (state.prompts || []).slice());
+ipcMain.handle('save-prompt', (_e, prompt) => {
+  if (!prompt || typeof prompt.text !== 'string' || !prompt.text.trim()) {
+    return (state.prompts || []).slice();
+  }
+  if (!Array.isArray(state.prompts)) state.prompts = [];
+  const text = prompt.text;
+  const title = (prompt.title || '').trim() || text.trim().split('\n')[0].slice(0, 40) || 'Untitled';
+  if (prompt.id) {
+    const i = state.prompts.findIndex((p) => p.id === prompt.id);
+    if (i >= 0) state.prompts[i] = { id: prompt.id, title, text };
+    else state.prompts.push({ id: prompt.id, title, text });
+  } else {
+    const id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    state.prompts.push({ id, title, text });
+  }
+  saveState();
+  return state.prompts.slice();
+});
+ipcMain.handle('delete-prompt', (_e, id) => {
+  state.prompts = (state.prompts || []).filter((p) => p.id !== id);
+  saveState();
+  return state.prompts.slice();
+});
+ipcMain.handle('copy-text', (_e, text) => {
+  try { clipboard.writeText(String(text || '')); return true; } catch { return false; }
+});
+
+function showPromptMenu() {
+  if (!win) return;
+  const list = state.prompts || [];
+  const items = list.length === 0
+    ? [{ label: 'No saved prompts — add in Settings → Prompts', enabled: false }]
+    : list.map((p) => ({
+        label: p.title.length > 50 ? p.title.slice(0, 47) + '…' : p.title,
+        click: () => injectIntoChat(p.text),
+      }));
+  Menu.buildFromTemplate(items).popup({ window: win });
+}
+ipcMain.handle('show-prompt-menu', () => showPromptMenu());
 ipcMain.handle('pick-file', async (_e, kind) => {
   const filters = kind === 'exe'
     ? [{ name: 'Executable', extensions: ['exe'] }]
