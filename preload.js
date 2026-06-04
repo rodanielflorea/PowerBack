@@ -87,6 +87,7 @@ contextBridge.exposeInMainWorld('api', {
   getWelcomeSeen: () => ipcRenderer.invoke('get-welcome-seen'),
   setWelcomeSeen: (v) => ipcRenderer.invoke('set-welcome-seen', v),
   injectToWebview: (text) => ipcRenderer.invoke('inject-to-webview', text),
+  webviewEditTail: (deleteCount, insert) => ipcRenderer.invoke('webview-edit-tail', { deleteCount, insert }),
   startDeepgramStream: (cfg) => ipcRenderer.invoke('start-deepgram-stream', cfg),
   stopDeepgramStream: () => ipcRenderer.invoke('stop-deepgram-stream'),
   sendAudioChunk: (buf) => ipcRenderer.send('audio-chunk', buf),
@@ -95,4 +96,6 @@ contextBridge.exposeInMainWorld('api', {
   sessionLogAdd: (entry) => ipcRenderer.send('session-log-add', entry),
   onTranscriptLive: (cb) => ipcRenderer.on('transcript-live', (_e, v) => cb(v)),
   onTranscriptLiveError: (cb) => ipcRenderer.on('transcript-live-error', (_e, v) => cb(v)),
+  onUtteranceEnd: (cb) => ipcRenderer.on('transcript-utterance-end', () => cb()),
+  getDesktopSourceId: () => ipcRenderer.invoke('get-desktop-source-id'),
 });

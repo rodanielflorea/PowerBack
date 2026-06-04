@@ -11,6 +11,12 @@ let autoUpdater = null;
 try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
 
 app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
+// Keep the audio capture pipeline alive when the window is hidden (stealth) or
+// occluded by a fullscreen app — otherwise Chromium throttles the renderer and
+// the AudioWorklet feeding Deepgram stalls, so voice stops transcribing.
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
 const STATE_FILE = path.join(app.getPath('userData'), 'state.json');
 const LOG_FILE = path.join(app.getPath('userData'), 'activity.log');
@@ -388,6 +394,16 @@ function ensureWebView() {
   wc.on('did-navigate', () => sendWebviewUrl());
   wc.on('did-navigate-in-page', () => sendWebviewUrl());
   wc.on('page-title-updated', () => sendWebviewUrl());
+  // Load timing — so a slow page shows up in the Log with where the time went.
+  let webviewLoadStart = 0;
+  wc.on('did-start-loading', () => { webviewLoadStart = Date.now(); });
+  wc.on('did-stop-loading', () => {
+    if (webviewLoadStart) appendLogLine(`[webview] loaded in ${Date.now() - webviewLoadStart}ms`);
+  });
+  wc.on('did-fail-load', (_e, code, desc, url) => {
+    if (code === -3) return; // ERR_ABORTED (normal during redirects)
+    appendLogLine(`[webview] load failed ${code} ${desc} ${url}`);
+  });
   layoutWebView();
   loadCurrentUrl();
 }
@@ -455,6 +471,13 @@ function webviewGoForward() {
 function createWindow() {
   loadState();
 
+  // Bypass OS proxy auto-detection (WPAD). On Windows "Automatically detect
+  // settings" is on by default; with no WPAD server every request waits for that
+  // discovery to time out, which can make pages take minutes to load. Going
+  // direct avoids it. If you actually need a corporate proxy, change mode to
+  // 'system'.
+  session.defaultSession.setProxy({ mode: 'direct' }).catch(() => {});
+
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
     if (permission === 'media') callback(true);
     else callback(false);
@@ -486,6 +509,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       autoplayPolicy: 'no-user-gesture-required',
+      backgroundThrottling: false,
     },
   });
 
@@ -497,9 +521,11 @@ function createWindow() {
   if (state.clickThrough) try { win.setIgnoreMouseEvents(true, { forward: true }); } catch {}
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  // Start loading the site immediately, in parallel with the UI, so it's warm by
+  // the time the user needs it (instead of waiting until the window paints).
+  ensureWebView();
   win.once('ready-to-show', () => {
     win.show();
-    ensureWebView();
   });
 
   win.on('move', () => { saveState(); syncStickyPosition(); });
@@ -869,6 +895,71 @@ async function injectIntoChat(text) {
     }
     return false;
   }
+}
+
+// Live word-by-word injection. Deletes the last `deleteCount` characters from the
+// chat input (to undo revised interim words) then inserts `insertText`. Serialized
+// so rapid streaming edits apply in order.
+let webviewEditQueue = Promise.resolve();
+function webviewEditTail(deleteCount, insertText) {
+  webviewEditQueue = webviewEditQueue.then(() => doWebviewEditTail(deleteCount, insertText));
+  return webviewEditQueue;
+}
+function doWebviewEditTail(deleteCount, insertText) {
+  if (!webView) return Promise.resolve(false);
+  if (!deleteCount && !insertText) return Promise.resolve(true);
+  const code = `(function(del, ins){
+    const selectors=[
+      '#prompt-textarea',
+      'div[contenteditable="true"][role="textbox"]',
+      'div.ProseMirror[contenteditable="true"]',
+      'div[contenteditable="true"][data-testid*="input"]',
+      'textarea[data-testid*="input"]',
+      'textarea[autofocus]',
+      'main textarea',
+      'textarea',
+      '[contenteditable="true"]'
+    ];
+    let el=null;
+    for(const sel of selectors){ const c=document.querySelector(sel); if(c&&c.offsetParent!==null){el=c;break;} }
+    if(!el)return 'no-input';
+    el.focus();
+    if(el.tagName==='TEXTAREA'||el.tagName==='INPUT'){
+      const proto=el.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype;
+      const setter=Object.getOwnPropertyDescriptor(proto,'value').set;
+      const v=el.value||'';
+      const cut=Math.max(0, v.length - del);
+      const nv=v.slice(0,cut)+ins;
+      setter.call(el,nv);
+      el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}));
+      try{el.selectionStart=el.selectionEnd=nv.length;}catch(e){}
+      return 'textarea';
+    } else {
+      const sel=window.getSelection();
+      const r=document.createRange();
+      r.selectNodeContents(el); r.collapse(false); // caret at end
+      sel.removeAllRanges(); sel.addRange(r);
+      // Select the changed tail by extending the selection backward, then
+      // replace it in ONE atomic edit — no per-character delete flicker.
+      for(let i=0;i<del;i++){ try{sel.modify('extend','backward','character');}catch(e){} }
+      if(ins){ document.execCommand('insertText',false,ins); }
+      else if(del>0){ document.execCommand('delete',false); }
+      return 'editable';
+    }
+  })(${deleteCount|0}, ${JSON.stringify(insertText || '')});`;
+  return webView.webContents.executeJavaScript(code).then((r) => {
+    if (r === 'no-input') {
+      const msg = 'No chat input found. Load ChatGPT/Claude and make sure the chat input is in view.';
+      if (lastInjectError !== msg && win) { win.webContents.send('capture-error', msg); lastInjectError = msg; }
+      return false;
+    }
+    if (lastInjectError) lastInjectError = '';
+    return true;
+  }).catch((e) => {
+    const msg = 'Inject error: ' + e.message;
+    if (lastInjectError !== msg && win) { win.webContents.send('capture-error', msg); lastInjectError = msg; }
+    return false;
+  });
 }
 
 async function transcribeDeepgram(wavBuffer, cfg) {
@@ -1645,6 +1736,14 @@ ipcMain.handle('reload-webview', () => reloadWebView());
 ipcMain.handle('set-webview-visible', (_e, visible) => {
   if (webView) webView.setVisible(!!visible);
 });
+ipcMain.handle('get-desktop-source-id', async () => {
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen'] });
+    return sources[0] ? sources[0].id : null;
+  } catch {
+    return null;
+  }
+});
 ipcMain.handle('navigate-url', (_e, url) => navigateToUrl(url));
 ipcMain.handle('webview-back', () => webviewGoBack());
 ipcMain.handle('webview-forward', () => webviewGoForward());
@@ -1665,34 +1764,69 @@ ipcMain.handle('set-transcription-config', (_e, cfg) => {
 });
 ipcMain.handle('transcribe', async (_e, wavArrayBuffer) => enqueueTranscribe(wavArrayBuffer));
 
+let deepgramActive = false;       // true between start and stop of voice
+let deepgramAuth = null;          // { apiKey, language } kept for reconnects
+let deepgramKeepAlive = null;     // interval id
+let deepgramReconnectTimer = null;
+let deepgramReconnectAttempts = 0;
+
+function clearDeepgramTimers() {
+  if (deepgramKeepAlive) { clearInterval(deepgramKeepAlive); deepgramKeepAlive = null; }
+  if (deepgramReconnectTimer) { clearTimeout(deepgramReconnectTimer); deepgramReconnectTimer = null; }
+}
+
+function scheduleDeepgramReconnect() {
+  if (!deepgramActive || deepgramReconnectTimer || deepgramWs) return;
+  const delay = Math.min(5000, 800 * Math.pow(2, deepgramReconnectAttempts));
+  deepgramReconnectAttempts++;
+  appendLogLine(`[deepgram] connection lost — reconnecting in ${delay}ms`);
+  deepgramReconnectTimer = setTimeout(() => {
+    deepgramReconnectTimer = null;
+    if (deepgramActive && !deepgramWs && deepgramAuth) {
+      startDeepgramWs(deepgramAuth.apiKey, deepgramAuth.language);
+    }
+  }, delay);
+}
+
 function startDeepgramWs(apiKey, language) {
   if (deepgramWs) return;
   const params = new URLSearchParams({
     encoding: 'linear16',
     sample_rate: '16000', channels: '1',
     smart_format: 'true', interim_results: 'true',
-    endpointing: '150', no_delay: 'true', utterance_end_ms: '1000',
+    // VAD + utterance-end events for smoother, more natural finalization.
+    vad_events: 'true', endpointing: '150', no_delay: 'true', utterance_end_ms: '1500',
   });
-  // Deepgram's streaming API does NOT support `detect_language` (pre-recorded
-  // only) — sending it returns HTTP 400. For "auto" use nova-3's real-time
-  // multilingual mode (`language=multi`); for a specific language, nova-2 has
-  // the broadest per-language streaming coverage.
-  if (language && language !== 'auto') {
-    params.set('model', 'nova-2');
-    params.set('language', language);
-  } else {
-    params.set('model', 'nova-3');
-    params.set('language', 'multi');
-  }
+  // nova-2 with a known language is the most accurate streaming setup (matches
+  // the reference project). Default to English; honor an explicit language pick.
+  // We avoid nova-3 'multi' — multilingual mode is noticeably worse for English.
+  params.set('model', 'nova-2');
+  params.set('language', (language && language !== 'auto') ? language : 'en-US');
 
   deepgramWs = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, {
     headers: { Authorization: `Token ${apiKey}` },
   });
   let handshakeFailed = false;
-  deepgramWs.on('open', () => appendLogLine('[deepgram] connected'));
+  deepgramWs.on('open', () => {
+    appendLogLine('[deepgram] connected');
+    deepgramReconnectAttempts = 0;
+    // Periodic KeepAlive so Deepgram doesn't idle-close the socket during brief
+    // silences or throttle gaps (it drops connections after ~10s of no audio).
+    if (deepgramKeepAlive) clearInterval(deepgramKeepAlive);
+    deepgramKeepAlive = setInterval(() => {
+      if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) {
+        try { deepgramWs.send(JSON.stringify({ type: 'KeepAlive' })); } catch {}
+      }
+    }, 7000);
+  });
   deepgramWs.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
+      if (msg.type === 'UtteranceEnd') {
+        // Speech-gap boundary — tells the renderer to flush any pending interim.
+        if (win && !win.isDestroyed()) win.webContents.send('transcript-utterance-end');
+        return;
+      }
       if (msg.type !== 'Results') return;
       const text = (msg.channel?.alternatives?.[0]?.transcript || '').trim();
       if (!text) return;
@@ -1712,6 +1846,10 @@ function startDeepgramWs(apiKey, language) {
       const msg = friendlyDeepgramError(res.statusCode, detail);
       appendLogLine(`[deepgram] handshake ${res.statusCode}: ${body.slice(0, 200)}`);
       if (win && !win.isDestroyed()) win.webContents.send('transcript-live-error', msg);
+      // A handshake rejection (bad key / params / no credits) won't fix itself —
+      // stop so we don't reconnect-loop against a 401.
+      deepgramActive = false;
+      clearDeepgramTimers();
       try { if (deepgramWs) deepgramWs.terminate(); } catch {}
       deepgramWs = null;
     });
@@ -1719,10 +1857,13 @@ function startDeepgramWs(apiKey, language) {
   deepgramWs.on('error', (e) => {
     if (handshakeFailed) return; // friendlier message already sent above
     appendLogLine('[deepgram] error: ' + e.message);
-    if (win && !win.isDestroyed()) win.webContents.send('transcript-live-error', e.message);
-    deepgramWs = null;
   });
-  deepgramWs.on('close', () => { deepgramWs = null; });
+  deepgramWs.on('close', () => {
+    if (deepgramKeepAlive) { clearInterval(deepgramKeepAlive); deepgramKeepAlive = null; }
+    deepgramWs = null;
+    // If the user is still recording, transparently reconnect.
+    if (deepgramActive && !handshakeFailed) scheduleDeepgramReconnect();
+  });
 }
 
 function friendlyDeepgramError(status, detail) {
@@ -1745,12 +1886,18 @@ function friendlyDeepgramError(status, detail) {
 }
 
 ipcMain.handle('start-deepgram-stream', (_e, { apiKey, language }) => {
+  deepgramActive = true;
+  deepgramAuth = { apiKey, language };
+  deepgramReconnectAttempts = 0;
+  clearDeepgramTimers();
   startDeepgramWs(apiKey, language);
 });
 ipcMain.handle('stop-deepgram-stream', () => {
+  deepgramActive = false;        // prevents the close handler from reconnecting
+  clearDeepgramTimers();
   if (deepgramWs) {
     try { deepgramWs.send(JSON.stringify({ type: 'CloseStream' })); } catch {}
-    deepgramWs.close();
+    try { deepgramWs.close(); } catch {}
     deepgramWs = null;
   }
 });
@@ -1781,6 +1928,7 @@ ipcMain.handle('save-session-log', async () => {
 
 ipcMain.handle('paste-text', (_e, text) => pasteToForeground(text));
 ipcMain.handle('inject-to-webview', (_e, text) => injectIntoChat(text));
+ipcMain.handle('webview-edit-tail', (_e, { deleteCount, insert }) => webviewEditTail(deleteCount || 0, insert || ''));
 ipcMain.handle('pick-file', async (_e, kind) => {
   const filters = kind === 'exe'
     ? [{ name: 'Executable', extensions: ['exe'] }]

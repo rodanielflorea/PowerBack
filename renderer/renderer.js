@@ -1233,34 +1233,86 @@ window.api.onSelectorClosed(() => {
 });
 
 let interimEl = null;
+let injectedSegment = ""; // chars of the in-progress segment currently in the input
+
 function clearInterimPreview() {
   if (interimEl) {
     interimEl.remove();
     interimEl = null;
   }
 }
-// Deepgram streams speculative interim hypotheses that it keeps revising, then a
-// stable `is_final` result per segment. We inject ONLY the finals ("the exact
-// ones") into the AI input — interim guesses are shown as a live preview but
-// never committed, so a revised word can't leave wrong text behind. The preview
-// is replaced by the corrected final when it arrives.
+function showInterimPreview(text) {
+  if (!interimEl) {
+    interimEl = document.createElement("div");
+    interimEl.className = "log-entry log-interim";
+    logBody.appendChild(interimEl);
+  }
+  interimEl.textContent = "⟳ " + text;
+  logBody.scrollTop = logBody.scrollHeight;
+}
+function commonPrefixLen(a, b) {
+  const n = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < n && a[i] === b[i]) i++;
+  return i;
+}
+// Stream the transcript into the AI input word-by-word as you speak. Each update
+// edits only the TAIL that changed: when Deepgram revises a word we delete the
+// wrong tail and retype it, so the box always reflects Deepgram's best current
+// guess and self-corrects — instead of dumping a whole finalized block at once.
+function streamSegment(text, isFinal) {
+  const common = commonPrefixLen(injectedSegment, text);
+  const deleteCount = injectedSegment.length - common;
+  const insert = text.slice(common);
+  if (deleteCount > 0 || insert) window.api.webviewEditTail(deleteCount, insert);
+  injectedSegment = text;
+  if (isFinal) {
+    window.api.webviewEditTail(0, " "); // lock the segment with a trailing space
+    injectedSegment = "";
+  }
+}
+// Coalesce the stream of interim hypotheses to a steady ~12fps so the input
+// updates smoothly (like a live caption) instead of stuttering on every packet.
+let pendingInterim = null;
+let interimFlushTimer = null;
+const CAPTION_FLUSH_MS = 80;
+function scheduleInterimFlush() {
+  if (interimFlushTimer) return;
+  interimFlushTimer = setTimeout(() => {
+    interimFlushTimer = null;
+    if (pendingInterim != null) {
+      const t = pendingInterim;
+      pendingInterim = null;
+      streamSegment(t, false);
+      showInterimPreview(t);
+    }
+  }, CAPTION_FLUSH_MS);
+}
 window.api.onTranscriptLive(({ text, isFinal }) => {
   if (!text) return;
   if (isFinal) {
-    const finalText = text.trim();
+    // Apply finals immediately; drop any queued interim (the final supersedes it).
+    if (interimFlushTimer) { clearTimeout(interimFlushTimer); interimFlushTimer = null; }
+    pendingInterim = null;
+    streamSegment(text, true);
     clearInterimPreview();
-    if (!finalText) return;
-    log(finalText);
-    window.api.injectToWebview(finalText + " ");
+    log(text.trim());
   } else {
-    if (!interimEl) {
-      interimEl = document.createElement("div");
-      interimEl.className = "log-entry log-interim";
-      logBody.appendChild(interimEl);
-    }
-    interimEl.textContent = "⟳ " + text;
-    logBody.scrollTop = logBody.scrollHeight;
+    pendingInterim = text;
+    scheduleInterimFlush();
   }
+});
+// Utterance boundary (vad_events): close out a segment that never got a final so
+// trailing words aren't left hanging, and clear the live preview.
+window.api.onUtteranceEnd(() => {
+  // Apply any queued interim before closing the segment so words aren't lost.
+  if (interimFlushTimer) { clearTimeout(interimFlushTimer); interimFlushTimer = null; }
+  if (pendingInterim != null) { streamSegment(pendingInterim, false); pendingInterim = null; }
+  if (injectedSegment) {
+    window.api.webviewEditTail(0, " ");
+    injectedSegment = "";
+  }
+  clearInterimPreview();
 });
 window.api.onTranscriptLiveError((msg) => {
   log("Deepgram error: " + msg, "err");
@@ -1369,19 +1421,18 @@ async function startVoice() {
 
     if (txCfg.captureMic !== false) {
       try {
+        // Match the reference project: clean the mic with echo cancellation and
+        // noise suppression — this measurably improves recognition accuracy.
+        const baseAudio = {
+          echoCancellation: true,
+          noiseSuppression: true,
+          channelCount: 1,
+        };
         const constraints = {
           audio: txCfg.micDeviceId
-            ? {
-                deviceId: { exact: txCfg.micDeviceId },
-                echoCancellation: false,
-                noiseSuppression: false,
-                autoGainControl: false,
-              }
-            : {
-                echoCancellation: false,
-                noiseSuppression: false,
-                autoGainControl: false,
-              },
+            ? { ...baseAudio, deviceId: { exact: txCfg.micDeviceId } }
+            : baseAudio,
+          video: false,
         };
         const mic = await navigator.mediaDevices.getUserMedia(constraints);
         streams.push(mic);
@@ -1393,24 +1444,50 @@ async function startVoice() {
     }
 
     if (txCfg.captureSystem !== false) {
-      try {
-        const sys = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: true,
-        });
-        sys.getVideoTracks().forEach((t) => t.stop());
-        const audioTracks = sys.getAudioTracks();
+      const attachSystemAudio = (stream, label) => {
+        stream.getVideoTracks().forEach((t) => t.stop());
+        const audioTracks = stream.getAudioTracks();
         if (audioTracks.length > 0) {
-          streams.push(sys);
-          ctx
-            .createMediaStreamSource(new MediaStream(audioTracks))
-            .connect(dest);
-          log("System audio capture started", "info");
-        } else {
-          log("System audio: no audio track returned", "err");
+          streams.push(stream);
+          ctx.createMediaStreamSource(new MediaStream(audioTracks)).connect(dest);
+          log("System audio capture started" + label, "info");
+          return true;
         }
+        stream.getTracks().forEach((t) => t.stop());
+        return false;
+      };
+      let sysOk = false;
+      // Primary: WASAPI loopback via chromeMediaSource:'desktop' (more reliable).
+      try {
+        const sourceId = await window.api.getDesktopSourceId();
+        if (!sourceId) throw new Error("no desktop source");
+        const sys = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: sourceId },
+          },
+          video: {
+            mandatory: {
+              chromeMediaSource: "desktop",
+              chromeMediaSourceId: sourceId,
+              maxWidth: 1,
+              maxHeight: 1,
+              maxFrameRate: 1,
+            },
+          },
+        });
+        sysOk = attachSystemAudio(sys, " (loopback)");
       } catch (e) {
-        log("System audio failed: " + e.message, "err");
+        log("System loopback failed (" + e.message + "); trying display capture…", "info");
+      }
+      // Fallback: the previous getDisplayMedia path.
+      if (!sysOk) {
+        try {
+          const sys = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+          sysOk = attachSystemAudio(sys, "");
+          if (!sysOk) log("System audio: no audio track returned", "err");
+        } catch (e) {
+          log("System audio failed: " + e.message, "err");
+        }
       }
     }
 
