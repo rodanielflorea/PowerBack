@@ -928,6 +928,32 @@ if (promptNewBtn)
   });
 if (promptRailBtn)
   promptRailBtn.addEventListener("click", () => window.api.showPromptMenu());
+
+const promptExportBtn = document.getElementById("promptExportBtn");
+const promptImportBtn = document.getElementById("promptImportBtn");
+const promptIoStatusEl = document.getElementById("promptIoStatus");
+function setPromptIoStatus(msg) {
+  if (promptIoStatusEl) promptIoStatusEl.textContent = msg || "";
+}
+if (promptExportBtn)
+  promptExportBtn.addEventListener("click", async () => {
+    setPromptIoStatus("Exporting…");
+    const r = await window.api.exportPrompts();
+    if (r && r.ok) setPromptIoStatus(`Exported ${r.count} prompt(s).`);
+    else if (r && r.canceled) setPromptIoStatus("");
+    else setPromptIoStatus("Export failed: " + ((r && r.error) || "error"));
+  });
+if (promptImportBtn)
+  promptImportBtn.addEventListener("click", async () => {
+    setPromptIoStatus("Importing…");
+    const r = await window.api.importPrompts();
+    if (r && r.ok) {
+      renderPrompts(r.prompts);
+      setPromptIoStatus(`Imported ${r.added}${r.skipped ? `, skipped ${r.skipped} duplicate(s)` : ""}.`);
+    } else if (r && r.canceled) setPromptIoStatus("");
+    else setPromptIoStatus("Import failed: " + ((r && r.error) || "error"));
+  });
+
 if (window.api && window.api.getPrompts) window.api.getPrompts().then(renderPrompts);
 
 if (window.api && window.api.onUpdaterStatus) {

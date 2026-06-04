@@ -95,6 +95,8 @@ contextBridge.exposeInMainWorld('api', {
   deletePrompt: (id) => ipcRenderer.invoke('delete-prompt', id),
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
   showPromptMenu: () => ipcRenderer.invoke('show-prompt-menu'),
+  exportPrompts: () => ipcRenderer.invoke('prompts-export'),
+  importPrompts: () => ipcRenderer.invoke('prompts-import'),
   startDeepgramStream: (cfg) => ipcRenderer.invoke('start-deepgram-stream', cfg),
   stopDeepgramStream: () => ipcRenderer.invoke('stop-deepgram-stream'),
   sendAudioChunk: (buf) => ipcRenderer.send('audio-chunk', buf),

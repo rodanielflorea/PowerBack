@@ -2045,6 +2045,56 @@ function showPromptMenu() {
   Menu.buildFromTemplate(items).popup({ window: win });
 }
 ipcMain.handle('show-prompt-menu', () => showPromptMenu());
+
+function importPromptsList(list) {
+  if (!Array.isArray(state.prompts)) state.prompts = [];
+  let added = 0, skipped = 0;
+  for (const p of (Array.isArray(list) ? list : [])) {
+    if (!p || typeof p.text !== 'string' || !p.text.trim()) { skipped++; continue; }
+    const text = p.text;
+    const title = (p.title || '').trim() || text.trim().split('\n')[0].slice(0, 40) || 'Untitled';
+    // Skip exact duplicates so re-importing the same file doesn't pile up copies.
+    if (state.prompts.some((q) => q.title === title && q.text === text)) { skipped++; continue; }
+    const id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    state.prompts.push({ id, title, text });
+    added++;
+  }
+  saveState();
+  return { added, skipped };
+}
+
+ipcMain.handle('prompts-export', async () => {
+  try {
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Export prompts',
+      defaultPath: path.join(app.getPath('desktop'), `ace-prompts-${new Date().toISOString().slice(0, 10)}.json`),
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+    await fs.promises.writeFile(r.filePath, JSON.stringify(state.prompts || [], null, 2), 'utf8');
+    return { ok: true, count: (state.prompts || []).length };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('prompts-import', async () => {
+  try {
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Import prompts',
+      properties: ['openFile'],
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (r.canceled || !r.filePaths || !r.filePaths[0]) return { ok: false, canceled: true };
+    const raw = await fs.promises.readFile(r.filePaths[0], 'utf8');
+    let list;
+    try { list = JSON.parse(raw); } catch { return { ok: false, error: 'Not a valid prompts JSON file' }; }
+    const { added, skipped } = importPromptsList(list);
+    return { ok: true, added, skipped, prompts: (state.prompts || []).slice() };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
 ipcMain.handle('pick-file', async (_e, kind) => {
   const filters = kind === 'exe'
     ? [{ name: 'Executable', extensions: ['exe'] }]
