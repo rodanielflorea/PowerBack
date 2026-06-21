@@ -27,17 +27,10 @@ const setupCaptureLanguage = document.getElementById("setupCaptureLanguage");
 const setupCapturePollMs = document.getElementById("setupCapturePollMs");
 
 const setupEngineDeepgram = document.getElementById("setupEngineDeepgram");
-const setupEngineLocal = document.getElementById("setupEngineLocal");
+const setupEngineXai = document.getElementById("setupEngineXai");
 const setupDeepgramKey = document.getElementById("setupDeepgramKey");
-const setupWhisperExe = document.getElementById("setupWhisperExe");
-const setupWhisperExeBrowse = document.getElementById("setupWhisperExeBrowse");
-const setupWhisperModel = document.getElementById("setupWhisperModel");
-const setupWhisperModelBrowse = document.getElementById(
-  "setupWhisperModelBrowse",
-);
+const setupXaiKey = document.getElementById("setupXaiKey");
 const setupVoiceLanguage = document.getElementById("setupVoiceLanguage");
-const setupChunkSecondsRange = document.getElementById("setupChunkSecondsRange");
-const setupChunkSecondsValue = document.getElementById("setupChunkSecondsValue");
 const setupMicSelect = document.getElementById("setupMicSelect");
 const setupCaptureMic = document.getElementById("setupCaptureMic");
 const setupCaptureSystem = document.getElementById("setupCaptureSystem");
@@ -62,53 +55,10 @@ const micSelect = document.getElementById("micSelect");
 const captureMicEl = document.getElementById("captureMic");
 const captureSystemEl = document.getElementById("captureSystem");
 const engineDeepgram = document.getElementById("engineDeepgram");
-const engineLocal = document.getElementById("engineLocal");
+const engineXai = document.getElementById("engineXai");
 const deepgramKeyEl = document.getElementById("deepgramKey");
-const whisperExeEl = document.getElementById("whisperExe");
-const whisperExeBrowse = document.getElementById("whisperExeBrowse");
-const whisperModelEl = document.getElementById("whisperModel");
-const whisperModelBrowse = document.getElementById("whisperModelBrowse");
+const xaiKeyEl = document.getElementById("xaiKey");
 const languageSelect = document.getElementById("languageSelect");
-const chunkSecondsRange = document.getElementById("chunkSecondsRange");
-const chunkSecondsValue = document.getElementById("chunkSecondsValue");
-const chunkSecondsField = document.getElementById("chunkSecondsField");
-const setupChunkSecondsField = document.getElementById("setupChunkSecondsField");
-const chunkRailBtn = document.getElementById("chunkRailBtn");
-const chunkRailValue = document.getElementById("chunkRailValue");
-let chunkSecondsRuntime = 3.0;
-
-function isWhisperEngine() {
-  return (txCfg && txCfg.engine === "local");
-}
-
-function updateChunkUiVisibility() {
-  const whisper = isWhisperEngine();
-  if (chunkSecondsField) chunkSecondsField.hidden = !whisper;
-  if (setupChunkSecondsField) setupChunkSecondsField.hidden = !whisper;
-  updateChunkRail();
-}
-
-function updateChunkRail() {
-  if (!chunkRailBtn) return;
-  const isVoice = mode === "voice";
-  chunkRailBtn.hidden = !isVoice || !isWhisperEngine();
-  if (chunkRailValue) chunkRailValue.textContent = chunkSecondsRuntime.toFixed(1);
-}
-function setChunkSecondsEverywhere(v) {
-  const clamped = Math.max(1, Math.min(10, parseFloat(v) || 3));
-  chunkSecondsRuntime = clamped;
-  if (chunkSecondsRange) chunkSecondsRange.value = String(clamped);
-  if (chunkSecondsValue) chunkSecondsValue.textContent = clamped.toFixed(1);
-  if (setupChunkSecondsRange) setupChunkSecondsRange.value = String(clamped);
-  if (setupChunkSecondsValue) setupChunkSecondsValue.textContent = clamped.toFixed(1);
-  if (chunkRailValue) chunkRailValue.textContent = clamped.toFixed(1);
-}
-if (chunkRailBtn) {
-  chunkRailBtn.addEventListener("click", () => {
-    if (typeof openSettings === "function") openSettings();
-    if (typeof activateTab === "function") activateTab("voice");
-  });
-}
 
 const captureRectEl = document.getElementById("captureRect");
 const selectAreaBtn = document.getElementById("selectAreaBtn");
@@ -369,31 +319,33 @@ setupCapturePollMs.addEventListener("change", () => {
     window.api.setCaptureConfig({ pollMs: v });
 });
 
+function updateSetupEngineBlocks(engine) {
+  const dg = document.getElementById("setupDeepgramBlock");
+  const xa = document.getElementById("setupXaiBlock");
+  if (dg) dg.hidden = engine !== "deepgram";
+  if (xa) xa.hidden = engine !== "xai";
+}
+
 setupEngineDeepgram.addEventListener("change", () => {
   if (!setupEngineDeepgram.checked) return;
   txCfg = { ...(txCfg || {}), engine: "deepgram" };
   window.api.setTranscriptionConfig({ engine: "deepgram" });
-  updateChunkUiVisibility();
+  updateSetupEngineBlocks("deepgram");
 });
-setupEngineLocal.addEventListener("change", () => {
-  if (!setupEngineLocal.checked) return;
-  txCfg = { ...(txCfg || {}), engine: "local" };
-  window.api.setTranscriptionConfig({ engine: "local" });
-  updateChunkUiVisibility();
+if (setupEngineXai) setupEngineXai.addEventListener("change", () => {
+  if (!setupEngineXai.checked) return;
+  txCfg = { ...(txCfg || {}), engine: "xai" };
+  window.api.setTranscriptionConfig({ engine: "xai" });
+  updateSetupEngineBlocks("xai");
 });
 setupDeepgramKey.addEventListener("change", () =>
   window.api.setTranscriptionConfig({
     deepgramApiKey: setupDeepgramKey.value.trim(),
   }),
 );
-setupWhisperExe.addEventListener("change", () =>
+if (setupXaiKey) setupXaiKey.addEventListener("change", () =>
   window.api.setTranscriptionConfig({
-    whisperExe: setupWhisperExe.value.trim(),
-  }),
-);
-setupWhisperModel.addEventListener("change", () =>
-  window.api.setTranscriptionConfig({
-    whisperModel: setupWhisperModel.value.trim(),
+    xaiApiKey: setupXaiKey.value.trim(),
   }),
 );
 setupVoiceLanguage.addEventListener("change", () =>
@@ -410,25 +362,6 @@ setupCaptureSystem.addEventListener("change", () =>
 setupMicSelect.addEventListener("change", () =>
   window.api.setTranscriptionConfig({ micDeviceId: setupMicSelect.value }),
 );
-if (setupChunkSecondsRange) {
-  setupChunkSecondsRange.addEventListener("input", () => setChunkSecondsEverywhere(setupChunkSecondsRange.value));
-  setupChunkSecondsRange.addEventListener("change", () => window.api.setTranscriptionConfig({ chunkSeconds: chunkSecondsRuntime }));
-}
-
-setupWhisperExeBrowse.addEventListener("click", async () => {
-  const p = await window.api.pickFile("exe");
-  if (p) {
-    setupWhisperExe.value = p;
-    window.api.setTranscriptionConfig({ whisperExe: p });
-  }
-});
-setupWhisperModelBrowse.addEventListener("click", async () => {
-  const p = await window.api.pickFile("model");
-  if (p) {
-    setupWhisperModel.value = p;
-    window.api.setTranscriptionConfig({ whisperModel: p });
-  }
-});
 
 setupMaxSupporters.addEventListener("change", () => {
   const n = parseInt(setupMaxSupporters.value, 10);
@@ -462,16 +395,14 @@ async function refreshSetupUI() {
 
   const tx = await window.api.getTranscriptionConfig();
   txCfg = tx;
-  setupEngineDeepgram.checked = tx.engine !== "local";
-  setupEngineLocal.checked = tx.engine === "local";
+  setupEngineDeepgram.checked = tx.engine !== "xai";
+  if (setupEngineXai) setupEngineXai.checked = tx.engine === "xai";
   setupDeepgramKey.value = tx.deepgramApiKey || "";
-  setupWhisperExe.value = tx.whisperExe || "";
-  setupWhisperModel.value = tx.whisperModel || "";
+  if (setupXaiKey) setupXaiKey.value = tx.xaiApiKey || "";
+  updateSetupEngineBlocks(tx.engine);
   setupVoiceLanguage.value = tx.language || "auto";
   setupCaptureMic.checked = tx.captureMic !== false;
   setupCaptureSystem.checked = tx.captureSystem !== false;
-  setChunkSecondsEverywhere(tx.chunkSeconds);
-  updateChunkUiVisibility();
 
   const cap = await window.api.getCaptureConfig();
   capCfg = cap;
@@ -1063,7 +994,6 @@ async function refreshModeUI() {
   updateRecTitle();
   updateTabVisibility(mode);
   updateModeToggleBtn();
-  updateChunkRail();
 }
 
 function updateTabVisibility(activeMode) {
@@ -1100,18 +1030,24 @@ modeCaption.addEventListener("change", async () => {
   }
 });
 
+// Show only the key field that belongs to the selected engine.
+function updateEngineBlocks(engine) {
+  const dg = document.getElementById("deepgramBlock");
+  const xa = document.getElementById("xaiBlock");
+  if (dg) dg.hidden = engine !== "deepgram";
+  if (xa) xa.hidden = engine !== "xai";
+}
+
 async function refreshTranscriptionUI() {
   txCfg = await window.api.getTranscriptionConfig();
-  engineDeepgram.checked = txCfg.engine !== "local";
-  engineLocal.checked = txCfg.engine === "local";
+  engineDeepgram.checked = txCfg.engine !== "xai";
+  if (engineXai) engineXai.checked = txCfg.engine === "xai";
   deepgramKeyEl.value = txCfg.deepgramApiKey || "";
-  whisperExeEl.value = txCfg.whisperExe || "";
-  whisperModelEl.value = txCfg.whisperModel || "";
+  if (xaiKeyEl) xaiKeyEl.value = txCfg.xaiApiKey || "";
   languageSelect.value = txCfg.language || "auto";
   captureMicEl.checked = txCfg.captureMic !== false;
   captureSystemEl.checked = txCfg.captureSystem !== false;
-  setChunkSecondsEverywhere(txCfg.chunkSeconds);
-  updateChunkUiVisibility();
+  updateEngineBlocks(txCfg.engine);
 }
 
 async function persistTx(patch) {
@@ -1122,21 +1058,18 @@ async function persistTx(patch) {
 engineDeepgram.addEventListener("change", () => {
   if (!engineDeepgram.checked) return;
   persistTx({ engine: "deepgram" });
-  updateChunkUiVisibility();
+  updateEngineBlocks("deepgram");
 });
-engineLocal.addEventListener("change", () => {
-  if (!engineLocal.checked) return;
-  persistTx({ engine: "local" });
-  updateChunkUiVisibility();
+if (engineXai) engineXai.addEventListener("change", () => {
+  if (!engineXai.checked) return;
+  persistTx({ engine: "xai" });
+  updateEngineBlocks("xai");
 });
 deepgramKeyEl.addEventListener("change", () =>
   persistTx({ deepgramApiKey: deepgramKeyEl.value.trim() }),
 );
-whisperExeEl.addEventListener("change", () =>
-  persistTx({ whisperExe: whisperExeEl.value.trim() }),
-);
-whisperModelEl.addEventListener("change", () =>
-  persistTx({ whisperModel: whisperModelEl.value.trim() }),
+if (xaiKeyEl) xaiKeyEl.addEventListener("change", () =>
+  persistTx({ xaiApiKey: xaiKeyEl.value.trim() }),
 );
 languageSelect.addEventListener("change", () =>
   persistTx({ language: languageSelect.value }),
@@ -1150,25 +1083,6 @@ captureSystemEl.addEventListener("change", () =>
 micSelect.addEventListener("change", () =>
   persistTx({ micDeviceId: micSelect.value }),
 );
-if (chunkSecondsRange) {
-  chunkSecondsRange.addEventListener("input", () => setChunkSecondsEverywhere(chunkSecondsRange.value));
-  chunkSecondsRange.addEventListener("change", () => persistTx({ chunkSeconds: chunkSecondsRuntime }));
-}
-
-whisperExeBrowse.addEventListener("click", async () => {
-  const p = await window.api.pickFile("exe");
-  if (p) {
-    whisperExeEl.value = p;
-    persistTx({ whisperExe: p });
-  }
-});
-whisperModelBrowse.addEventListener("click", async () => {
-  const p = await window.api.pickFile("model");
-  if (p) {
-    whisperModelEl.value = p;
-    persistTx({ whisperModel: p });
-  }
-});
 
 async function refreshCaptureUI() {
   capCfg = await window.api.getCaptureConfig();
@@ -1489,8 +1403,8 @@ window.api.onUtteranceEnd(() => {
   clearInterimPreview();
 });
 window.api.onTranscriptLiveError((msg) => {
-  log("Deepgram error: " + msg, "err");
-  if (recState && recState.deepgram) {
+  log("Transcription error: " + msg, "err");
+  if (recState && recState.streaming) {
     recState = null;
     recBtn.classList.remove("on");
     updateRecTitle();
@@ -1578,16 +1492,19 @@ async function startVoice() {
   if (recState) return;
   txCfg = await window.api.getTranscriptionConfig();
 
-  if (txCfg.engine === "deepgram") {
-    if (!txCfg.deepgramApiKey) {
-      log("Deepgram API key not set", "err");
+  if (txCfg.engine === "deepgram" || txCfg.engine === "xai") {
+    const isXai = txCfg.engine === "xai";
+    const apiKey = isXai ? txCfg.xaiApiKey : txCfg.deepgramApiKey;
+    const label = isXai ? "xAI" : "Deepgram";
+    if (!apiKey) {
+      log(`${label} API key not set`, "err");
       return;
     }
 
-    await window.api.startDeepgramStream({
-      apiKey: txCfg.deepgramApiKey,
-      language: txCfg.language || "auto",
-    });
+    const startStream = isXai
+      ? window.api.startXaiStream
+      : window.api.startDeepgramStream;
+    await startStream({ apiKey, language: txCfg.language || "auto" });
 
     const ctx = new AudioContext({ sampleRate: 16000 });
     const dest = ctx.createMediaStreamDestination();
@@ -1687,156 +1604,29 @@ async function startVoice() {
       window.api.sendAudioChunk(e.data);
     };
 
-    recState = { ctx, streams, processor, deepgram: true };
+    recState = { ctx, streams, processor, streaming: true, xai: isXai };
     recBtn.classList.add("on");
     updateRecTitle();
-    log("Voice transcription started (Deepgram live)", "info");
+    log(`Voice transcription started (${label} live)`, "info");
     return;
   }
 
-  return startVoiceChunked();
-}
-
-async function startVoiceChunked() {
-  const ctx = new AudioContext();
-  const dest = ctx.createMediaStreamDestination();
-  const streams = [];
-  const sources = [];
-
-  if (txCfg.captureMic !== false) {
-    try {
-      const constraints = {
-        audio: txCfg.micDeviceId
-          ? {
-              deviceId: { exact: txCfg.micDeviceId },
-              echoCancellation: true,
-              noiseSuppression: true,
-            }
-          : { echoCancellation: true, noiseSuppression: true },
-      };
-      const mic = await navigator.mediaDevices.getUserMedia(constraints);
-      streams.push(mic);
-      const src = ctx.createMediaStreamSource(mic);
-      const g = ctx.createGain();
-      g.gain.value = 1.0;
-      src.connect(g).connect(dest);
-      sources.push(src);
-      log("Mic capture started", "info");
-    } catch (e) {
-      log("Mic capture failed: " + e.message, "err");
-    }
-  }
-
-  if (txCfg.captureSystem !== false) {
-    try {
-      const sys = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: true,
-      });
-      sys.getVideoTracks().forEach((t) => t.stop());
-      const audioOnly = new MediaStream(sys.getAudioTracks());
-      if (audioOnly.getAudioTracks().length === 0) {
-        log("System loopback returned no audio track", "err");
-      } else {
-        streams.push(sys);
-        const src = ctx.createMediaStreamSource(audioOnly);
-        const g = ctx.createGain();
-        g.gain.value = 1.0;
-        src.connect(g).connect(dest);
-        sources.push(src);
-        log("System loopback started", "info");
-      }
-    } catch (e) {
-      log("System loopback failed: " + e.message, "err");
-    }
-  }
-
-  if (sources.length === 0) {
-    log("No audio sources — aborting", "err");
-    ctx.close();
-    return;
-  }
-
-  const sampleRate = ctx.sampleRate;
-  try {
-    await ctx.audioWorklet.addModule("audio-capture-worklet.js");
-  } catch (e) {
-    log("AudioWorklet load failed: " + e.message, "err");
-    streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
-    try { await ctx.close(); } catch {}
-    return;
-  }
-  const processor = new AudioWorkletNode(ctx, "capture-processor", {
-    numberOfInputs: 1,
-    numberOfOutputs: 1,
-    outputChannelCount: [1],
-    processorOptions: {
-      format: "float32",
-      batchSize: Math.max(128, Math.round(sampleRate * 0.1)),
-    },
-  });
-  const mixSource = ctx.createMediaStreamSource(dest.stream);
-  mixSource.connect(processor);
-  const sink = ctx.createGain();
-  sink.gain.value = 0;
-  processor.connect(sink).connect(ctx.destination);
-
-  let buffered = [];
-  let bufferedLen = 0;
-  const initialCs = Math.max(1, Math.min(10, parseFloat(txCfg.chunkSeconds) || 3));
-  chunkSecondsRuntime = initialCs;
-
-  processor.port.onmessage = (e) => {
-    const data = new Float32Array(e.data);
-    buffered.push(data);
-    bufferedLen += data.length;
-    const targetSamples = sampleRate * chunkSecondsRuntime;
-    if (bufferedLen >= targetSamples) {
-      const samples = flatten(buffered, bufferedLen);
-      buffered = [];
-      bufferedLen = 0;
-      const mono16k = downsampleTo16k(samples, sampleRate);
-      if (!isSilent(mono16k)) {
-        const wav = encodeWav(mono16k, 16000);
-        runTranscription(wav).catch((err) =>
-          log("Transcribe error: " + err.message, "err"),
-        );
-      }
-    }
-  };
-
-  recState = { ctx, streams, processor };
-  recBtn.classList.add("on");
-  updateRecTitle();
-  log("Voice transcription started (engine: " + txCfg.engine + ")", "info");
+  log("Unknown transcription engine: " + txCfg.engine, "err");
 }
 
 async function stopVoice() {
   if (!recState) return;
-  if (recState.deepgram) {
-    try {
-      recState.processor.disconnect();
-    } catch {}
-    recState.streams.forEach((s) =>
-      s.getTracks ? s.getTracks().forEach((t) => t.stop()) : null,
-    );
-    try {
-      await recState.ctx.close();
-    } catch {}
-    await window.api.stopDeepgramStream();
-    recState = null;
-    recBtn.classList.remove("on");
-    updateRecTitle();
-    log("Voice transcription stopped", "info");
-    return;
-  }
   try {
     recState.processor.disconnect();
   } catch {}
-  recState.streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+  recState.streams.forEach((s) =>
+    s.getTracks ? s.getTracks().forEach((t) => t.stop()) : null,
+  );
   try {
     await recState.ctx.close();
   } catch {}
+  if (recState.xai) await window.api.stopXaiStream();
+  else await window.api.stopDeepgramStream();
   recState = null;
   recBtn.classList.remove("on");
   updateRecTitle();
@@ -1881,46 +1671,6 @@ recBtn.addEventListener("click", async () => {
     else startVoice();
   }
 });
-
-async function runTranscription(wavBuf) {
-  const text = await window.api.transcribe(wavBuf);
-  if (text && text.trim()) {
-    log(text);
-    await window.api.injectToWebview(text + " ");
-  }
-}
-
-function flatten(chunks, total) {
-  const out = new Float32Array(total);
-  let off = 0;
-  for (const c of chunks) {
-    out.set(c, off);
-    off += c.length;
-  }
-  return out;
-}
-
-function downsampleTo16k(samples, sourceRate) {
-  if (sourceRate === 16000) return samples;
-  const ratio = sourceRate / 16000;
-  const newLength = Math.floor(samples.length / ratio);
-  const result = new Float32Array(newLength);
-  for (let i = 0; i < newLength; i++) {
-    const idx = i * ratio;
-    const i0 = Math.floor(idx);
-    const i1 = Math.min(i0 + 1, samples.length - 1);
-    const frac = idx - i0;
-    result[i] = samples[i0] * (1 - frac) + samples[i1] * frac;
-  }
-  return result;
-}
-
-function isSilent(samples) {
-  let sum = 0;
-  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
-  const rms = Math.sqrt(sum / samples.length);
-  return rms < 0.005;
-}
 
 let netCfg = null;
 
@@ -2681,34 +2431,6 @@ window.api.onSignaling((msg) => {
     log("Network: connected as supporter (peer id " + msg.id + ")", "info");
   }
 });
-
-function encodeWav(samples, sampleRate) {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
-  const view = new DataView(buffer);
-  const writeStr = (off, s) => {
-    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
-  };
-  writeStr(0, "RIFF");
-  view.setUint32(4, 36 + samples.length * 2, true);
-  writeStr(8, "WAVE");
-  writeStr(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeStr(36, "data");
-  view.setUint32(40, samples.length * 2, true);
-  let off = 44;
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-    off += 2;
-  }
-  return buffer;
-}
 
 const chatMainEl = document.getElementById("chatMain");
 const chatHistoryEl = document.getElementById("chatHistory");

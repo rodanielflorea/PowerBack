@@ -167,25 +167,15 @@
           <h3>Transcription engine</h3>
           <div class="field-row">
             <label class="radio"><input type="radio" name="engine" value="deepgram" id="engineDeepgram" /> Deepgram API</label>
-            <label class="radio"><input type="radio" name="engine" value="local" id="engineLocal" /> Local whisper.cpp</label>
+            <label class="radio"><input type="radio" name="engine" value="xai" id="engineXai" /> xAI (Grok) API</label>
           </div>
           <div class="field" id="deepgramBlock">
             <label for="deepgramKey">Deepgram API key</label>
             <input type="password" id="deepgramKey" placeholder="Paste Deepgram key..." spellcheck="false" />
           </div>
-          <div class="field" id="localExeBlock">
-            <label for="whisperExe">whisper.exe path</label>
-            <div class="path-row">
-              <input type="text" id="whisperExe" placeholder="C:\path\to\whisper-cli.exe" spellcheck="false" />
-              <button id="whisperExeBrowse">Browse</button>
-            </div>
-          </div>
-          <div class="field" id="localModelBlock">
-            <label for="whisperModel">Whisper model file</label>
-            <div class="path-row">
-              <input type="text" id="whisperModel" placeholder="C:\path\to\ggml-base.bin" spellcheck="false" />
-              <button id="whisperModelBrowse">Browse</button>
-            </div>
+          <div class="field" id="xaiBlock">
+            <label for="xaiKey">xAI API key</label>
+            <input type="password" id="xaiKey" placeholder="Paste xAI key..." spellcheck="false" />
           </div>
           <div class="field">
             <label for="languageSelect">Language</label>
@@ -207,14 +197,6 @@
               <option value="hi">Hindi</option>
               <option value="uk">Ukrainian</option>
             </select>
-          </div>
-          <div class="field" id="chunkSecondsField">
-            <label for="chunkSecondsRange">Chunk length (whisper.cpp only) &mdash; <span id="chunkSecondsValue">3.0</span> s</label>
-            <input type="range" id="chunkSecondsRange" min="1" max="10" step="0.5" value="3" />
-            <p class="hint">How much audio to batch before each whisper.cpp pass. Adjustable while recording — takes effect on the next chunk.
-              <br />&bull; <b>Slow CPU</b> (no GPU, integrated graphics): try <b>4&ndash;6 s</b>. Smaller chunks back the queue up and drop words.
-              <br />&bull; <b>Fast CPU</b> or small model: <b>2&ndash;3 s</b> gives lower latency without losing words.
-              <br />&bull; Below 1.5 s whisper almost always drops words for lack of context. Ignored when Deepgram is selected (Deepgram streams live).</p>
           </div>
           <p class="hint">Click the rail dot to start/stop. Transcribed text auto-pastes into the foreground app at the cursor.</p>
         </section>
@@ -369,7 +351,7 @@
           <h3>Quick start (solo)</h3>
           <ol class="help-steps">
             <li>Setup &rarr; pick <b>Caption</b> or <b>Voice</b> mode.</li>
-            <li>If using Voice: <b>Voice</b> tab &rarr; choose engine (Deepgram API or local whisper.cpp) and provide key/paths.</li>
+            <li>If using Voice: <b>Voice</b> tab &rarr; choose engine (Deepgram or xAI) and paste the API key.</li>
             <li><b>Sites</b> tab &rarr; add <code>https://chatgpt.com</code> or <code>https://claude.ai</code>.</li>
             <li>Click <b>Start</b>.</li>
             <li>For Caption mode: a screen-area selector appears &mdash; drag a rectangle around the live caption strip you want to OCR.</li>
@@ -428,14 +410,14 @@
 
         <section class="settings-section help-section">
           <h3>Voice mode</h3>
-          <p>Captures mic and/or system audio in real-time and streams it to Deepgram (or local whisper.cpp in chunks). Final transcripts are injected directly into the loaded AI site's chat input — no clipboard, no focus theft. All transcripts are also saved to a <b>.txt file</b> when you click End.</p>
+          <p>Captures mic and/or system audio in real-time and streams it to Deepgram or xAI. Final transcripts are injected directly into the loaded AI site's chat input — no clipboard, no focus theft. All transcripts are also saved to a <b>.txt file</b> when you click End.</p>
           <h4>Setup</h4>
           <ol class="help-steps">
             <li><b>Voice</b> tab &rarr; pick microphone, toggle "Capture mic" / "Capture system audio".</li>
             <li>Pick engine:
               <ul>
-                <li><b>Deepgram API</b> &mdash; paste API key. Real-time, low-latency, audio leaves your machine. Get a free key at deepgram.com.</li>
-                <li><b>Local whisper.cpp</b> &mdash; browse to <code>whisper-cli.exe</code> and a model (<code>ggml-base.bin</code> etc.). Fully offline; slower without GPU.</li>
+                <li><b>Deepgram API</b> &mdash; paste API key. Real-time, low-latency. Get a free key at deepgram.com.</li>
+                <li><b>xAI (Grok) API</b> &mdash; paste your xAI API key. Real-time streaming speech-to-text. Get a key at console.x.ai.</li>
               </ul>
             </li>
             <li>Pick language or leave on Auto-detect.</li>
@@ -611,10 +593,8 @@
           <p>Voice transcripts are injected directly into the AI site loaded in the webview (ChatGPT, Claude, etc.) — make sure a site is loaded and the chat input is visible. The injection targets the chat input automatically, no click needed.</p>
           <h4>Caption mode duplicates text</h4>
           <p>The diff is word-based and tolerant to OCR variations, but if the OCR engine produces wildly different text for the same speech, some duplication is unavoidable. Press <span class="kbd">Ctrl+Q</span> to re-pick a tighter area &mdash; smaller and cleaner is better.</p>
-          <h4>Deepgram 401 / 429 errors</h4>
-          <p>Check the <b>Log</b> tab. 401 = bad API key. 429 = rate limit / out of credits. Get a free key at deepgram.com.</p>
-          <h4>Local whisper exits with non-zero code</h4>
-          <p>Open a terminal and run the same command manually with <code>-f some.wav -m model.bin</code> to see the real error. Ensure the model and exe are from the same whisper.cpp version.</p>
+          <h4>Deepgram / xAI 401 / 429 errors</h4>
+          <p>Check the <b>Log</b> tab. 401 = bad API key. 429 = rate limit / out of credits. Verify the key in Settings &rarr; Voice.</p>
           <h4>Hotkey shows red "register failed"</h4>
           <p>Another app already owns that combo system-wide. Pick a different one.</p>
           <h4>Sticky note isn't appearing on A's screen</h4>
@@ -716,29 +696,14 @@
           <div class="setup-section" id="setupVoiceSection">
             <h4>Transcription engine</h4>
             <label class="radio"><input type="radio" name="setupEngine" value="deepgram" id="setupEngineDeepgram" /> Deepgram API</label>
-            <label class="radio"><input type="radio" name="setupEngine" value="local" id="setupEngineLocal" /> Local whisper.cpp</label>
+            <label class="radio"><input type="radio" name="setupEngine" value="xai" id="setupEngineXai" /> xAI (Grok) API</label>
             <div class="field" id="setupDeepgramBlock">
               <label for="setupDeepgramKey">Deepgram API key</label>
               <input type="password" id="setupDeepgramKey" placeholder="Paste Deepgram key..." spellcheck="false" />
             </div>
-            <div class="field" id="setupLocalExeBlock">
-              <label for="setupWhisperExe">whisper.exe path</label>
-              <div class="path-row">
-                <input type="text" id="setupWhisperExe" placeholder="C:\path\to\whisper-cli.exe" spellcheck="false" />
-                <button id="setupWhisperExeBrowse">Browse</button>
-              </div>
-            </div>
-            <div class="field" id="setupLocalModelBlock">
-              <label for="setupWhisperModel">Whisper model file</label>
-              <div class="path-row">
-                <input type="text" id="setupWhisperModel" placeholder="C:\path\to\ggml-base.bin" spellcheck="false" />
-                <button id="setupWhisperModelBrowse">Browse</button>
-              </div>
-            </div>
-            <div class="field" id="setupChunkSecondsField">
-              <label for="setupChunkSecondsRange">Chunk length (whisper.cpp only) &mdash; <span id="setupChunkSecondsValue">3.0</span> s</label>
-              <input type="range" id="setupChunkSecondsRange" min="1" max="10" step="0.5" value="3" />
-              <p class="hint">How much audio to batch before each whisper.cpp pass. Adjustable while recording. Slow CPU → 4-6 s, fast CPU → 2-3 s, below 1.5 s drops words. Ignored when Deepgram is selected.</p>
+            <div class="field" id="setupXaiBlock">
+              <label for="setupXaiKey">xAI API key</label>
+              <input type="password" id="setupXaiKey" placeholder="Paste xAI key..." spellcheck="false" />
             </div>
             <div class="field">
               <label for="setupVoiceLanguage">Language</label>

@@ -68,13 +68,11 @@ const DEFAULT_STATE = {
   transcription: {
     engine: 'deepgram',
     deepgramApiKey: '',
-    whisperExe: '',
-    whisperModel: '',
+    xaiApiKey: '',
     language: 'auto',
     micDeviceId: '',
     captureSystem: true,
     captureMic: true,
-    chunkSeconds: 3,
   },
   capture: {
     rect: null,
@@ -335,6 +333,10 @@ function loadState() {
       if (!state.hotkeys[k] && HOTKEY_DEFAULTS[k]) state.hotkeys[k] = HOTKEY_DEFAULTS[k];
     }
     state.network.role = '';
+    // Migrate any retired engine value (e.g. the removed local whisper) to deepgram.
+    if (state.transcription.engine !== 'deepgram' && state.transcription.engine !== 'xai') {
+      state.transcription.engine = 'deepgram';
+    }
   } catch {
     state = {
       ...DEFAULT_STATE,
@@ -1018,48 +1020,10 @@ async function transcribeDeepgram(wavBuffer, cfg) {
   return transcript.trim();
 }
 
-async function transcribeLocal(wavBuffer, cfg) {
-  if (!cfg.whisperExe) throw new Error('whisper.exe path not set');
-  if (!cfg.whisperModel) throw new Error('whisper model path not set');
-  const tmpBase = path.join(os.tmpdir(), `stealth-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-  const wavPath = tmpBase + '.wav';
-  const outBase = tmpBase;
-  const outTxt = outBase + '.txt';
-  await fs.promises.writeFile(wavPath, Buffer.from(wavBuffer));
-  const args = [
-    '-m', cfg.whisperModel,
-    '-f', wavPath,
-    '-otxt', '-of', outBase,
-    '-nt', '--no-prints',
-  ];
-  if (cfg.language && cfg.language !== 'auto') args.push('-l', cfg.language);
-  return new Promise((resolve, reject) => {
-    const p = spawn(cfg.whisperExe, args, { windowsHide: true });
-    let stderr = '';
-    p.stderr.on('data', (d) => { stderr += d.toString(); });
-    p.on('error', (e) => reject(e));
-    p.on('exit', async (code) => {
-      try {
-        if (code !== 0) {
-          await fs.promises.unlink(wavPath).catch(() => {});
-          return reject(new Error(`whisper exit ${code}: ${stderr.slice(-200)}`));
-        }
-        const txt = await fs.promises.readFile(outTxt, 'utf8').catch(() => '');
-        await fs.promises.unlink(wavPath).catch(() => {});
-        await fs.promises.unlink(outTxt).catch(() => {});
-        resolve(txt.trim());
-      } catch (e) { reject(e); }
-    });
-  });
-}
-
 let transcribeQueue = Promise.resolve('');
 function enqueueTranscribe(wavBuffer) {
   const cfg = state.transcription;
-  transcribeQueue = transcribeQueue.then(async () => {
-    if (cfg.engine === 'local') return transcribeLocal(wavBuffer, cfg);
-    return transcribeDeepgram(wavBuffer, cfg);
-  });
+  transcribeQueue = transcribeQueue.then(async () => transcribeDeepgram(wavBuffer, cfg));
   return transcribeQueue;
 }
 
@@ -1916,6 +1880,128 @@ function friendlyDeepgramError(status, detail) {
   }
 }
 
+// ---- xAI (Grok) Speech-to-Text streaming — mirrors the Deepgram path above.
+// Protocol: connect wss://api.x.ai/v1/stt, wait for {type:'transcript.created'},
+// stream raw PCM16 binary frames, receive {type:'transcript.partial'|'transcript.done'}
+// with is_final/speech_final, then send {type:'audio.done'} to finish. ----
+let xaiWs = null;
+let xaiActive = false;
+let xaiAuth = null;
+let xaiReady = false;             // server sent transcript.created -> ok to send audio
+let xaiReconnectTimer = null;
+let xaiReconnectAttempts = 0;
+
+function clearXaiTimers() {
+  if (xaiReconnectTimer) { clearTimeout(xaiReconnectTimer); xaiReconnectTimer = null; }
+}
+
+function scheduleXaiReconnect() {
+  if (!xaiActive || xaiReconnectTimer || xaiWs) return;
+  const delay = Math.min(5000, 800 * Math.pow(2, xaiReconnectAttempts));
+  xaiReconnectAttempts++;
+  appendLogLine(`[xai] connection lost — reconnecting in ${delay}ms`);
+  xaiReconnectTimer = setTimeout(() => {
+    xaiReconnectTimer = null;
+    if (xaiActive && !xaiWs && xaiAuth) startXaiWs(xaiAuth.apiKey, xaiAuth.language);
+  }, delay);
+}
+
+function friendlyXaiError(status, detail) {
+  const tail = detail ? ` — ${detail}` : '';
+  switch (status) {
+    case 400: return `xAI rejected the request (400). Try a specific language in Settings → Voice.${tail}`;
+    case 401:
+    case 403: return `xAI rejected your API key (${status}). Check the key in Settings → Voice.${tail}`;
+    case 429: return `xAI rate limit / quota (429). Try again shortly.${tail}`;
+    default:  return `xAI connection failed (${status || 'unknown'}).${tail}`;
+  }
+}
+
+function startXaiWs(apiKey, language) {
+  if (xaiWs) return;
+  xaiReady = false;
+  const params = new URLSearchParams({
+    sample_rate: '16000', encoding: 'pcm',
+    interim_results: 'true', endpointing: '300',
+  });
+  if (language && language !== 'auto') params.set('language', language);
+
+  xaiWs = new WebSocket(`wss://api.x.ai/v1/stt?${params}`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  let handshakeFailed = false;
+  xaiWs.on('open', () => {
+    appendLogLine('[xai] connected');
+    xaiReconnectAttempts = 0;
+  });
+  xaiWs.on('message', (raw) => {
+    try {
+      const msg = JSON.parse(raw.toString());
+      if (msg.type === 'transcript.created') { xaiReady = true; return; }
+      if (msg.type === 'error') {
+        const m = msg.message || msg.error || '';
+        appendLogLine('[xai] error: ' + m);
+        if (win && !win.isDestroyed()) win.webContents.send('transcript-live-error', 'xAI: ' + (m || 'error'));
+        return;
+      }
+      if (msg.type === 'transcript.partial' || msg.type === 'transcript.done') {
+        const text = (msg.text || '').trim();
+        const isFinal = msg.type === 'transcript.done' || !!msg.is_final;
+        if (text) {
+          if (isFinal) sessionLog.push({ ts: Date.now(), kind: 'voice', text });
+          if (win && !win.isDestroyed()) win.webContents.send('transcript-live', { text, isFinal });
+        }
+        // speech_final marks an utterance boundary — same role as Deepgram's UtteranceEnd.
+        if (msg.speech_final && win && !win.isDestroyed()) win.webContents.send('transcript-utterance-end');
+      }
+    } catch {}
+  });
+  xaiWs.on('unexpected-response', (_req, res) => {
+    handshakeFailed = true;
+    let body = '';
+    res.on('data', (d) => { body += d.toString(); });
+    res.on('end', () => {
+      let detail = '';
+      try { const j = JSON.parse(body); detail = j.error || j.message || j.reason || ''; } catch {}
+      const msg = friendlyXaiError(res.statusCode, detail);
+      appendLogLine(`[xai] handshake ${res.statusCode}: ${body.slice(0, 200)}`);
+      if (win && !win.isDestroyed()) win.webContents.send('transcript-live-error', msg);
+      xaiActive = false;
+      clearXaiTimers();
+      try { if (xaiWs) xaiWs.terminate(); } catch {}
+      xaiWs = null;
+      xaiReady = false;
+    });
+  });
+  xaiWs.on('error', (e) => {
+    if (handshakeFailed) return;
+    appendLogLine('[xai] error: ' + e.message);
+  });
+  xaiWs.on('close', () => {
+    xaiWs = null;
+    xaiReady = false;
+    if (xaiActive && !handshakeFailed) scheduleXaiReconnect();
+  });
+}
+
+ipcMain.handle('start-xai-stream', (_e, { apiKey, language }) => {
+  xaiActive = true;
+  xaiAuth = { apiKey, language };
+  xaiReconnectAttempts = 0;
+  clearXaiTimers();
+  startXaiWs(apiKey, language);
+});
+ipcMain.handle('stop-xai-stream', () => {
+  xaiActive = false;
+  clearXaiTimers();
+  if (xaiWs) {
+    try { xaiWs.send(JSON.stringify({ type: 'audio.done' })); } catch {}
+    try { xaiWs.close(); } catch {}
+    xaiWs = null;
+  }
+  xaiReady = false;
+});
+
 ipcMain.handle('start-deepgram-stream', (_e, { apiKey, language }) => {
   deepgramActive = true;
   deepgramAuth = { apiKey, language };
@@ -1934,6 +2020,7 @@ ipcMain.handle('stop-deepgram-stream', () => {
 });
 ipcMain.on('audio-chunk', (_e, buf) => {
   if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) deepgramWs.send(buf);
+  else if (xaiWs && xaiWs.readyState === WebSocket.OPEN && xaiReady) xaiWs.send(buf);
 });
 ipcMain.on('session-log-add', (_e, entry) => { sessionLog.push(entry); });
 ipcMain.handle('clear-session-log', () => { sessionLog = []; });
@@ -2125,16 +2212,6 @@ ipcMain.handle('prompts-import', async () => {
     return { ok: false, error: e.message };
   }
 });
-ipcMain.handle('pick-file', async (_e, kind) => {
-  const filters = kind === 'exe'
-    ? [{ name: 'Executable', extensions: ['exe'] }]
-    : kind === 'model'
-      ? [{ name: 'Whisper model', extensions: ['bin', 'gguf', 'ggml'] }, { name: 'All', extensions: ['*'] }]
-      : [{ name: 'All', extensions: ['*'] }];
-  const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters });
-  return r.canceled ? null : r.filePaths[0];
-});
-
 ipcMain.handle('get-capture-config', () => ({ ...state.capture }));
 ipcMain.handle('set-capture-config', (_e, cfg) => {
   state.capture = { ...state.capture, ...(cfg || {}) };
