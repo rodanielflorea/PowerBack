@@ -1,6 +1,6 @@
 {
   "name": "ACE",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Answer Coaching Engine(what it literally is), Ace the interview(what the user achieves), Ace up your sleeve(what it secretly is)",
   "main": "main.js",
   "scripts": {

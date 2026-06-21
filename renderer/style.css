@@ -177,6 +177,26 @@ body:not(.in-interview) .right-rail { display: none !important; }
 
 .urlbar-input:focus { border-color: var(--accent); }
 .urlbar-go { color: var(--accent); }
+.urlbar-go.loading { opacity: 0.45; }
+
+/* Indeterminate loading bar along the bottom of the URL bar — instant visual
+   feedback that a navigation / site switch is in progress. */
+.urlbar { overflow: hidden; }
+.urlbar.loading::after {
+  content: "";
+  position: absolute;
+  left: -40%;
+  bottom: 0;
+  height: 2px;
+  width: 40%;
+  background: var(--accent);
+  border-radius: 2px;
+  animation: urlbar-progress 0.9s ease-in-out infinite;
+}
+@keyframes urlbar-progress {
+  0%   { left: -40%; }
+  100% { left: 100%; }
+}
 
 .stealth-icon {
   width: 15px;

@@ -10,7 +10,12 @@ const WebSocket = require('ws');
 let autoUpdater = null;
 try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
 
-app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
+// CalculateNativeWinOcclusion: stop Windows from marking this always-on-top
+// overlay "occluded" and PAUSING its paint — that's what makes navigating /
+// switching sites look frozen until the window is touched. (The separate
+// disable-backgrounding-occluded-windows switch below only stops priority
+// lowering, not the paint pause.)
+app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns,CalculateNativeWinOcclusion');
 // Keep the audio capture pipeline alive when the window is hidden (stealth) or
 // occluded by a fullscreen app — otherwise Chromium throttles the renderer and
 // the AudioWorklet feeding Deepgram stalls, so voice stops transcribing.
@@ -384,22 +389,38 @@ function loadCurrentUrl() {
 
 function ensureWebView() {
   if (webView || !win) return;
-  webView = new WebContentsView();
+  webView = new WebContentsView({
+    webPreferences: { backgroundThrottling: false },
+  });
   webView.setBackgroundColor('#ffffff');
-  webView.webContents.setUserAgent(
-    webView.webContents.getUserAgent().replace(/\s?Electron\/\S+/, '')
-  );
+  const wc = webView.webContents;
+  // Never throttle the loaded site when this overlay isn't the focused window —
+  // otherwise Chromium drops it to ~1fps and pages load and render slowly.
+  try { wc.setBackgroundThrottling(false); } catch {}
+  // Present a clean, current Chrome UA: strip BOTH the app token (e.g. "ACE/1.1.1")
+  // and the "Electron/x.y" token. Leaving either is a giveaway to bot detection
+  // and triggers the slow human-verification redirects.
+  try {
+    const appToken = new RegExp(
+      '\\s?' + app.getName().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\/\\S+', 'i'
+    );
+    const cleanUA = wc.getUserAgent().replace(appToken, '').replace(/\s?Electron\/\S+/i, '');
+    wc.setUserAgent(cleanUA);
+  } catch {}
   win.contentView.addChildView(webView);
   webView.setVisible(false);
-  const wc = webView.webContents;
   wc.on('did-navigate', () => sendWebviewUrl());
   wc.on('did-navigate-in-page', () => sendWebviewUrl());
   wc.on('page-title-updated', () => sendWebviewUrl());
   // Load timing — so a slow page shows up in the Log with where the time went.
   let webviewLoadStart = 0;
-  wc.on('did-start-loading', () => { webviewLoadStart = Date.now(); });
+  const sendLoading = (on) => {
+    if (win && !win.isDestroyed()) win.webContents.send('webview-loading', on);
+  };
+  wc.on('did-start-loading', () => { webviewLoadStart = Date.now(); sendLoading(true); });
   wc.on('did-stop-loading', () => {
     if (webviewLoadStart) appendLogLine(`[webview] loaded in ${Date.now() - webviewLoadStart}ms`);
+    sendLoading(false);
   });
   wc.on('did-fail-load', (_e, code, desc, url) => {
     if (code === -3) return; // ERR_ABORTED (normal during redirects)
@@ -451,6 +472,8 @@ function navigateToUrl(rawUrl) {
 
 function webviewGoBack() {
   if (!webView) return;
+  webView.setVisible(true);
+  layoutWebView();
   const wc = webView.webContents;
   try {
     const nh = wc.navigationHistory;
@@ -461,6 +484,8 @@ function webviewGoBack() {
 
 function webviewGoForward() {
   if (!webView) return;
+  webView.setVisible(true);
+  layoutWebView();
   const wc = webView.webContents;
   try {
     const nh = wc.navigationHistory;
@@ -517,7 +542,11 @@ function createWindow() {
   win.setContentProtection(state.stealth);
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  win.setOpacity(Math.max(MIN_OPACITY, state.opacity));
+  // Only go translucent if actually requested. Calling setOpacity at 1.0 turns the
+  // window into a layered window (WS_EX_LAYERED), which disables GPU compositing
+  // and makes the webview render in software. Skip it when fully opaque.
+  const startOpacity = Math.max(MIN_OPACITY, state.opacity);
+  if (startOpacity < 1) win.setOpacity(startOpacity);
   win.setMenuBarVisibility(false);
   if (state.clickThrough) try { win.setIgnoreMouseEvents(true, { forward: true }); } catch {}
 
@@ -805,6 +834,7 @@ function showUrlMenu() {
         checked: i === state.currentUrlIndex,
         click: () => {
           state.currentUrlIndex = i;
+          if (webView) { webView.setVisible(true); layoutWebView(); }
           loadCurrentUrl();
           saveState();
         },

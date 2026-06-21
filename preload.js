@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('api', {
   webviewForward: () => ipcRenderer.invoke('webview-forward'),
   getWebviewUrl: () => ipcRenderer.invoke('get-webview-url'),
   onWebviewUrlChanged: (cb) => ipcRenderer.on('webview-url-changed', (_e, v) => cb(v)),
+  onWebviewLoading: (cb) => ipcRenderer.on('webview-loading', (_e, v) => cb(v)),
   getMode: () => ipcRenderer.invoke('get-mode'),
   setMode: (mode) => ipcRenderer.invoke('set-mode', mode),
   getTranscriptionConfig: () => ipcRenderer.invoke('get-transcription-config'),

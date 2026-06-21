@@ -713,9 +713,18 @@ const urlReloadBtn = document.getElementById("urlReloadBtn");
 const urlGoBtn = document.getElementById("urlGoBtn");
 let urlBarFocused = false;
 
+const urlbarEl = document.getElementById("urlbar");
+function setWebviewLoading(on) {
+  if (urlbarEl) urlbarEl.classList.toggle("loading", !!on);
+  if (urlGoBtn) urlGoBtn.classList.toggle("loading", !!on);
+}
+
 function goToUrlBarValue() {
   const v = (urlInputBar.value || "").trim();
-  if (v) window.api.navigateUrl(v);
+  if (v) {
+    setWebviewLoading(true); // instant feedback before the page starts loading
+    window.api.navigateUrl(v);
+  }
   urlInputBar.blur();
 }
 
@@ -731,9 +740,10 @@ if (urlInputBar) {
   });
 }
 if (urlGoBtn) urlGoBtn.addEventListener("click", goToUrlBarValue);
-if (urlBackBtn) urlBackBtn.addEventListener("click", () => window.api.webviewBack());
-if (urlForwardBtn) urlForwardBtn.addEventListener("click", () => window.api.webviewForward());
-if (urlReloadBtn) urlReloadBtn.addEventListener("click", () => window.api.reloadWebview());
+if (urlBackBtn) urlBackBtn.addEventListener("click", () => { setWebviewLoading(true); window.api.webviewBack(); });
+if (urlForwardBtn) urlForwardBtn.addEventListener("click", () => { setWebviewLoading(true); window.api.webviewForward(); });
+if (urlReloadBtn) urlReloadBtn.addEventListener("click", () => { setWebviewLoading(true); window.api.reloadWebview(); });
+window.api.onWebviewLoading(setWebviewLoading);
 
 function applyWebviewNav(info) {
   if (!info) return;
