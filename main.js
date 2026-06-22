@@ -1,5 +1,5 @@
 const {
-  app, BrowserWindow, WebContentsView, ipcMain, globalShortcut, Menu,
+  app, BrowserWindow, ipcMain, globalShortcut, Menu,
   session, desktopCapturer, dialog, clipboard, screen, net,
 } = require('electron');
 const path = require('path');
@@ -63,7 +63,6 @@ const HOTKEY_DEFAULTS = {
 const DEFAULT_STATE = {
   x: null, y: null, width: 400, height: 700,
   opacity: 1.0, stealth: true, clickThrough: false,
-  urls: [], currentUrlIndex: 0,
   mode: 'caption',
   transcription: {
     engine: 'deepgram',
@@ -93,6 +92,9 @@ const DEFAULT_STATE = {
   },
   welcomeSeen: false,
   prompts: [],
+  // Grok answer generation: its OWN xAI key (separate from transcription), the
+  // model, and which saved prompt (preset) is active.
+  answer: { apiKey: '', model: 'grok-4.3', activePromptId: null },
   stickyAnchor: null,
   stickySize: null,
   hotkeys: { ...HOTKEY_DEFAULTS },
@@ -102,14 +104,8 @@ const MIN_OPACITY = 0.05;
 const MOVE_STEP_X = 40;
 const MOVE_STEP_Y = 20;
 const OPACITY_STEP = 0.05;
-const SCROLL_STEP = 50;
-const HEADER_H = 28;
-const URL_BAR_H = 30;
-const RAIL_W = 0;
-const RIGHT_RAIL_W = 30;
 
 let win;
-let webView;
 let selectorWin = null;
 let stickyWin = null;
 let stickyWantOpen = false;
@@ -327,6 +323,7 @@ function loadState() {
       transcription: { ...DEFAULT_STATE.transcription, ...(raw.transcription || {}) },
       capture: { ...DEFAULT_STATE.capture, ...(raw.capture || {}) },
       network: { ...DEFAULT_STATE.network, ...(raw.network || {}) },
+      answer: { ...DEFAULT_STATE.answer, ...(raw.answer || {}) },
       hotkeys: { ...HOTKEY_DEFAULTS, ...(raw.hotkeys || {}) },
     };
     for (const k of Object.keys(HOTKEY_DEFAULTS)) {
@@ -343,9 +340,31 @@ function loadState() {
       transcription: { ...DEFAULT_STATE.transcription },
       capture: { ...DEFAULT_STATE.capture },
       network: { ...DEFAULT_STATE.network },
+      answer: { ...DEFAULT_STATE.answer },
       hotkeys: { ...HOTKEY_DEFAULTS },
     };
   }
+  seedDefaultPromptsIfNeeded();
+}
+
+// Seed starter answer presets (one per meeting type) on first run so the user has
+// something to switch between. Runs once; deleting them later won't re-seed.
+function seedDefaultPromptsIfNeeded() {
+  if (state.promptsSeeded) return;
+  if (Array.isArray(state.prompts) && state.prompts.length > 0) { state.promptsSeeded = true; return; }
+  state.prompts = [
+    { id: 'preset-intro', title: 'Intro / recruiter screen',
+      text: 'You are an expert interview coach. Based on what the interviewer just said, write a concise, confident answer (3–5 sentences) the candidate can say aloud in a recruiter/intro screen. Be warm, professional, and specific; no filler, no preamble — just the answer.' },
+    { id: 'preset-tech', title: 'Technical interview',
+      text: 'You are a senior engineer coaching a candidate in a technical interview. Based on what was asked, give a correct, concise, structured answer the candidate can say aloud: state the approach, the key trade-offs, and complexity where relevant. Prefer clarity over completeness. Output only the answer.' },
+    { id: 'preset-ceo', title: 'CEO / executive',
+      text: 'You are coaching the candidate in a conversation with a CEO or executive. Answer strategically and concisely, focusing on business impact, vision, and leadership. Speak with confidence and brevity. Output only the answer.' },
+    { id: 'preset-team', title: 'Team meeting',
+      text: 'You are helping the user contribute in a team meeting. Based on what was just said, suggest a concise, collaborative response or talking point the user can say aloud. Keep it practical and brief. Output only the response.' },
+  ];
+  if (!state.answer) state.answer = { ...DEFAULT_STATE.answer };
+  if (!state.answer.activePromptId) state.answer.activePromptId = 'preset-intro';
+  state.promptsSeeded = true;
 }
 
 function saveState() {
@@ -359,140 +378,6 @@ function saveState() {
   try {
     fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
     fs.writeFileSync(STATE_FILE, JSON.stringify(state));
-  } catch {}
-}
-
-function layoutWebView() {
-  if (!win || !webView) return;
-  const [w, h] = win.getContentSize();
-  const top = HEADER_H + URL_BAR_H;
-  webView.setBounds({
-    x: RAIL_W,
-    y: top,
-    width: Math.max(0, w - RAIL_W - RIGHT_RAIL_W),
-    height: Math.max(0, h - top),
-  });
-}
-
-function placeholderUrl() {
-  const html = `<!doctype html><html><head><style>
-    body { font-family: -apple-system, "Segoe UI", sans-serif; color: #71717a;
-      display: flex; align-items: center; justify-content: center;
-      height: 100vh; margin: 0; background: #fff; font-size: 13px; text-align: center; padding: 20px; }
-  </style></head><body>No URLs yet.<br>Open settings (gear icon on the left) to add one.</body></html>`;
-  return 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
-}
-
-function loadCurrentUrl() {
-  if (!webView) return;
-  const url = state.urls[state.currentUrlIndex];
-  webView.webContents.loadURL(url || placeholderUrl());
-}
-
-function ensureWebView() {
-  if (webView || !win) return;
-  webView = new WebContentsView({
-    webPreferences: { backgroundThrottling: false },
-  });
-  webView.setBackgroundColor('#ffffff');
-  const wc = webView.webContents;
-  // Never throttle the loaded site when this overlay isn't the focused window —
-  // otherwise Chromium drops it to ~1fps and pages load and render slowly.
-  try { wc.setBackgroundThrottling(false); } catch {}
-  // Present a clean, current Chrome UA: strip BOTH the app token (e.g. "ACE/1.1.1")
-  // and the "Electron/x.y" token. Leaving either is a giveaway to bot detection
-  // and triggers the slow human-verification redirects.
-  try {
-    const appToken = new RegExp(
-      '\\s?' + app.getName().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\/\\S+', 'i'
-    );
-    const cleanUA = wc.getUserAgent().replace(appToken, '').replace(/\s?Electron\/\S+/i, '');
-    wc.setUserAgent(cleanUA);
-  } catch {}
-  win.contentView.addChildView(webView);
-  webView.setVisible(false);
-  wc.on('did-navigate', () => sendWebviewUrl());
-  wc.on('did-navigate-in-page', () => sendWebviewUrl());
-  wc.on('page-title-updated', () => sendWebviewUrl());
-  // Load timing — so a slow page shows up in the Log with where the time went.
-  let webviewLoadStart = 0;
-  const sendLoading = (on) => {
-    if (win && !win.isDestroyed()) win.webContents.send('webview-loading', on);
-  };
-  wc.on('did-start-loading', () => { webviewLoadStart = Date.now(); sendLoading(true); });
-  wc.on('did-stop-loading', () => {
-    if (webviewLoadStart) appendLogLine(`[webview] loaded in ${Date.now() - webviewLoadStart}ms`);
-    sendLoading(false);
-  });
-  wc.on('did-fail-load', (_e, code, desc, url) => {
-    if (code === -3) return; // ERR_ABORTED (normal during redirects)
-    appendLogLine(`[webview] load failed ${code} ${desc} ${url}`);
-  });
-  layoutWebView();
-  loadCurrentUrl();
-}
-
-function webviewNavInfo() {
-  const info = { url: '', canBack: false, canForward: false };
-  if (!webView) return info;
-  const wc = webView.webContents;
-  try { info.url = wc.getURL() || ''; } catch {}
-  try {
-    const nh = wc.navigationHistory;
-    if (nh && typeof nh.canGoBack === 'function') {
-      info.canBack = nh.canGoBack();
-      info.canForward = nh.canGoForward();
-    } else {
-      info.canBack = wc.canGoBack();
-      info.canForward = wc.canGoForward();
-    }
-  } catch {}
-  return info;
-}
-
-function sendWebviewUrl() {
-  if (win && !win.isDestroyed()) win.webContents.send('webview-url-changed', webviewNavInfo());
-}
-
-// Load an arbitrary address typed into the URL bar. Bare hostnames get https://,
-// free text becomes a Google search, so users can escape a verification page.
-function navigateToUrl(rawUrl) {
-  if (!webView) return;
-  let url = String(rawUrl || '').trim();
-  if (!url) return;
-  if (!/^[a-z]+:\/\//i.test(url)) {
-    if (/\s/.test(url) || !/\.[a-z]{2,}/i.test(url)) {
-      url = 'https://www.google.com/search?q=' + encodeURIComponent(url);
-    } else {
-      url = 'https://' + url;
-    }
-  }
-  webView.setVisible(true);
-  layoutWebView();
-  webView.webContents.loadURL(url).catch(() => {});
-}
-
-function webviewGoBack() {
-  if (!webView) return;
-  webView.setVisible(true);
-  layoutWebView();
-  const wc = webView.webContents;
-  try {
-    const nh = wc.navigationHistory;
-    if (nh && typeof nh.goBack === 'function') { if (nh.canGoBack()) nh.goBack(); }
-    else if (wc.canGoBack()) wc.goBack();
-  } catch {}
-}
-
-function webviewGoForward() {
-  if (!webView) return;
-  webView.setVisible(true);
-  layoutWebView();
-  const wc = webView.webContents;
-  try {
-    const nh = wc.navigationHistory;
-    if (nh && typeof nh.goForward === 'function') { if (nh.canGoForward()) nh.goForward(); }
-    else if (wc.canGoForward()) wc.goForward();
   } catch {}
 }
 
@@ -553,19 +438,18 @@ function createWindow() {
   if (state.clickThrough) try { win.setIgnoreMouseEvents(true, { forward: true }); } catch {}
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  // Start loading the site immediately, in parallel with the UI, so it's warm by
-  // the time the user needs it (instead of waiting until the window paints).
-  ensureWebView();
+  // Embedded web AI removed — answers come from the Grok API into the in-app
+  // Answer panel, so we no longer create the WebContentsView.
   win.once('ready-to-show', () => {
     win.show();
   });
 
   win.on('move', () => { saveState(); syncStickyPosition(); });
-  win.on('resize', () => { layoutWebView(); saveState(); syncStickyPosition(); });
+  win.on('resize', () => { saveState(); syncStickyPosition(); });
   win.on('show', () => applyStickyState());
   win.on('hide', () => applyStickyState());
   win.on('closed', () => {
-    win = null; webView = null;
+    win = null;
     if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.close(); } catch {} }
   });
 }
@@ -798,53 +682,6 @@ function pushChatToSticky(msg) {
   pushHistoryToStickyDom();
 }
 
-function reloadWebView() {
-  if (!webView) return;
-  webView.setVisible(true);
-  layoutWebView();
-  webView.webContents.reload();
-}
-
-function scrollWebview(dy) {
-  if (!webView) return;
-  const code = `(function(dy){
-    function findScrollable(){
-      let best=null,bestSize=0;
-      const all=document.querySelectorAll('*');
-      for(const el of all){
-        const cs=getComputedStyle(el);
-        if((cs.overflowY==='auto'||cs.overflowY==='scroll')&&el.scrollHeight>el.clientHeight+4){
-          const size=el.clientWidth*el.clientHeight;
-          if(size>bestSize){best=el;bestSize=size;}
-        }
-      }
-      return best;
-    }
-    const t=findScrollable()||document.scrollingElement||document.documentElement;
-    t.scrollBy({top:dy,behavior:'smooth'});
-  })(${dy});`;
-  webView.webContents.executeJavaScript(code).catch(() => {});
-}
-
-function showUrlMenu() {
-  if (!win) return;
-  const items = state.urls.length === 0
-    ? [{ label: 'No URLs — open settings to add', enabled: false }]
-    : state.urls.map((url, i) => ({
-        label: url.length > 60 ? url.slice(0, 57) + '...' : url,
-        type: 'checkbox',
-        checked: i === state.currentUrlIndex,
-        click: () => {
-          state.currentUrlIndex = i;
-          if (webView) { webView.setVisible(true); layoutWebView(); }
-          loadCurrentUrl();
-          saveState();
-        },
-      }));
-  const [winW] = win.getContentSize();
-  Menu.buildFromTemplate(items).popup({ window: win, x: Math.max(0, winW - RIGHT_RAIL_W - 180), y: HEADER_H + 2 });
-}
-
 let pasteQueue = Promise.resolve();
 function pasteToForeground(text) {
   if (!text || !text.trim()) return Promise.resolve();
@@ -858,141 +695,6 @@ function pasteToForeground(text) {
     ps.on('error', () => resolve());
   }));
   return pasteQueue;
-}
-
-let lastInjectError = '';
-async function injectIntoChat(text) {
-  if (!webView) {
-    if (lastInjectError !== 'no-webview' && win) {
-      win.webContents.send('capture-error', 'No webview to inject into');
-      lastInjectError = 'no-webview';
-    }
-    return false;
-  }
-  if (!text) return false;
-  const code = `(function(text){
-    const selectors=[
-      '#prompt-textarea',
-      'div[contenteditable="true"][role="textbox"]',
-      'div.ProseMirror[contenteditable="true"]',
-      'div[contenteditable="true"][data-testid*="input"]',
-      'textarea[data-testid*="input"]',
-      'textarea[autofocus]',
-      'main textarea',
-      'textarea',
-      '[contenteditable="true"]'
-    ];
-    let el=null;
-    for(const sel of selectors){
-      const c=document.querySelector(sel);
-      if(c&&c.offsetParent!==null){el=c;break;}
-    }
-    if(!el)return 'no-input';
-    el.focus();
-    if(el.tagName==='TEXTAREA'||el.tagName==='INPUT'){
-      const proto=el.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype;
-      const setter=Object.getOwnPropertyDescriptor(proto,'value').set;
-      const newVal=(el.value||'')+text;
-      setter.call(el,newVal);
-      el.dispatchEvent(new InputEvent('input',{bubbles:true,data:text,inputType:'insertText'}));
-      try{el.selectionStart=el.selectionEnd=newVal.length;}catch(e){}
-      return 'textarea';
-    } else {
-      const sel=window.getSelection();
-      const r=document.createRange();
-      r.selectNodeContents(el);
-      r.collapse(false);
-      sel.removeAllRanges();
-      sel.addRange(r);
-      document.execCommand('insertText',false,text);
-      return 'editable';
-    }
-  })(${JSON.stringify(text)});`;
-  try {
-    const r = await webView.webContents.executeJavaScript(code);
-    if (r === 'no-input') {
-      const msg = 'No chat input found. Load ChatGPT/Claude and make sure the chat input is in view.';
-      if (lastInjectError !== msg && win) {
-        win.webContents.send('capture-error', msg);
-        lastInjectError = msg;
-      }
-      return false;
-    }
-    if (lastInjectError) lastInjectError = '';
-    return true;
-  } catch (e) {
-    const msg = 'Inject error: ' + e.message;
-    if (lastInjectError !== msg && win) {
-      win.webContents.send('capture-error', msg);
-      lastInjectError = msg;
-    }
-    return false;
-  }
-}
-
-// Live word-by-word injection. Deletes the last `deleteCount` characters from the
-// chat input (to undo revised interim words) then inserts `insertText`. Serialized
-// so rapid streaming edits apply in order.
-let webviewEditQueue = Promise.resolve();
-function webviewEditTail(deleteCount, insertText) {
-  webviewEditQueue = webviewEditQueue.then(() => doWebviewEditTail(deleteCount, insertText));
-  return webviewEditQueue;
-}
-function doWebviewEditTail(deleteCount, insertText) {
-  if (!webView) return Promise.resolve(false);
-  if (!deleteCount && !insertText) return Promise.resolve(true);
-  const code = `(function(del, ins){
-    const selectors=[
-      '#prompt-textarea',
-      'div[contenteditable="true"][role="textbox"]',
-      'div.ProseMirror[contenteditable="true"]',
-      'div[contenteditable="true"][data-testid*="input"]',
-      'textarea[data-testid*="input"]',
-      'textarea[autofocus]',
-      'main textarea',
-      'textarea',
-      '[contenteditable="true"]'
-    ];
-    let el=null;
-    for(const sel of selectors){ const c=document.querySelector(sel); if(c&&c.offsetParent!==null){el=c;break;} }
-    if(!el)return 'no-input';
-    el.focus();
-    if(el.tagName==='TEXTAREA'||el.tagName==='INPUT'){
-      const proto=el.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype;
-      const setter=Object.getOwnPropertyDescriptor(proto,'value').set;
-      const v=el.value||'';
-      const cut=Math.max(0, v.length - del);
-      const nv=v.slice(0,cut)+ins;
-      setter.call(el,nv);
-      el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}));
-      try{el.selectionStart=el.selectionEnd=nv.length;}catch(e){}
-      return 'textarea';
-    } else {
-      const sel=window.getSelection();
-      const r=document.createRange();
-      r.selectNodeContents(el); r.collapse(false); // caret at end
-      sel.removeAllRanges(); sel.addRange(r);
-      // Select the changed tail by extending the selection backward, then
-      // replace it in ONE atomic edit — no per-character delete flicker.
-      for(let i=0;i<del;i++){ try{sel.modify('extend','backward','character');}catch(e){} }
-      if(ins){ document.execCommand('insertText',false,ins); }
-      else if(del>0){ document.execCommand('delete',false); }
-      return 'editable';
-    }
-  })(${deleteCount|0}, ${JSON.stringify(insertText || '')});`;
-  return webView.webContents.executeJavaScript(code).then((r) => {
-    if (r === 'no-input') {
-      const msg = 'No chat input found. Load ChatGPT/Claude and make sure the chat input is in view.';
-      if (lastInjectError !== msg && win) { win.webContents.send('capture-error', msg); lastInjectError = msg; }
-      return false;
-    }
-    if (lastInjectError) lastInjectError = '';
-    return true;
-  }).catch((e) => {
-    const msg = 'Inject error: ' + e.message;
-    if (lastInjectError !== msg && win) { win.webContents.send('capture-error', msg); lastInjectError = msg; }
-    return false;
-  });
 }
 
 async function transcribeDeepgram(wavBuffer, cfg) {
@@ -1076,7 +778,7 @@ async function captureTick() {
     const newPart = smartDiff(text);
     const trimmed = newPart.trim();
     if (trimmed) {
-      await injectIntoChat(newPart);
+      // OCR text now flows to the in-app question composer (renderer), not a webview.
       if (win) win.webContents.send('capture-text', trimmed);
     }
   } catch (e) {
@@ -1095,7 +797,6 @@ function startCaptureLoop() {
   resetSmartDiffState();
   firstOcrLogged = false;
   lastOcrEmptyAt = 0;
-  lastInjectError = '';
   const period = Math.max(200, state.capture.pollMs || 700);
   captureLoop = setInterval(captureTick, period);
   captureTick();
@@ -1121,7 +822,6 @@ function stopCaptureLoop() {
     pendingIdleFrames = 0;
     pastedHistory.push(flush);
     pastedHistory = pastedHistory.slice(-MAX_HISTORY_WORDS);
-    injectIntoChat(' ' + flush).catch(() => {});
     if (win) win.webContents.send('capture-text', flush);
   }
   if (win) win.webContents.send('capture-state', false);
@@ -1201,10 +901,6 @@ function openAreaSelector() {
     selectorWin.on('closed', () => {
       selectorWin = null;
       if (wasVisible && win) win.show();
-      if (webView) {
-        webView.setVisible(true);
-        layoutWebView();
-      }
       if (win) win.webContents.send('selector-closed');
     });
   }, 150);
@@ -1248,10 +944,9 @@ const HOTKEY_HANDLERS = {
   moveDown: () => nudge(0, MOVE_STEP_Y),
   opacityUp: () => setOpacity((win?.getOpacity() ?? 1) + OPACITY_STEP),
   opacityDown: () => setOpacity((win?.getOpacity() ?? 1) - OPACITY_STEP),
-  scrollUp: () => scrollWebview(-SCROLL_STEP),
-  scrollDown: () => scrollWebview(SCROLL_STEP),
+  scrollUp: () => { if (win && !win.isDestroyed()) win.webContents.send('scroll-answer', -1); },
+  scrollDown: () => { if (win && !win.isDestroyed()) win.webContents.send('scroll-answer', 1); },
   resetCaptureArea: () => triggerResetCaptureArea(),
-  reloadSite: () => reloadWebView(),
   toggleStealth: () => setStealth(!state.stealth),
   toggleRecording: () => { if (win) win.webContents.send('toggle-recording'); },
   toggleMode: () => { if (win) win.webContents.send('toggle-mode'); },
@@ -1261,66 +956,9 @@ const HOTKEY_HANDLERS = {
   stickyScrollUp: () => scrollSticky(-1),
   stickyScrollDown: () => scrollSticky(1),
   helpRequest: () => sendHelpRequest(),
-  submitPrompt: () => submitWebviewPrompt(),
-  screenshotToAI: () => captureCursorScreenToAI().catch((e) => { if (win) win.webContents.send('capture-error', 'screenshot: ' + e.message); }),
+  submitPrompt: () => { if (win && !win.isDestroyed()) win.webContents.send('trigger-get-answer'); },
   toggleClickThrough: () => setClickThrough(!state.clickThrough),
 };
-
-function submitWebviewPrompt() {
-  if (!webView) {
-    if (win) win.webContents.send('capture-error', 'submit: no webview');
-    return;
-  }
-  const code = `(function(){
-    const sels=['#prompt-textarea','div[contenteditable="true"][role="textbox"]','div.ProseMirror[contenteditable="true"]','div[contenteditable="true"][data-testid*="input"]','textarea[data-testid*="input"]','main textarea','textarea','[contenteditable="true"]'];
-    let el=null;
-    for(const s of sels){const c=document.querySelector(s);if(c&&c.offsetParent!==null){el=c;break;}}
-    if(!el)return 'no-input';
-    el.focus();
-    const btnSels=['button[data-testid="send-button"]','button[aria-label*="Send" i]','button[data-testid="fruitjuice-send-button"]','form button[type="submit"]'];
-    for(const s of btnSels){const b=document.querySelector(s);if(b&&!b.disabled){b.click();return 'clicked:'+s;}}
-    const opts={key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true};
-    el.dispatchEvent(new KeyboardEvent('keydown',opts));
-    el.dispatchEvent(new KeyboardEvent('keypress',opts));
-    el.dispatchEvent(new KeyboardEvent('keyup',opts));
-    return 'enter';
-  })()`;
-  webView.webContents.executeJavaScript(code).catch((e) => {
-    if (win) win.webContents.send('capture-error', 'submit failed: ' + e.message);
-  });
-}
-
-async function captureCursorScreenToAI() {
-  if (!webView) throw new Error('no webview');
-  const cursor = screen.getCursorScreenPoint();
-  const display = screen.getDisplayNearestPoint(cursor);
-  const sf = display.scaleFactor || 1;
-  const tw = Math.round(display.size.width * sf);
-  const th = Math.round(display.size.height * sf);
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: { width: tw, height: th },
-  });
-  let source = sources.find((s) => String(s.display_id) === String(display.id));
-  if (!source) source = sources[0];
-  if (!source) throw new Error('no display source');
-  const img = source.thumbnail;
-  if (!img || img.isEmpty()) throw new Error('empty capture');
-  clipboard.writeImage(img);
-  const focusCode = `(function(){
-    const sels=['#prompt-textarea','div[contenteditable="true"][role="textbox"]','div.ProseMirror[contenteditable="true"]','div[contenteditable="true"][data-testid*="input"]','textarea[data-testid*="input"]','main textarea','textarea','[contenteditable="true"]'];
-    let el=null;
-    for(const s of sels){const c=document.querySelector(s);if(c&&c.offsetParent!==null){el=c;break;}}
-    if(!el)return 'no-input';
-    el.focus();
-    return 'focused';
-  })()`;
-  await webView.webContents.executeJavaScript(focusCode).catch(() => {});
-  webView.webContents.focus();
-  await new Promise((r) => setTimeout(r, 80));
-  try { webView.webContents.paste(); } catch {}
-  if (win) win.webContents.send('capture-text', `[screenshot ${display.size.width}x${display.size.height} pasted to AI]`);
-}
 
 function setClickThrough(value) {
   state.clickThrough = !!value;
@@ -1719,18 +1357,6 @@ ipcMain.handle('set-click-through', (_e, value) => setClickThrough(value));
 ipcMain.handle('get-click-through', () => state.clickThrough);
 ipcMain.handle('hide', () => win?.hide());
 ipcMain.handle('quit', () => app.quit());
-ipcMain.handle('get-urls', () => ({ urls: state.urls.slice(), currentIndex: state.currentUrlIndex }));
-ipcMain.handle('set-urls', (_e, urls) => {
-  state.urls = Array.isArray(urls) ? urls.filter(u => typeof u === 'string' && u.trim()) : [];
-  if (state.currentUrlIndex >= state.urls.length) state.currentUrlIndex = 0;
-  saveState();
-  loadCurrentUrl();
-});
-ipcMain.handle('show-url-menu', () => showUrlMenu());
-ipcMain.handle('reload-webview', () => reloadWebView());
-ipcMain.handle('set-webview-visible', (_e, visible) => {
-  if (webView) webView.setVisible(!!visible);
-});
 ipcMain.handle('get-desktop-source-id', async () => {
   try {
     const sources = await desktopCapturer.getSources({ types: ['screen'] });
@@ -1739,10 +1365,6 @@ ipcMain.handle('get-desktop-source-id', async () => {
     return null;
   }
 });
-ipcMain.handle('navigate-url', (_e, url) => navigateToUrl(url));
-ipcMain.handle('webview-back', () => webviewGoBack());
-ipcMain.handle('webview-forward', () => webviewGoForward());
-ipcMain.handle('get-webview-url', () => webviewNavInfo());
 
 ipcMain.handle('get-mode', () => state.mode);
 ipcMain.handle('set-mode', (_e, mode) => {
@@ -2045,8 +1667,6 @@ ipcMain.handle('save-session-log', async () => {
 });
 
 ipcMain.handle('paste-text', (_e, text) => pasteToForeground(text));
-ipcMain.handle('inject-to-webview', (_e, text) => injectIntoChat(text));
-ipcMain.handle('webview-edit-tail', (_e, { deleteCount, insert }) => webviewEditTail(deleteCount || 0, insert || ''));
 
 // ---- Session cookie export / import (portable across machines) ----
 // cookies.get() returns DECRYPTED values and cookies.set() re-encrypts with the
@@ -2114,11 +1734,129 @@ ipcMain.handle('cookies-import', async () => {
     let list;
     try { list = JSON.parse(raw); } catch { return { ok: false, error: 'Not a valid cookie JSON file' }; }
     const { imported, skipped } = await applyCookies(list);
-    reloadWebView(); // let the loaded site adopt the restored session
     return { ok: true, imported, skipped };
   } catch (e) {
     return { ok: false, error: e.message };
   }
+});
+
+// ---------------------------------------------------------------------------
+// Grok answer generation. Takes the captured "saying" + the active preset's
+// system prompt and streams Grok's reply to the renderer's Answer panel. Uses
+// the same xAI key the user pasted for transcription.
+// ---------------------------------------------------------------------------
+let answerAbort = null;
+
+function friendlyAnswerError(status) {
+  switch (status) {
+    case 400: return 'xAI rejected the answer request (400). Check the model in Settings → Prompts.';
+    case 401:
+    case 403: return `xAI rejected your answer key (${status}). Set/verify the xAI key in Settings → Prompts → Answer generation (needs API credits).`;
+    case 429: return 'xAI rate limit / out of credits (429). Try again shortly.';
+    default:  return `xAI answer request failed (${status || 'unknown'}).`;
+  }
+}
+
+function activePromptText() {
+  const id = state.answer && state.answer.activePromptId;
+  const p = (state.prompts || []).find((q) => q.id === id);
+  return p ? p.text : '';
+}
+
+async function generateAnswer(question) {
+  const q = String(question || '').trim();
+  if (!q) return;
+  // Use the dedicated answer key; fall back to the transcription xAI key so users
+  // who use xAI for both don't have to paste it twice.
+  const apiKey = (
+    ((state.answer && state.answer.apiKey) || '').trim() ||
+    ((state.transcription && state.transcription.xaiApiKey) || '').trim()
+  );
+  if (!apiKey) {
+    if (win && !win.isDestroyed()) win.webContents.send('answer-error', 'No xAI answer key set (Settings → Prompts → Answer generation).');
+    return;
+  }
+  if (answerAbort) { try { answerAbort.abort(); } catch {} answerAbort = null; }
+  const ac = new AbortController();
+  answerAbort = ac;
+
+  const messages = [];
+  const sys = activePromptText();
+  if (sys) messages.push({ role: 'system', content: sys });
+  messages.push({ role: 'user', content: q });
+  const model = (state.answer && state.answer.model) || 'grok-4.3';
+
+  if (win && !win.isDestroyed()) win.webContents.send('answer-start', { question: q });
+
+  let res;
+  try {
+    res = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages, stream: true }),
+      signal: ac.signal,
+    });
+  } catch (e) {
+    if (e.name !== 'AbortError' && win && !win.isDestroyed())
+      win.webContents.send('answer-error', 'xAI request failed: ' + e.message);
+    answerAbort = null;
+    return;
+  }
+  if (!res.ok) {
+    let body = '';
+    try { body = await res.text(); } catch {}
+    appendLogLine(`[grok] ${res.status}: ${body.slice(0, 200)}`);
+    if (win && !win.isDestroyed())
+      win.webContents.send('answer-error', friendlyAnswerError(res.status));
+    answerAbort = null;
+    return;
+  }
+
+  let full = '';
+  try {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t.startsWith('data:')) continue;
+        const payload = t.slice(5).trim();
+        if (payload === '[DONE]') continue;
+        try {
+          const json = JSON.parse(payload);
+          const delta = json.choices?.[0]?.delta?.content || '';
+          if (delta) {
+            full += delta;
+            if (win && !win.isDestroyed()) win.webContents.send('answer-chunk', delta);
+          }
+        } catch {}
+      }
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError' && win && !win.isDestroyed())
+      win.webContents.send('answer-error', 'Stream error: ' + e.message);
+    answerAbort = null;
+    return;
+  }
+  answerAbort = null;
+  if (full.trim()) sessionLog.push({ ts: Date.now(), kind: 'answer', text: full.trim() });
+  if (win && !win.isDestroyed()) win.webContents.send('answer-done', { text: full });
+}
+
+ipcMain.handle('generate-answer', (_e, question) => { generateAnswer(question); });
+ipcMain.handle('stop-answer', () => {
+  if (answerAbort) { try { answerAbort.abort(); } catch {} answerAbort = null; }
+});
+ipcMain.handle('get-answer-config', () => ({ ...state.answer }));
+ipcMain.handle('set-answer-config', (_e, cfg) => {
+  state.answer = { ...state.answer, ...(cfg || {}) };
+  saveState();
 });
 
 // ---- Prompt library: saved prompt snippets, persisted in state.json ----
@@ -2157,7 +1895,7 @@ function showPromptMenu() {
     ? [{ label: 'No saved prompts — add in Settings → Prompts', enabled: false }]
     : list.map((p) => ({
         label: p.title.length > 50 ? p.title.slice(0, 47) + '…' : p.title,
-        click: () => injectIntoChat(p.text),
+        click: () => { if (win && !win.isDestroyed()) win.webContents.send('insert-prompt-text', p.text); },
       }));
   Menu.buildFromTemplate(items).popup({ window: win });
 }

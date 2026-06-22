@@ -39,18 +39,7 @@
     <button class="btn" id="quitBtn" title="Quit">&times;</button>
   </header>
 
-  <div class="urlbar iv-btn" id="urlbar">
-    <button class="urlbar-btn" id="urlBackBtn" title="Back" disabled>&#8249;</button>
-    <button class="urlbar-btn" id="urlForwardBtn" title="Forward" disabled>&#8250;</button>
-    <button class="urlbar-btn" id="urlReloadBtn" title="Reload">&#8635;</button>
-    <input type="text" id="urlInputBar" class="urlbar-input" spellcheck="false"
-      placeholder="Type a URL and press Enter (e.g. chatgpt.com)" />
-    <button class="urlbar-btn urlbar-go" id="urlGoBtn" title="Go">&#10148;</button>
-  </div>
-
   <aside class="right-rail iv-btn" id="rightRail">
-    <button class="rail-btn" id="urlMenuBtn" title="Switch site">&#9662;</button>
-    <button class="rail-btn" id="reloadBtn" title="Reload site">&#8635;</button>
     <button class="rail-btn" id="settingsBtn" title="Settings">&#9881;</button>
     <button class="rail-btn mode-toggle-btn" id="modeToggleBtn" title="Toggle mode: OCR ↔ Voice (Alt+D)">OCR</button>
     <button class="rail-btn rec-btn" id="recBtn" title="Start transcription">
@@ -67,7 +56,6 @@
     <nav class="settings-tabs" id="settingsTabs">
       <button class="tab-btn active" data-tab="general" type="button">General</button>
       <button class="tab-btn" data-tab="session" type="button">Session</button>
-      <button class="tab-btn" data-tab="prompts" type="button">Prompts</button>
       <button class="tab-btn" data-tab="voice" type="button">Voice</button>
       <button class="tab-btn" data-tab="caption" type="button">Caption</button>
       <button class="tab-btn" data-tab="network" type="button">Network</button>
@@ -84,16 +72,6 @@
           <div class="field-row">
             <label class="radio"><input type="radio" name="mode" value="voice" id="modeVoice" /> Voice (mic + system audio &rarr; foreground app)</label>
             <label class="radio"><input type="radio" name="mode" value="caption" id="modeCaption" /> Caption (OCR a screen area &rarr; site input)</label>
-          </div>
-        </section>
-
-        <section class="settings-section">
-          <h3>Web URLs</h3>
-          <p class="hint">Add the sites you want available from the dropdown on the left.</p>
-          <div class="url-list" id="urlList"></div>
-          <div class="url-add">
-            <input type="text" id="urlInput" placeholder="https://chatgpt.com" spellcheck="false" />
-            <button id="urlAddBtn">Add</button>
           </div>
         </section>
 
@@ -118,35 +96,6 @@
           </div>
           <div class="updater-status" id="cookieStatus">Ready.</div>
           <p class="hint">&#9888; The exported file contains your login tokens &mdash; treat it like a password. Anyone with it can access your sessions until they expire.</p>
-        </section>
-      </div>
-
-      <div class="settings-tab" data-tab="prompts" hidden>
-        <section class="settings-section">
-          <h3>Prompt library</h3>
-          <p class="hint">Save reusable prompts and insert them into the loaded ChatGPT/Claude input. The &#9998; button on the rail inserts a saved prompt without opening settings.</p>
-          <div class="prompt-list" id="promptList"></div>
-          <div class="updater-row" style="margin-top:8px">
-            <button id="promptExportBtn">Export prompts&hellip;</button>
-            <button id="promptImportBtn">Import prompts&hellip;</button>
-            <span class="updater-version" id="promptIoStatus"></span>
-          </div>
-        </section>
-        <section class="settings-section">
-          <h3 id="promptEditorTitle">New prompt</h3>
-          <div class="field">
-            <label for="promptTitleInput">Title</label>
-            <input type="text" id="promptTitleInput" placeholder="e.g. Summarize, Behavioral answer&hellip;" spellcheck="false" />
-          </div>
-          <div class="field">
-            <label for="promptTextInput">Prompt text</label>
-            <textarea id="promptTextInput" rows="6" placeholder="Type the prompt to save&hellip;" spellcheck="false"></textarea>
-          </div>
-          <div class="updater-row">
-            <button id="promptSaveBtn">Save prompt</button>
-            <button id="promptNewBtn">New / Clear</button>
-          </div>
-          <div class="updater-status" id="promptStatus"></div>
         </section>
       </div>
 
@@ -352,7 +301,7 @@
           <ol class="help-steps">
             <li>Setup &rarr; pick <b>Caption</b> or <b>Voice</b> mode.</li>
             <li>If using Voice: <b>Voice</b> tab &rarr; choose engine (Deepgram or xAI) and paste the API key.</li>
-            <li><b>Sites</b> tab &rarr; add <code>https://chatgpt.com</code> or <code>https://claude.ai</code>.</li>
+            <li><b>Prompts</b> tab &rarr; pick/edit the answer preset for the meeting type, and paste your xAI key for answers.</li>
             <li>Click <b>Start</b>.</li>
             <li>For Caption mode: a screen-area selector appears &mdash; drag a rectangle around the live caption strip you want to OCR.</li>
             <li>Click the <b>&#9679;</b> rec dot in the header to begin / stop.</li>
@@ -397,10 +346,9 @@
 
         <section class="settings-section help-section">
           <h3>Setup screen</h3>
-          <p>Before each session, the Setup overlay walks through the five tabs:</p>
+          <p>Before each session, the Setup overlay walks through these tabs:</p>
           <ul>
             <li><b>Essentials</b> &mdash; pick active mode (Caption / Voice) and network role (Speaker / Supporter). Speaker shows the port; Supporter shows the address. Use <b>Save default</b> to remember the value across launches.</li>
-            <li><b>Sites</b> &mdash; URLs that appear in the rail dropdown during the session. Add ChatGPT, Claude, etc.</li>
             <li><b>Caption</b> &mdash; OCR language and poll interval. The capture area itself is picked after Start.</li>
             <li><b>Voice</b> &mdash; transcription engine + mic + system audio sources.</li>
             <li><b>Network</b> &mdash; max supporters cap (Speaker only).</li>
@@ -615,9 +563,9 @@
 
       <nav class="setup-tabs-nav" id="setupTabs">
         <button class="stab-btn active" data-stab="essentials" type="button">Essentials</button>
-        <button class="stab-btn" data-stab="sites" type="button">Sites</button>
         <button class="stab-btn" data-stab="caption" type="button">Caption</button>
         <button class="stab-btn" data-stab="voice" type="button">Voice</button>
+        <button class="stab-btn" data-stab="prompts" type="button">Prompts</button>
         <button class="stab-btn" data-stab="network" type="button">Network</button>
       </nav>
 
@@ -652,18 +600,6 @@
               <button id="setupSaveAddressBtn" title="Save current address as default">Save default</button>
             </div>
             <p class="hint" style="margin:6px 0 0">Format: <code>host:port</code></p>
-          </div>
-        </div>
-
-        <div class="setup-tab-pane" data-stab="sites" hidden>
-          <div class="setup-section">
-            <h4>Web URLs</h4>
-            <p class="hint" style="margin:0 0 8px">Sites picked from the rail dropdown during the session.</p>
-            <div class="url-list" id="setupUrlList"></div>
-            <div class="url-add">
-              <input type="text" id="setupUrlInput" placeholder="https://chatgpt.com" spellcheck="false" />
-              <button id="setupUrlAddBtn">Add</button>
-            </div>
           </div>
         </div>
 
@@ -741,6 +677,53 @@
           </div>
         </div>
 
+        <div class="setup-tab-pane" data-stab="prompts" hidden>
+          <div class="setup-section">
+            <h4>Answer generation (Grok)</h4>
+            <p class="hint">Answers are generated by the xAI Grok API. This key is separate from transcription — use Deepgram for transcription and xAI here.</p>
+            <div class="field">
+              <label for="answerKey">xAI API key (for answers)</label>
+              <input type="password" id="answerKey" placeholder="Paste xAI key for answers..." spellcheck="false" />
+              <p class="hint">If left blank, the xAI key from the Voice tab is used (if any). Get a key with API credits at console.x.ai.</p>
+            </div>
+            <div class="field">
+              <label for="answerModel">Model</label>
+              <select id="answerModel">
+                <option value="grok-4.3">grok-4.3 (latest)</option>
+                <option value="grok-4">grok-4</option>
+                <option value="grok-3">grok-3</option>
+                <option value="grok-3-mini">grok-3-mini (fast)</option>
+              </select>
+            </div>
+          </div>
+          <div class="setup-section">
+            <h4>Prompt presets</h4>
+            <p class="hint">Each preset is a system prompt for a meeting type. Pick the active one in the Answer panel's Preset dropdown during the session.</p>
+            <div class="prompt-list" id="promptList"></div>
+            <div class="updater-row" style="margin-top:8px">
+              <button id="promptExportBtn">Export prompts&hellip;</button>
+              <button id="promptImportBtn">Import prompts&hellip;</button>
+              <span class="updater-version" id="promptIoStatus"></span>
+            </div>
+          </div>
+          <div class="setup-section">
+            <h4 id="promptEditorTitle">New prompt</h4>
+            <div class="field">
+              <label for="promptTitleInput">Title</label>
+              <input type="text" id="promptTitleInput" placeholder="e.g. Tech interview, CEO chat&hellip;" spellcheck="false" />
+            </div>
+            <div class="field">
+              <label for="promptTextInput">Prompt text</label>
+              <textarea id="promptTextInput" rows="6" placeholder="Type the prompt to save&hellip;" spellcheck="false"></textarea>
+            </div>
+            <div class="updater-row">
+              <button id="promptSaveBtn">Save prompt</button>
+              <button id="promptNewBtn">New / Clear</button>
+            </div>
+            <div class="updater-status" id="promptStatus"></div>
+          </div>
+        </div>
+
         <div class="setup-tab-pane" data-stab="network" hidden>
           <div class="setup-section">
             <h4>Network options</h4>
@@ -781,6 +764,23 @@
       </div>
     </div>
   </div>
+
+  <section class="answer-main" id="answerMain" hidden>
+    <div class="answer-presetbar">
+      <span class="answer-preset-label">Preset</span>
+      <select id="presetSelect" class="answer-preset-select">
+        <option value="">(no prompt)</option>
+      </select>
+      <button id="answerClearBtn" class="answer-clear-btn" title="Clear answers">Clear</button>
+    </div>
+    <div class="answer-history" id="answerHistory">
+      <div class="answer-empty" id="answerEmpty">No answers yet. Speak or capture text, then press Ctrl+Enter to get an answer.</div>
+    </div>
+    <div class="answer-composer">
+      <textarea id="composerInput" rows="2" spellcheck="false"></textarea>
+      <button id="getAnswerBtn" class="answer-send-btn" title="Get answer (Ctrl+Enter)">&#10148;</button>
+    </div>
+  </section>
 
   <section class="chat-main" id="chatMain" hidden>
     <div class="mic-mode-banner mode-aOnly" id="micModeBanner">

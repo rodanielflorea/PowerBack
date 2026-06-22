@@ -19,9 +19,6 @@ const setupSavePortBtn = document.getElementById("setupSavePortBtn");
 const setupSaveAddressBtn = document.getElementById("setupSaveAddressBtn");
 const setupStartBtn = document.getElementById("setupStartBtn");
 
-const setupUrlList = document.getElementById("setupUrlList");
-const setupUrlInput = document.getElementById("setupUrlInput");
-const setupUrlAddBtn = document.getElementById("setupUrlAddBtn");
 
 const setupCaptureLanguage = document.getElementById("setupCaptureLanguage");
 const setupCapturePollMs = document.getElementById("setupCapturePollMs");
@@ -38,15 +35,10 @@ const setupCaptureSystem = document.getElementById("setupCaptureSystem");
 const setupMaxSupporters = document.getElementById("setupMaxSupporters");
 const setupTwoWay = document.getElementById("setupTwoWay");
 
-const urlMenuBtn = document.getElementById("urlMenuBtn");
-const reloadBtn = document.getElementById("reloadBtn");
 const settingsBtn = document.getElementById("settingsBtn");
 const recBtn = document.getElementById("recBtn");
 const settingsOverlay = document.getElementById("settingsOverlay");
 const settingsCloseBtn = document.getElementById("settingsCloseBtn");
-const urlList = document.getElementById("urlList");
-const urlInput = document.getElementById("urlInput");
-const urlAddBtn = document.getElementById("urlAddBtn");
 
 const modeVoice = document.getElementById("modeVoice");
 const modeCaption = document.getElementById("modeCaption");
@@ -94,7 +86,6 @@ const muteToggleBtn = document.getElementById("muteToggleBtn");
 
 const logBody = document.getElementById("logBody");
 
-let urls = [];
 let txCfg = null;
 let capCfg = null;
 let mode = "voice";
@@ -215,36 +206,6 @@ function flashSaved(el) {
   setTimeout(() => el.classList.remove("save-flash"), 1300);
 }
 
-function renderSetupUrlList(urlsArr) {
-  setupUrlList.innerHTML = "";
-  if (urlsArr.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "url-empty";
-    empty.textContent = "No URLs added yet.";
-    setupUrlList.appendChild(empty);
-    return;
-  }
-  urlsArr.forEach((u, i) => {
-    const row = document.createElement("div");
-    row.className = "url-row";
-    const txt = document.createElement("span");
-    txt.className = "url-text";
-    txt.textContent = u;
-    const rm = document.createElement("button");
-    rm.className = "url-remove";
-    rm.textContent = "×";
-    rm.title = "Remove";
-    rm.addEventListener("click", async () => {
-      urlsArr.splice(i, 1);
-      await window.api.setUrls(urlsArr);
-      renderSetupUrlList(urlsArr);
-    });
-    row.appendChild(txt);
-    row.appendChild(rm);
-    setupUrlList.appendChild(row);
-  });
-}
-
 async function refreshSetupMicList() {
   if (!setupMicSelect) return;
   try {
@@ -294,20 +255,6 @@ setupSaveAddressBtn.addEventListener("click", async () => {
   await window.api.setNetworkConfig({ supporterAddress: addr });
   flashSaved(setupAddressEl);
   log(`Default address saved: ${addr}`, "info");
-});
-
-setupUrlAddBtn.addEventListener("click", async () => {
-  const u = normalizeUrl(setupUrlInput.value);
-  if (!u) return;
-  const data = await window.api.getUrls();
-  const arr = data.urls.slice();
-  arr.push(u);
-  await window.api.setUrls(arr);
-  setupUrlInput.value = "";
-  renderSetupUrlList(arr);
-});
-setupUrlInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") setupUrlAddBtn.click();
 });
 
 setupCaptureLanguage.addEventListener("change", () =>
@@ -390,9 +337,6 @@ async function refreshSetupUI() {
   if (setupTwoWay) setupTwoWay.checked = true;
   applySetupRoleVisibility();
 
-  const data = await window.api.getUrls();
-  renderSetupUrlList(data.urls.slice());
-
   const tx = await window.api.getTranscriptionConfig();
   txCfg = tx;
   setupEngineDeepgram.checked = tx.engine !== "xai";
@@ -410,6 +354,8 @@ async function refreshSetupUI() {
   setupCapturePollMs.value = cap.pollMs || 700;
 
   refreshSetupMicList();
+  // Sync the Prompts tab (answer key/model + presets) with saved state.
+  if (typeof refreshPresetSelect === "function") refreshPresetSelect();
 }
 
 function applyRoleClass(role) {
@@ -437,13 +383,15 @@ function applyRoleSettingsTabs(isSupporter) {
   }
 }
 
+const answerMain = document.getElementById("answerMain");
+
 function showSetup() {
   if (settingsOverlay) settingsOverlay.hidden = true;
   setupOverlay.hidden = false;
   document.body.classList.remove("in-interview");
   endBtn.classList.remove("live");
   applyRoleClass("");
-  window.api.setWebviewVisible(false);
+  if (answerMain) answerMain.hidden = true;
   activateSetupTab("essentials");
   refreshSetupUI();
 }
@@ -459,11 +407,8 @@ function hideSetup() {
       ? "supporter"
       : "";
   applyRoleClass(role);
-  if (role === "supporter") {
-    window.api.setWebviewVisible(false);
-  } else {
-    window.api.setWebviewVisible(true);
-  }
+  // The speaker sees the Grok answer panel; the supporter uses the chat panel.
+  if (answerMain) answerMain.hidden = role === "supporter";
 }
 
 setupStartBtn.addEventListener("click", async () => {
@@ -541,13 +486,10 @@ async function showEndModal() {
   }
 
   endModal.hidden = false;
-  window.api.setWebviewVisible(false);
 }
 
 function hideEndModal() {
   endModal.hidden = true;
-  if (setupOverlay.hidden && settingsOverlay.hidden)
-    window.api.setWebviewVisible(true);
 }
 
 endBtn.addEventListener("click", showEndModal);
@@ -574,120 +516,6 @@ window.api.onOpacityChanged((v) => updateFill(v));
 window.api.onStealthChanged((v) => updateStealth(v));
 window.api.getOpacity().then(updateFill);
 window.api.getStealth().then(updateStealth);
-
-function normalizeUrl(input) {
-  const u = input.trim();
-  if (!u) return null;
-  if (/^https?:\/\//i.test(u)) return u;
-  if (/^[\w.-]+\.[a-z]{2,}/i.test(u)) return "https://" + u;
-  return null;
-}
-
-function renderUrlList() {
-  urlList.innerHTML = "";
-  if (urls.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "url-empty";
-    empty.textContent = "No URLs added yet.";
-    urlList.appendChild(empty);
-    return;
-  }
-  urls.forEach((url, i) => {
-    const row = document.createElement("div");
-    row.className = "url-row";
-    const txt = document.createElement("span");
-    txt.className = "url-text";
-    txt.textContent = url;
-    const rm = document.createElement("button");
-    rm.className = "url-remove";
-    rm.textContent = "×";
-    rm.title = "Remove";
-    rm.addEventListener("click", () => {
-      urls.splice(i, 1);
-      window.api.setUrls(urls);
-      renderUrlList();
-    });
-    row.appendChild(txt);
-    row.appendChild(rm);
-    urlList.appendChild(row);
-  });
-}
-
-async function refreshUrls() {
-  const data = await window.api.getUrls();
-  urls = data.urls;
-  renderUrlList();
-}
-
-urlAddBtn.addEventListener("click", () => {
-  const u = normalizeUrl(urlInput.value);
-  if (!u) return;
-  urls.push(u);
-  window.api.setUrls(urls);
-  urlInput.value = "";
-  renderUrlList();
-});
-
-urlInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") urlAddBtn.click();
-});
-
-urlMenuBtn.addEventListener("click", () => window.api.showUrlMenu());
-reloadBtn.addEventListener("click", () => window.api.reloadWebview());
-
-// --- Top URL bar: type a URL to navigate the loaded page directly. Useful when
-// the site bounces to a human-verification page. ---
-const urlInputBar = document.getElementById("urlInputBar");
-const urlBackBtn = document.getElementById("urlBackBtn");
-const urlForwardBtn = document.getElementById("urlForwardBtn");
-const urlReloadBtn = document.getElementById("urlReloadBtn");
-const urlGoBtn = document.getElementById("urlGoBtn");
-let urlBarFocused = false;
-
-const urlbarEl = document.getElementById("urlbar");
-function setWebviewLoading(on) {
-  if (urlbarEl) urlbarEl.classList.toggle("loading", !!on);
-  if (urlGoBtn) urlGoBtn.classList.toggle("loading", !!on);
-}
-
-function goToUrlBarValue() {
-  const v = (urlInputBar.value || "").trim();
-  if (v) {
-    setWebviewLoading(true); // instant feedback before the page starts loading
-    window.api.navigateUrl(v);
-  }
-  urlInputBar.blur();
-}
-
-if (urlInputBar) {
-  urlInputBar.addEventListener("focus", () => {
-    urlBarFocused = true;
-    urlInputBar.select();
-  });
-  urlInputBar.addEventListener("blur", () => { urlBarFocused = false; });
-  urlInputBar.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); goToUrlBarValue(); }
-    else if (e.key === "Escape") { urlInputBar.blur(); }
-  });
-}
-if (urlGoBtn) urlGoBtn.addEventListener("click", goToUrlBarValue);
-if (urlBackBtn) urlBackBtn.addEventListener("click", () => { setWebviewLoading(true); window.api.webviewBack(); });
-if (urlForwardBtn) urlForwardBtn.addEventListener("click", () => { setWebviewLoading(true); window.api.webviewForward(); });
-if (urlReloadBtn) urlReloadBtn.addEventListener("click", () => { setWebviewLoading(true); window.api.reloadWebview(); });
-window.api.onWebviewLoading(setWebviewLoading);
-
-function applyWebviewNav(info) {
-  if (!info) return;
-  // Don't clobber what the user is typing.
-  if (!urlBarFocused && urlInputBar && typeof info.url === "string") {
-    urlInputBar.value = info.url;
-  }
-  if (urlBackBtn) urlBackBtn.disabled = !info.canBack;
-  if (urlForwardBtn) urlForwardBtn.disabled = !info.canForward;
-}
-
-window.api.onWebviewUrlChanged(applyWebviewNav);
-if (window.api.getWebviewUrl) window.api.getWebviewUrl().then(applyWebviewNav);
 
 const tabBtns = document.querySelectorAll(".tab-btn");
 const tabPanels = document.querySelectorAll(".settings-tab");
@@ -793,6 +621,8 @@ function clearPromptEditor() {
   if (promptEditorTitle) promptEditorTitle.textContent = "New prompt";
 }
 function renderPrompts(list) {
+  // Keep the answer-panel preset dropdown in sync whenever prompts change.
+  if (typeof refreshPresetSelect === "function") refreshPresetSelect();
   if (!promptListEl) return;
   promptListEl.innerHTML = "";
   if (!list || list.length === 0) {
@@ -817,10 +647,9 @@ function renderPrompts(list) {
     title.title = p.text;
     row.appendChild(title);
     row.appendChild(
-      mkBtn("Insert", async () => {
-        setPromptStatus("Inserting…");
-        await window.api.injectToWebview(p.text);
-        setPromptStatus('Inserted "' + p.title + '".');
+      mkBtn("Insert", () => {
+        appendToComposer(p.text);
+        setPromptStatus('Inserted "' + p.title + '" into the question box.');
       }),
     );
     row.appendChild(
@@ -928,13 +757,11 @@ if (logClearBtn)
 
 function openSettings() {
   settingsOverlay.hidden = false;
-  window.api.setWebviewVisible(false);
   const inInterview = document.body.classList.contains("in-interview");
   const isSupporter = netCfg && netCfg.role === "supporter";
   let defaultTab = "general";
   if (inInterview) defaultTab = "network";
   activateTab(defaultTab);
-  refreshUrls();
   refreshModeUI();
   refreshTranscriptionUI();
   refreshCaptureUI();
@@ -946,8 +773,6 @@ function openSettings() {
 
 function closeSettings() {
   settingsOverlay.hidden = true;
-  const isSupporter = netCfg && netCfg.role === "supporter";
-  if (!isSupporter) window.api.setWebviewVisible(true);
 }
 
 settingsBtn.addEventListener("click", openSettings);
@@ -1146,10 +971,9 @@ const HOTKEY_LABELS = {
   moveDown: "Move window down",
   opacityUp: "Opacity up",
   opacityDown: "Opacity down",
-  scrollUp: "Scroll page up",
-  scrollDown: "Scroll page down",
+  scrollUp: "Scroll answers up",
+  scrollDown: "Scroll answers down",
   resetCaptureArea: "Reset capture area (re-pick)",
-  reloadSite: "Reload site",
   toggleStealth: "Toggle stealth",
   toggleRecording: "Start/stop voice or caption",
   toggleMode: "Toggle OCR ↔ Voice mode",
@@ -1159,8 +983,7 @@ const HOTKEY_LABELS = {
   stickyScrollUp: "Scroll sticky note up",
   stickyScrollDown: "Scroll sticky note down",
   helpRequest: "Send help request (speaker → supporter)",
-  submitPrompt: "Submit prompt in Claude/ChatGPT",
-  screenshotToAI: "Screenshot active screen → paste to AI",
+  submitPrompt: "Get answer (send to Grok)",
   toggleClickThrough: "Toggle click-through (mouse passes through)",
 };
 
@@ -1321,7 +1144,6 @@ window.api.onSelectorClosed(() => {
 });
 
 let interimEl = null;
-let injectedSegment = ""; // chars of the in-progress segment currently in the input
 
 function clearInterimPreview() {
   if (interimEl) {
@@ -1338,27 +1160,38 @@ function showInterimPreview(text) {
   interimEl.textContent = "⟳ " + text;
   logBody.scrollTop = logBody.scrollHeight;
 }
-function commonPrefixLen(a, b) {
-  const n = Math.min(a.length, b.length);
-  let i = 0;
-  while (i < n && a[i] === b[i]) i++;
-  return i;
+const composerInput = document.getElementById("composerInput");
+
+// One-shot append (OCR, prompt-insert): drop text onto the end of the composer.
+function appendToComposer(text) {
+  const t = (text || "").trim();
+  if (!t || !composerInput) return;
+  const cur = composerInput.value;
+  composerInput.value = !cur ? t : (cur.endsWith(" ") ? cur + t : cur + " " + t);
+  composerInput.scrollTop = composerInput.scrollHeight;
 }
-// Stream the transcript into the AI input word-by-word as you speak. Each update
-// edits only the TAIL that changed: when Deepgram revises a word we delete the
-// wrong tail and retype it, so the box always reflects Deepgram's best current
-// guess and self-corrects — instead of dumping a whole finalized block at once.
+
+// Live word-by-word streaming of the CURRENT speech segment into the composer
+// (like v1.0.0). `liveSeg` is the not-yet-finalized tail at the end of the box;
+// each update replaces just that tail, so revised interim words self-correct
+// instead of dumping a whole 1–2s block when the segment finalizes.
+let liveSeg = "";
+function resetLiveSeg() { liveSeg = ""; }
 function streamSegment(text, isFinal) {
-  const common = commonPrefixLen(injectedSegment, text);
-  const deleteCount = injectedSegment.length - common;
-  const insert = text.slice(common);
-  if (deleteCount > 0 || insert) window.api.webviewEditTail(deleteCount, insert);
-  injectedSegment = text;
+  if (!composerInput) return;
+  const v = composerInput.value;
+  const base = liveSeg && v.endsWith(liveSeg) ? v.slice(0, v.length - liveSeg.length) : v;
+  const needSpace = base && !/\s$/.test(base);
   if (isFinal) {
-    window.api.webviewEditTail(0, " "); // lock the segment with a trailing space
-    injectedSegment = "";
+    composerInput.value = base + (needSpace ? " " : "") + text.trim() + " ";
+    liveSeg = "";
+  } else {
+    composerInput.value = base + (needSpace ? " " : "") + text;
+    liveSeg = (needSpace ? " " : "") + text;
   }
+  composerInput.scrollTop = composerInput.scrollHeight;
 }
+
 // Coalesce the stream of interim hypotheses to a steady ~12fps so the input
 // updates smoothly (like a live caption) instead of stuttering on every packet.
 let pendingInterim = null;
@@ -1379,7 +1212,6 @@ function scheduleInterimFlush() {
 window.api.onTranscriptLive(({ text, isFinal }) => {
   if (!text) return;
   if (isFinal) {
-    // Apply finals immediately; drop any queued interim (the final supersedes it).
     if (interimFlushTimer) { clearTimeout(interimFlushTimer); interimFlushTimer = null; }
     pendingInterim = null;
     streamSegment(text, true);
@@ -1390,16 +1222,12 @@ window.api.onTranscriptLive(({ text, isFinal }) => {
     scheduleInterimFlush();
   }
 });
-// Utterance boundary (vad_events): close out a segment that never got a final so
-// trailing words aren't left hanging, and clear the live preview.
+// Utterance boundary (vad_events): lock any pending live segment so trailing
+// words aren't left dangling, and clear the live preview.
 window.api.onUtteranceEnd(() => {
-  // Apply any queued interim before closing the segment so words aren't lost.
   if (interimFlushTimer) { clearTimeout(interimFlushTimer); interimFlushTimer = null; }
-  if (pendingInterim != null) { streamSegment(pendingInterim, false); pendingInterim = null; }
-  if (injectedSegment) {
-    window.api.webviewEditTail(0, " ");
-    injectedSegment = "";
-  }
+  if (pendingInterim != null) { streamSegment(pendingInterim, true); pendingInterim = null; }
+  else if (liveSeg) { streamSegment(liveSeg, true); }
   clearInterimPreview();
 });
 window.api.onTranscriptLiveError((msg) => {
@@ -1413,6 +1241,7 @@ window.api.onTranscriptLiveError((msg) => {
 
 window.api.onCaptureText((text) => {
   log("OCR: " + text);
+  appendToComposer(text);
   window.api.sessionLogAdd({ ts: Date.now(), kind: "ocr", text });
 });
 window.api.onCaptureError((msg) => log("OCR error: " + msg, "err"));
@@ -1421,6 +1250,125 @@ window.api.onCaptureState((on) => {
   recBtn.classList.toggle("on", captureRunning);
   updateRecTitle();
 });
+
+// ===== Grok answer panel =====
+const answerHistory = document.getElementById("answerHistory");
+const answerEmpty = document.getElementById("answerEmpty");
+const getAnswerBtn = document.getElementById("getAnswerBtn");
+const answerClearBtn = document.getElementById("answerClearBtn");
+const presetSelect = document.getElementById("presetSelect");
+const answerKeyEl = document.getElementById("answerKey");
+const answerModelEl = document.getElementById("answerModel");
+let currentAnswerEl = null;
+
+function submitComposer() {
+  if (!composerInput) return;
+  const q = composerInput.value.trim();
+  if (!q) return;
+  window.api.generateAnswer(q);
+  composerInput.value = "";
+  if (typeof resetLiveSeg === "function") resetLiveSeg();
+}
+
+if (getAnswerBtn) getAnswerBtn.addEventListener("click", submitComposer);
+if (composerInput) {
+  composerInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      submitComposer();
+    }
+  });
+}
+if (answerClearBtn) {
+  answerClearBtn.addEventListener("click", () => {
+    if (answerHistory)
+      answerHistory.querySelectorAll(".answer-turn").forEach((n) => n.remove());
+    if (answerEmpty) answerEmpty.hidden = false;
+  });
+}
+
+function addAnswerTurn(question) {
+  if (!answerHistory) return null;
+  if (answerEmpty) answerEmpty.hidden = true;
+  const turn = document.createElement("div");
+  turn.className = "answer-turn";
+  const q = document.createElement("div");
+  q.className = "answer-q";
+  q.textContent = question || "";
+  const a = document.createElement("div");
+  a.className = "answer-a streaming";
+  turn.appendChild(q);
+  turn.appendChild(a);
+  answerHistory.appendChild(turn);
+  answerHistory.scrollTop = answerHistory.scrollHeight;
+  return a;
+}
+
+window.api.onAnswerStart(({ question }) => {
+  currentAnswerEl = addAnswerTurn(question || "");
+});
+window.api.onAnswerChunk((delta) => {
+  if (!currentAnswerEl) currentAnswerEl = addAnswerTurn("");
+  currentAnswerEl.textContent += delta;
+  if (answerHistory) answerHistory.scrollTop = answerHistory.scrollHeight;
+});
+window.api.onAnswerDone(() => {
+  if (currentAnswerEl) currentAnswerEl.classList.remove("streaming");
+  currentAnswerEl = null;
+});
+window.api.onAnswerError((msg) => {
+  if (currentAnswerEl) {
+    currentAnswerEl.classList.remove("streaming");
+    currentAnswerEl.textContent +=
+      (currentAnswerEl.textContent ? "\n\n" : "") + "[error] " + msg;
+    currentAnswerEl = null;
+  } else {
+    log("Answer error: " + msg, "err");
+  }
+});
+
+// Global "Get answer" hotkey (Ctrl+Enter) routed from main.
+if (window.api.onTriggerGetAnswer) window.api.onTriggerGetAnswer(() => submitComposer());
+// Scroll-answer hotkeys (Ctrl+Up / Ctrl+Down) scroll the answer history.
+if (window.api.onScrollAnswer) window.api.onScrollAnswer((dir) => {
+  if (answerHistory) answerHistory.scrollTop += (dir || 0) * 120;
+});
+// Prompt-insert rail menu (✎) drops a saved prompt into the composer.
+if (window.api.onInsertPromptText) window.api.onInsertPromptText((text) => appendToComposer(text));
+
+// ---- Preset bar + answer settings (reuse the saved prompt store) ----
+async function refreshPresetSelect() {
+  const cfg = await window.api.getAnswerConfig();
+  if (presetSelect) {
+    const prompts = await window.api.getPrompts();
+    presetSelect.innerHTML = '<option value="">(no prompt)</option>';
+    for (const p of prompts) {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.title || "(untitled)";
+      presetSelect.appendChild(opt);
+    }
+    presetSelect.value = cfg.activePromptId || "";
+  }
+  if (answerKeyEl) answerKeyEl.value = cfg.apiKey || "";
+  if (answerModelEl) answerModelEl.value = cfg.model || "grok-4.3";
+}
+if (presetSelect) {
+  presetSelect.addEventListener("change", () => {
+    window.api.setAnswerConfig({ activePromptId: presetSelect.value || null });
+  });
+}
+if (answerKeyEl) {
+  answerKeyEl.addEventListener("change", () => {
+    window.api.setAnswerConfig({ apiKey: answerKeyEl.value.trim() });
+  });
+}
+if (answerModelEl) {
+  answerModelEl.addEventListener("change", () => {
+    window.api.setAnswerConfig({ model: answerModelEl.value });
+  });
+}
+refreshPresetSelect();
 
 async function refreshMicList() {
   try {
