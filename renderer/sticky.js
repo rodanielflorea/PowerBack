@@ -33,7 +33,11 @@ function renderMessage(msg) {
   if (msg.type === 'chat-text') {
     const t = document.createElement('div');
     t.className = 'msg-text';
-    t.textContent = msg.text || '';
+    if (isScriptMessage(msg.text)) {
+      t.innerHTML = renderScript(msg.text);
+    } else {
+      t.textContent = msg.text || '';
+    }
     wrap.appendChild(t);
   } else if (msg.type === 'chat-image') {
     const img = document.createElement('img');
@@ -125,4 +129,50 @@ if (window.sticky && typeof window.sticky.onMessage === 'function') {
 
 if (window.__stickyHistory && Array.isArray(window.__stickyHistory)) {
   renderHistory(window.__stickyHistory);
+}
+
+// ── Structured script renderer ────────────────────────────────────────────────
+const SCRIPT_SECTIONS = ['OVERVIEW', 'WALKTHROUGH', 'KEY INSIGHT'];
+
+function isScriptMessage(text) {
+  if (!text) return false;
+  return SCRIPT_SECTIONS.some(s => text.includes(s));
+}
+
+function escHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderScript(text) {
+  // Split on known section headings, keeping the heading in the output.
+  const sectionRe = /^(OVERVIEW|WALKTHROUGH|KEY INSIGHT)\s*$/m;
+  const lines = text.split('\n');
+  let html = '';
+  let inSection = false;
+  let bodyLines = [];
+
+  function flushBody() {
+    const body = bodyLines.join('\n').trim();
+    if (body) {
+      // Each non-empty line becomes its own paragraph for readability
+      body.split(/\n\n+/).forEach(para => {
+        const p = para.trim();
+        if (p) html += '<p class="script-body">' + escHtml(p) + '</p>';
+      });
+    }
+    bodyLines = [];
+  }
+
+  lines.forEach(line => {
+    const heading = SCRIPT_SECTIONS.find(s => line.trim() === s);
+    if (heading) {
+      flushBody();
+      inSection = true;
+      html += '<div class="script-section-label">' + escHtml(heading) + '</div>';
+    } else if (inSection) {
+      bodyLines.push(line);
+    }
+  });
+  flushBody();
+  return html || '<span>' + escHtml(text) + '</span>';
 }

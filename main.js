@@ -9,6 +9,8 @@ const { spawn } = require('child_process');
 const WebSocket = require('ws');
 let autoUpdater = null;
 try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
+let officeParser = null;
+try { officeParser = require('officeparser'); } catch {}
 
 // CalculateNativeWinOcclusion: stop Windows from marking this always-on-top
 // overlay "occluded" and PAUSING its paint — that's what makes navigating /
@@ -63,7 +65,7 @@ const HOTKEY_DEFAULTS = {
 const DEFAULT_STATE = {
   x: null, y: null, width: 400, height: 700,
   opacity: 1.0, stealth: true, clickThrough: false,
-  mode: 'caption',
+  mode: 'voice',
   transcription: {
     engine: 'deepgram',
     deepgramApiKey: '',
@@ -89,9 +91,12 @@ const DEFAULT_STATE = {
     outgoingVolume: 1.0,
     virtualCableId: '',
     listenDeviceId: '',
+    maxSupporters: 5,
   },
   welcomeSeen: false,
   prompts: [],
+  // Uploaded base-knowledge documents (extracted text), per category.
+  knowledge: { cv: [], jd: [], support: [], meetings: [] },
   // Grok answer generation: its OWN xAI key (separate from transcription), the
   // model, and which saved prompt (preset) is active.
   answer: { apiKey: '', model: 'grok-4.3', activePromptId: null },
@@ -324,6 +329,7 @@ function loadState() {
       capture: { ...DEFAULT_STATE.capture, ...(raw.capture || {}) },
       network: { ...DEFAULT_STATE.network, ...(raw.network || {}) },
       answer: { ...DEFAULT_STATE.answer, ...(raw.answer || {}) },
+      knowledge: { ...DEFAULT_STATE.knowledge, ...(raw.knowledge || {}) },
       hotkeys: { ...HOTKEY_DEFAULTS, ...(raw.hotkeys || {}) },
     };
     for (const k of Object.keys(HOTKEY_DEFAULTS)) {
@@ -442,6 +448,8 @@ function createWindow() {
   // Answer panel, so we no longer create the WebContentsView.
   win.once('ready-to-show', () => {
     win.show();
+    // Pre-warm the xAI connection so first real request skips TLS handshake.
+    setTimeout(() => warmApiConnection().catch(() => {}), 1500);
   });
 
   win.on('move', () => { saveState(); syncStickyPosition(); });
@@ -487,17 +495,18 @@ function computeDefaultStickyAnchor(mainW, mainH, stickyW, stickyH) {
   const [mx, my] = win.getPosition();
   const display = screen.getDisplayMatching(win.getBounds());
   const work = display.workArea;
-  const gap = 6;
+  const gap = 8;
+  // Always prefer side-by-side (right or left) — never above/below which
+  // causes the sticky to land off-screen or at the top-left corner.
   if (mx + mainW + gap + stickyW <= work.x + work.width) {
     return { xMode: 'rightOf', xGap: gap, yMode: 'alignTop', yOffset: 0 };
   }
   if (mx - gap - stickyW >= work.x) {
     return { xMode: 'leftOf', xGap: gap, yMode: 'alignTop', yOffset: 0 };
   }
-  if (my + mainH + gap + stickyH <= work.y + work.height) {
-    return { xMode: 'alignLeft', xOffset: 0, yMode: 'belowOf', yGap: gap };
-  }
-  return { xMode: 'alignLeft', xOffset: 0, yMode: 'aboveOf', yGap: gap };
+  // No room on either side — force right and let syncStickyPosition clamp
+  // it to the work area rather than falling back to above/below.
+  return { xMode: 'rightOf', xGap: gap, yMode: 'alignTop', yOffset: 0 };
 }
 
 function computeStickyXY(anchor, mainX, mainY, mainW, mainH, stickyW, stickyH) {
@@ -558,8 +567,13 @@ function syncStickyPosition(force) {
   }
   const [mx, my] = win.getPosition();
   const { sx, sy } = computeStickyXY(state.stickyAnchor, mx, my, mainW, mainH, stickyW, stickyH);
+  // Clamp to work area so the sticky is never off-screen or at 0,0.
+  const display = screen.getDisplayMatching(win.getBounds());
+  const work = display.workArea;
+  const cx = Math.max(work.x, Math.min(sx, work.x + work.width  - stickyW));
+  const cy = Math.max(work.y, Math.min(sy, work.y + work.height - stickyH));
   stickyMovingProgrammatically++;
-  try { stickyWin.setBounds({ x: sx, y: sy, width: stickyW, height: stickyH }); } catch {}
+  try { stickyWin.setBounds({ x: cx, y: cy, width: stickyW, height: stickyH }); } catch {}
   setTimeout(() => { stickyMovingProgrammatically = Math.max(0, stickyMovingProgrammatically - 1); }, 50);
 }
 
@@ -644,10 +658,20 @@ function createStickyWindow() {
   });
 }
 
-function openStickyWindow() {
+function openStickyWindow(beside = false) {
   stickyWantOpen = true;
-  if (!stickyWin || stickyWin.isDestroyed()) createStickyWindow();
+  if (beside) state.stickyAnchor = null;
+  const wasNew = !stickyWin || stickyWin.isDestroyed();
+  if (wasNew) createStickyWindow();
   applyStickyState();
+  if (beside) {
+    // For a freshly-created window the initial setBounds may fire before the
+    // OS assigns the final frame, so re-sync after a short delay.
+    const delay = wasNew ? 300 : 0;
+    setTimeout(() => {
+      if (stickyWin && !stickyWin.isDestroyed()) syncStickyPosition(true);
+    }, delay);
+  }
 }
 
 function closeStickyWindow() {
@@ -957,6 +981,7 @@ const HOTKEY_HANDLERS = {
   stickyScrollDown: () => scrollSticky(1),
   helpRequest: () => sendHelpRequest(),
   submitPrompt: () => { if (win && !win.isDestroyed()) win.webContents.send('trigger-get-answer'); },
+  screenshotToAI: () => { if (win && !win.isDestroyed()) win.webContents.send('trigger-screenshot'); },
   toggleClickThrough: () => setClickThrough(!state.clickThrough),
 };
 
@@ -1017,7 +1042,7 @@ function broadcastNetworkStatus() {
     bound: !!wsServer,
     connected: wsClient ? wsClient.readyState === WebSocket.OPEN : false,
     supporters: supporterListSnapshot(),
-    maxSupporters: 1,
+    maxSupporters: state.network.maxSupporters || 5,
   };
   win.webContents.send('network-status', status);
 }
@@ -1366,6 +1391,36 @@ ipcMain.handle('get-desktop-source-id', async () => {
   }
 });
 
+// Returns the sorted index of the display the cursor is on (no desktopCapturer needed).
+ipcMain.handle('get-cursor-display-index', () => {
+  try {
+    const point   = screen.getCursorScreenPoint();
+    const display = screen.getDisplayNearestPoint(point);
+    const sorted  = screen.getAllDisplays()
+      .slice()
+      .sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
+    const idx = sorted.findIndex((d) => d.id === display.id);
+    return idx >= 0 ? idx : 0;
+  } catch { return 0; }
+});
+
+// Returns all screen source IDs sorted by name (Screen 1, Screen 2 …).
+ipcMain.handle('get-all-screen-source-ids', async () => {
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen'] });
+    return sources
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+      .map((s) => s.id);
+  } catch { return []; }
+});
+
+ipcMain.handle('get-cursor-screen-source-id', async () => {
+  const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] });
+  // Return only serializable fields — skip NativeImage thumbnails.
+  return sources.map((s) => ({ id: s.id, name: s.name, display_id: s.display_id }));
+});
+
 ipcMain.handle('get-mode', () => state.mode);
 ipcMain.handle('set-mode', (_e, mode) => {
   if (mode === 'voice' || mode === 'caption') {
@@ -1668,84 +1723,90 @@ ipcMain.handle('save-session-log', async () => {
 
 ipcMain.handle('paste-text', (_e, text) => pasteToForeground(text));
 
-// ---- Session cookie export / import (portable across machines) ----
-// cookies.get() returns DECRYPTED values and cookies.set() re-encrypts with the
-// local machine's key, so the exported JSON restores the session on a different
-// computer/account (unlike copying the raw, DPAPI-bound Cookies file).
-async function serializeCookies() {
-  const cookies = await session.defaultSession.cookies.get({});
-  return cookies.map((c) => ({
-    name: c.name, value: c.value, domain: c.domain, path: c.path,
-    secure: c.secure, httpOnly: c.httpOnly,
-    expirationDate: c.expirationDate, sameSite: c.sameSite, hostOnly: c.hostOnly,
-  }));
-}
-
-async function applyCookies(list) {
-  const now = Date.now() / 1000;
-  let imported = 0, skipped = 0;
-  for (const c of (Array.isArray(list) ? list : [])) {
-    if (!c || !c.name || !c.domain) { skipped++; continue; }
-    if (c.expirationDate && c.expirationDate < now) { skipped++; continue; } // expired
-    const host = String(c.domain).replace(/^\./, '');
-    const details = {
-      url: (c.secure ? 'https://' : 'http://') + host + (c.path || '/'),
-      name: c.name,
-      value: c.value || '',
-      path: c.path || '/',
-      secure: !!c.secure,
-      httpOnly: !!c.httpOnly,
-    };
-    // host-only and __Host- cookies must NOT carry an explicit domain.
-    if (!c.hostOnly && !/^__Host-/.test(c.name)) details.domain = c.domain;
-    if (c.expirationDate) details.expirationDate = c.expirationDate;
-    if (c.sameSite) details.sameSite = c.sameSite;
-    try { await session.defaultSession.cookies.set(details); imported++; }
-    catch { skipped++; }
-  }
-  return { imported, skipped };
-}
-
-ipcMain.handle('cookies-export', async () => {
-  try {
-    const cookies = await serializeCookies();
-    const r = await dialog.showSaveDialog(win, {
-      title: 'Export session cookies',
-      defaultPath: path.join(app.getPath('desktop'), `ace-session-${new Date().toISOString().slice(0, 10)}.json`),
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
-    if (r.canceled || !r.filePath) return { ok: false, canceled: true };
-    await fs.promises.writeFile(r.filePath, JSON.stringify(cookies, null, 2), 'utf8');
-    return { ok: true, count: cookies.length, path: r.filePath };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
-});
-
-ipcMain.handle('cookies-import', async () => {
-  try {
-    const r = await dialog.showOpenDialog(win, {
-      title: 'Import session cookies',
-      properties: ['openFile'],
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
-    if (r.canceled || !r.filePaths || !r.filePaths[0]) return { ok: false, canceled: true };
-    const raw = await fs.promises.readFile(r.filePaths[0], 'utf8');
-    let list;
-    try { list = JSON.parse(raw); } catch { return { ok: false, error: 'Not a valid cookie JSON file' }; }
-    const { imported, skipped } = await applyCookies(list);
-    return { ok: true, imported, skipped };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
-});
-
 // ---------------------------------------------------------------------------
 // Grok answer generation. Takes the captured "saying" + the active preset's
 // system prompt and streams Grok's reply to the renderer's Answer panel. Uses
 // the same xAI key the user pasted for transcription.
 // ---------------------------------------------------------------------------
 let answerAbort = null;
+// Speculative answer state
+let speculativeAbort = null;
+let speculativeQuestion = null;
+let speculativeActive = false;
+let speculativeCommitted = false; // true after commit — stream pipes directly to renderer
+
+const KB_KINDS = ['cv', 'jd', 'support', 'meetings'];
+
+// Extract plain text from an uploaded document buffer (any common format).
+async function extractDocText(arrayBuffer, name) {
+  const ext = String(name || '').split('.').pop().toLowerCase();
+  const buf = Buffer.from(arrayBuffer);
+  const textExts = ['txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'log', 'xml', 'yaml', 'yml', 'rtf'];
+  if (textExts.includes(ext)) return buf.toString('utf8');
+  if (ext === 'html' || ext === 'htm') {
+    return buf.toString('utf8')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  const officeExts = ['pdf', 'docx', 'pptx', 'xlsx', 'odt', 'odp', 'ods', 'doc', 'ppt', 'xls'];
+  if (officeExts.includes(ext)) {
+    if (!officeParser) throw new Error('Document parser unavailable');
+    return String(await officeParser.parseOfficeAsync(buf)).trim();
+  }
+  // Unknown extension — best effort as UTF-8 text.
+  return buf.toString('utf8');
+}
+
+// Concatenate all uploaded knowledge into one context block (uncapped).
+function buildKnowledgeContext() {
+  const k = state.knowledge || {};
+  const join = (arr) => (arr || []).map((i) => i.text).filter(Boolean).join('\n\n');
+  const sections = [
+    ['CANDIDATE RESUME / CV', join(k.cv)],
+    ['JOB DESCRIPTION', join(k.jd)],
+    ['SUPPORTING MATERIAL', join(k.support)],
+    ['PREVIOUS MEETING RECORDS', join(k.meetings)],
+  ];
+  return sections
+    .filter(([, body]) => body)
+    .map(([title, body]) => `${title}:\n${body}`)
+    .join('\n\n----\n\n');
+}
+
+ipcMain.handle('kb-add', async (_e, { kind, name, data }) => {
+  if (!KB_KINDS.includes(kind)) return { ok: false, error: 'bad kind' };
+  let text = '';
+  try {
+    text = await extractDocText(data, name);
+  } catch (e) {
+    appendLogLine(`[kb] extract failed for ${name}: ${e.message}`);
+    return { ok: false, error: 'Could not read ' + name + ' (' + e.message + ')', name };
+  }
+  if (!state.knowledge[kind]) state.knowledge[kind] = [];
+  const item = { name, text, chars: text.length };
+  // CV and JD are single-document; support/meetings accumulate.
+  if (kind === 'cv' || kind === 'jd') state.knowledge[kind] = [item];
+  else state.knowledge[kind].push(item);
+  saveState();
+  return { ok: true, name, chars: text.length };
+});
+
+ipcMain.handle('kb-remove', (_e, { kind, index }) => {
+  if (state.knowledge[kind]) state.knowledge[kind].splice(index, 1);
+  saveState();
+  return { ok: true };
+});
+
+ipcMain.handle('kb-get', () => {
+  const out = {};
+  for (const k of KB_KINDS) {
+    out[k] = (state.knowledge[k] || []).map((i) => ({ name: i.name, chars: i.chars || (i.text ? i.text.length : 0) }));
+  }
+  return out;
+});
 
 function friendlyAnswerError(status) {
   switch (status) {
@@ -1763,9 +1824,11 @@ function activePromptText() {
   return p ? p.text : '';
 }
 
-async function generateAnswer(question) {
+async function generateAnswer(question, images) {
+  // images: array of { base64, mime } or null/undefined
+  const imgs = Array.isArray(images) && images.length ? images : null;
   const q = String(question || '').trim();
-  if (!q) return;
+  if (!q && !imgs) return;
   // Use the dedicated answer key; fall back to the transcription xAI key so users
   // who use xAI for both don't have to paste it twice.
   const apiKey = (
@@ -1783,10 +1846,34 @@ async function generateAnswer(question) {
   const messages = [];
   const sys = activePromptText();
   if (sys) messages.push({ role: 'system', content: sys });
-  messages.push({ role: 'user', content: q });
+  const kb = buildKnowledgeContext();
+  if (kb) messages.push({
+    role: 'system',
+    content: 'Use the following background about the candidate and the role to ground your answer. Prefer specifics from it over generic claims.\n\n' + kb,
+  });
+  messages.push({
+    role: 'system',
+    content: 'When the user asks for a diagram, chart, flowchart, sequence diagram, or any visual structure, output it as a Mermaid code block (```mermaid ... ```) so it can be rendered graphically. Rules for valid Mermaid: (1) No HTML tags inside node labels — plain text only. (2) Use only rectangle brackets [text] for node shapes — do NOT use [/text] or [/text/] trapezoid syntax. (3) No "color:" in style directives. (4) Keep node IDs simple alphanumeric. (5) Do NOT use ASCII art.',
+  });
+  messages.push({
+    role: 'system',
+    content: 'Whenever your answer contains a diagram (Mermaid block) or a code block, append a presenter talking-script at the very end of your response using exactly this format:\n<sticky>\nOVERVIEW\n[One sentence: what this diagram/code shows and why it matters.]\n\nWALKTHROUGH\n[Narrate each major step, node, or code section as if explaining to someone who cannot see the screen. Write in full sentences. Cover every significant part. Aim for 60-90 seconds of speaking.]\n\nKEY INSIGHT\n[One sentence: the single most important takeaway or design decision.]\n</sticky>\nUse plain text only inside the sticky tags — no markdown, no asterisks, no bullet points.',
+  });
+  // Build user message — text only, or text + one/many images for vision models.
+  if (imgs) {
+    const userContent = [];
+    if (q) userContent.push({ type: 'text', text: q });
+    imgs.forEach(({ base64, mime }) => {
+      userContent.push({ type: 'image_url', image_url: { url: `data:${mime || 'image/png'};base64,${base64}` } });
+    });
+    messages.push({ role: 'user', content: userContent });
+  } else {
+    messages.push({ role: 'user', content: q });
+  }
   const model = (state.answer && state.answer.model) || 'grok-4.3';
 
-  if (win && !win.isDestroyed()) win.webContents.send('answer-start', { question: q });
+  const displayQ = q || (imgs ? `[${imgs.length} image${imgs.length > 1 ? 's' : ''}]` : '');
+  if (win && !win.isDestroyed()) win.webContents.send('answer-start', { question: displayQ, hasImage: !!imgs });
 
   let res;
   try {
@@ -1849,9 +1936,197 @@ async function generateAnswer(question) {
   if (win && !win.isDestroyed()) win.webContents.send('answer-done', { text: full });
 }
 
-ipcMain.handle('generate-answer', (_e, question) => { generateAnswer(question); });
+ipcMain.handle('generate-answer', (_e, { question, images } = {}) => {
+  generateAnswer(question, images);
+});
+
+// ── Warm-up: pre-establish the TLS connection to api.x.ai so the first real
+// request skips the ~300-600 ms handshake cost.
+async function warmApiConnection() {
+  const apiKey = (
+    ((state.answer && state.answer.apiKey) || '').trim() ||
+    ((state.transcription && state.transcription.xaiApiKey) || '').trim()
+  );
+  if (!apiKey) return;
+  try {
+    const ac = new AbortController();
+    setTimeout(() => { try { ac.abort(); } catch {} }, 4000);
+    await fetch('https://api.x.ai/v1/models', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: ac.signal,
+    });
+  } catch {}
+}
+ipcMain.handle('warm-api-connection', () => warmApiConnection());
+
+// ── Speculative answer: start streaming before the user hits send.
+// Shares the same message-building logic as generateAnswer but is abortable.
+async function startSpeculative(question) {
+  if (speculativeAbort) { try { speculativeAbort.abort(); } catch {} speculativeAbort = null; }
+  speculativeActive = false;
+  const q = (question || '').trim();
+  if (!q) return;
+  const apiKey = (
+    ((state.answer && state.answer.apiKey) || '').trim() ||
+    ((state.transcription && state.transcription.xaiApiKey) || '').trim()
+  );
+  if (!apiKey) return;
+
+  speculativeQuestion = q;
+  speculativeActive = true;
+  const ac = new AbortController();
+  speculativeAbort = ac;
+
+  const messages = [];
+  const sys = activePromptText();
+  if (sys) messages.push({ role: 'system', content: sys });
+  const kb = buildKnowledgeContext();
+  if (kb) messages.push({ role: 'system', content: 'Use the following background about the candidate and the role to ground your answer. Prefer specifics from it over generic claims.\n\n' + kb });
+  messages.push({ role: 'system', content: 'When the user asks for a diagram, chart, flowchart, sequence diagram, or any visual structure, output it as a Mermaid code block (```mermaid ... ```) so it can be rendered graphically. Rules for valid Mermaid: (1) No HTML tags inside node labels — plain text only. (2) Use only rectangle brackets [text] for node shapes — do NOT use [/text] or [/text/] trapezoid syntax. (3) No "color:" in style directives. (4) Keep node IDs simple alphanumeric. (5) Do NOT use ASCII art.' });
+  messages.push({ role: 'system', content: 'Whenever your answer contains a diagram (Mermaid block) or a code block, append a presenter talking-script at the very end of your response using exactly this format:\n<sticky>\nOVERVIEW\n[One sentence: what this diagram/code shows and why it matters.]\n\nWALKTHROUGH\n[Narrate each major step, node, or code section as if explaining to someone who cannot see the screen. Write in full sentences. Cover every significant part. Aim for 60-90 seconds of speaking.]\n\nKEY INSIGHT\n[One sentence: the single most important takeaway or design decision.]\n</sticky>\nUse plain text only inside the sticky tags — no markdown, no asterisks, no bullet points.' });
+  messages.push({ role: 'user', content: q });
+
+  const model = (state.answer && state.answer.model) || 'grok-4.3';
+  // Do NOT send answer-start yet — we buffer silently and only show the UI
+  // when the user actually commits (or the text matches on submit).
+
+  let res;
+  try {
+    res = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages, stream: true }),
+      signal: ac.signal,
+    });
+  } catch (e) {
+    if (e.name !== 'AbortError') { speculativeActive = false; speculativeAbort = null; }
+    return;
+  }
+  if (!res.ok) { speculativeActive = false; speculativeAbort = null; return; }
+
+  // Buffer chunks silently until commit; after commit, pipe directly to renderer.
+  let speculativeBuffer = '';
+  try {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t.startsWith('data:')) continue;
+        const payload = t.slice(5).trim();
+        if (payload === '[DONE]') continue;
+        try {
+          const delta = JSON.parse(payload).choices?.[0]?.delta?.content || '';
+          if (!delta) continue;
+          speculativeBuffer += delta;
+          // If already committed, stream this chunk live to the renderer
+          if (speculativeCommitted && win && !win.isDestroyed()) {
+            win.webContents.send('answer-chunk', delta);
+          }
+        } catch {}
+      }
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') { speculativeCommitted = false; return; }
+    speculativeCommitted = false; speculativeActive = false; speculativeAbort = null;
+    return;
+  }
+
+  // Stream finished
+  speculativeAbort = null;
+  if (speculativeCommitted) {
+    // We were already piping — send done signal
+    speculativeCommitted = false;
+    speculativeActive = false;
+    speculativeQuestion = null;
+    if (speculativeBuffer.trim()) sessionLog.push({ ts: Date.now(), kind: 'answer', text: speculativeBuffer.trim() });
+    if (win && !win.isDestroyed()) win.webContents.send('answer-done', { text: speculativeBuffer });
+  } else {
+    // Store completed buffer for commitSpeculative to flush
+    ac._buffer = speculativeBuffer;
+    ac._done = true;
+  }
+}
+
+function commitSpeculative(question, images) {
+  const q = (question || '').trim();
+  const hasImages = Array.isArray(images) && images.length > 0;
+
+  if (!hasImages && speculativeQuestion === q) {
+    const ac = speculativeAbort; // null if stream already finished naturally
+    const buffered = (ac && ac._buffer) || '';
+    const streamDone = (ac && ac._done) || !ac;
+
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('answer-start', { question: q, hasImage: false });
+      if (buffered) win.webContents.send('answer-chunk', buffered);
+      if (streamDone) {
+        // Stream already finished — flush everything and close
+        win.webContents.send('answer-done', { text: buffered });
+        if (buffered.trim()) sessionLog.push({ ts: Date.now(), kind: 'answer', text: buffered.trim() });
+        speculativeActive = false;
+        speculativeQuestion = null;
+        speculativeAbort = null;
+        speculativeCommitted = false;
+      } else {
+        // Stream still in flight — set flag so the loop pipes future chunks live
+        speculativeCommitted = true;
+        // speculativeActive/Question/Abort cleared by the loop when it finishes
+      }
+    } else {
+      // No window — just abort cleanly
+      if (ac) { try { ac.abort(); } catch {} }
+      speculativeActive = false; speculativeQuestion = null; speculativeAbort = null; speculativeCommitted = false;
+    }
+    return;
+  }
+
+  // Text changed or has images — discard speculation, start fresh
+  if (speculativeAbort) { try { speculativeAbort.abort(); } catch {} speculativeAbort = null; }
+  speculativeActive = false;
+  speculativeQuestion = null;
+  speculativeCommitted = false;
+  generateAnswer(question, images);
+}
+
+ipcMain.handle('speculative-start', (_e, { question }) => startSpeculative(question));
+ipcMain.handle('speculative-commit', (_e, { question, images } = {}) => commitSpeculative(question, images));
+ipcMain.handle('speculative-cancel', () => {
+  if (speculativeAbort) { try { speculativeAbort.abort(); } catch {} speculativeAbort = null; }
+  speculativeActive = false;
+  speculativeQuestion = null;
+  speculativeCommitted = false;
+});
+
+
 ipcMain.handle('stop-answer', () => {
   if (answerAbort) { try { answerAbort.abort(); } catch {} answerAbort = null; }
+});
+ipcMain.handle('list-xai-models', async () => {
+  const apiKey = (
+    ((state.answer && state.answer.apiKey) || '').trim() ||
+    ((state.transcription && state.transcription.xaiApiKey) || '').trim()
+  );
+  if (!apiKey) return null;
+  try {
+    const r = await fetch('https://api.x.ai/v1/models', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    const ids = (data.data || data.models || [])
+      .map((m) => (typeof m === 'string' ? m : m.id))
+      .filter(Boolean);
+    return ids.length ? ids : null;
+  } catch {
+    return null;
+  }
 });
 ipcMain.handle('get-answer-config', () => ({ ...state.answer }));
 ipcMain.handle('set-answer-config', (_e, cfg) => {
@@ -1985,7 +2260,7 @@ ipcMain.handle('reset-all-hotkeys', () => {
   registerHotkeys();
 });
 
-ipcMain.handle('sticky-open', () => openStickyWindow());
+ipcMain.handle('sticky-open', () => openStickyWindow(true));
 ipcMain.handle('sticky-close', () => closeStickyWindow());
 ipcMain.handle('sticky-clear', () => {
   chatHistory = [];
@@ -2011,6 +2286,18 @@ ipcMain.handle('sticky-send-text', (_e, text) => {
   if (!t) return false;
   const msg = { type: 'chat-text', text: t, ts: Date.now(), fromMe: true };
   pushChatToSticky(msg);
+  // Auto-resize sticky to fit the script content.
+  // Estimate: header(24) + input(42) + padding(32) + ~18px per line, ~45 chars/line.
+  if (stickyWin && !stickyWin.isDestroyed()) {
+    const lines = Math.ceil(t.length / 45) + t.split('\n').length;
+    const needed = 24 + 42 + 32 + Math.max(lines * 18, 80);
+    const maxH = (screen.getPrimaryDisplay().workArea.height * 0.80) | 0;
+    const newH = Math.min(needed, maxH);
+    const [curW] = stickyWin.getSize();
+    try { stickyWin.setSize(curW, newH); } catch {}
+    // Re-sync position so the window doesn't drift off screen after resize
+    setTimeout(() => syncStickyPosition(), 50);
+  }
   let sent = 0;
   if (state.network.role === 'speaker') {
     const payload = { type: 'chat-text', text: t, ts: msg.ts };

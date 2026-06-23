@@ -7,33 +7,6 @@ const hideBtn = document.getElementById("hideBtn");
 const quitBtn = document.getElementById("quitBtn");
 
 const setupOverlay = document.getElementById("setupOverlay");
-const setupModeCaption = document.getElementById("setupModeCaption");
-const setupModeVoice = document.getElementById("setupModeVoice");
-const setupRoleSpeaker = document.getElementById("setupRoleSpeaker");
-const setupRoleSupporter = document.getElementById("setupRoleSupporter");
-const setupPortBlock = document.getElementById("setupPortBlock");
-const setupAddressBlock = document.getElementById("setupAddressBlock");
-const setupPortEl = document.getElementById("setupPort");
-const setupAddressEl = document.getElementById("setupAddress");
-const setupSavePortBtn = document.getElementById("setupSavePortBtn");
-const setupSaveAddressBtn = document.getElementById("setupSaveAddressBtn");
-const setupStartBtn = document.getElementById("setupStartBtn");
-
-
-const setupCaptureLanguage = document.getElementById("setupCaptureLanguage");
-const setupCapturePollMs = document.getElementById("setupCapturePollMs");
-
-const setupEngineDeepgram = document.getElementById("setupEngineDeepgram");
-const setupEngineXai = document.getElementById("setupEngineXai");
-const setupDeepgramKey = document.getElementById("setupDeepgramKey");
-const setupXaiKey = document.getElementById("setupXaiKey");
-const setupVoiceLanguage = document.getElementById("setupVoiceLanguage");
-const setupMicSelect = document.getElementById("setupMicSelect");
-const setupCaptureMic = document.getElementById("setupCaptureMic");
-const setupCaptureSystem = document.getElementById("setupCaptureSystem");
-
-const setupMaxSupporters = document.getElementById("setupMaxSupporters");
-const setupTwoWay = document.getElementById("setupTwoWay");
 
 const settingsBtn = document.getElementById("settingsBtn");
 const recBtn = document.getElementById("recBtn");
@@ -89,6 +62,96 @@ const logBody = document.getElementById("logBody");
 let txCfg = null;
 let capCfg = null;
 let mode = "voice";
+
+// ===== Custom select — replaces native <select> popups which are OS-level windows
+// and therefore bypass setContentProtection (stealth). The custom dropdown renders
+// entirely inside the Electron BrowserWindow and is always stealth-protected.
+function makeCustomSelect(sel, compact) {
+  if (!sel || sel._cselDone) return;
+  sel._cselDone = true;
+  sel.style.display = "none";
+
+  const wrap = document.createElement("div");
+  wrap.className = "csel" + (compact ? " csel-compact" : "");
+  sel.parentNode.insertBefore(wrap, sel);
+  wrap.appendChild(sel);
+
+  const btn = document.createElement("div");
+  btn.className = "csel-btn";
+  btn.setAttribute("tabindex", "0");
+  wrap.appendChild(btn);
+
+  const list = document.createElement("div");
+  list.className = "csel-list";
+  list.hidden = true;
+  wrap.appendChild(list);
+
+  function refresh() {
+    const cur = Array.from(sel.options).find((o) => o.value === sel.value);
+    btn.childNodes.forEach((n) => { if (n.nodeType === 3) n.remove(); });
+    btn.firstChild ? btn.firstChild.textContent = (cur ? cur.textContent : "") : (btn.textContent = (cur ? cur.textContent : ""));
+    // simpler:
+    btn.textContent = cur ? cur.textContent : "";
+    list.innerHTML = "";
+    for (const o of Array.from(sel.options)) {
+      const item = document.createElement("div");
+      item.className = "csel-opt" + (o.value === sel.value ? " selected" : "");
+      item.textContent = o.textContent;
+      item.title = o.textContent;
+      item.dataset.value = o.value;
+      item.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        sel.value = o.value;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+        refresh();
+        close();
+      });
+      list.appendChild(item);
+    }
+  }
+
+  function open() {
+    refresh();
+    list.hidden = false;
+    btn.classList.add("open");
+    // Flip upward if the list would overflow the viewport bottom
+    const btnRect = btn.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - btnRect.bottom;
+    list.classList.toggle("up", spaceBelow < 200);
+  }
+
+  function close() {
+    list.hidden = true;
+    btn.classList.remove("open");
+  }
+
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    list.hidden ? open() : close();
+  });
+  btn.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); list.hidden ? open() : close(); }
+    if (e.key === "Escape") close();
+  });
+  document.addEventListener("click", close);
+
+  // Watch for option changes (populateModelSelects rebuilds options dynamically)
+  const mo = new MutationObserver(refresh);
+  mo.observe(sel, { childList: true, subtree: true, attributes: true, attributeFilter: ["selected"] });
+
+  refresh();
+  sel._cselRefresh = refresh;
+}
+
+// Apply to every <select> in the document after DOM is ready.
+// compact=true for the small presetbar selects.
+(function applyCustomSelects() {
+  const compactIds = new Set(["presetSelect", "answerModelHeader"]);
+  document.querySelectorAll("select").forEach((sel) => {
+    makeCustomSelect(sel, compactIds.has(sel.id));
+  });
+})();
 
 function updateFill(opacity) {
   sliderFill.style.width = `${Math.round(opacity * 100)}%`;
@@ -157,207 +220,6 @@ window.api.onClickThroughChanged((v) => updateClickThrough(v));
 hideBtn.addEventListener("click", () => window.api.hide());
 quitBtn.addEventListener("click", () => window.api.quit());
 
-function applySetupRoleVisibility() {
-  const isSpeaker = setupRoleSpeaker.checked;
-  setupPortBlock.hidden = !isSpeaker;
-  setupAddressBlock.hidden = isSpeaker;
-  if (setupMaxSupporters) {
-    const field = document.getElementById("setupMaxSupportersField");
-    if (field) field.style.display = isSpeaker ? "" : "none";
-  }
-}
-
-function activateSetupTab(name) {
-  document
-    .querySelectorAll(".stab-btn")
-    .forEach((b) => b.classList.toggle("active", b.dataset.stab === name));
-  document.querySelectorAll(".setup-tab-pane").forEach((p) => {
-    p.hidden = p.dataset.stab !== name;
-  });
-}
-
-document.querySelectorAll(".stab-btn").forEach((btn) => {
-  btn.addEventListener("click", () => activateSetupTab(btn.dataset.stab));
-});
-
-function applySetupModeTabVisibility(activeMode) {
-  const voiceTab = document.querySelector('.stab-btn[data-stab="voice"]');
-  const captionTab = document.querySelector('.stab-btn[data-stab="caption"]');
-  const isCaption = activeMode === "caption";
-  if (voiceTab) voiceTab.style.display = isCaption ? "none" : "";
-  if (captionTab) captionTab.style.display = isCaption ? "" : "none";
-  const activeBtn = document.querySelector(".stab-btn.active");
-  if (activeBtn && activeBtn.style.display === "none")
-    activateSetupTab("essentials");
-}
-
-setupModeCaption.addEventListener("change", () => {
-  if (setupModeCaption.checked) applySetupModeTabVisibility("caption");
-});
-setupModeVoice.addEventListener("change", () => {
-  if (setupModeVoice.checked) applySetupModeTabVisibility("voice");
-});
-
-function flashSaved(el) {
-  if (!el) return;
-  el.classList.remove("save-flash");
-  void el.offsetWidth;
-  el.classList.add("save-flash");
-  setTimeout(() => el.classList.remove("save-flash"), 1300);
-}
-
-async function refreshSetupMicList() {
-  if (!setupMicSelect) return;
-  try {
-    await navigator.mediaDevices
-      .getUserMedia({ audio: true })
-      .then((s) => s.getTracks().forEach((t) => t.stop()));
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const mics = devices.filter((d) => d.kind === "audioinput");
-    setupMicSelect.innerHTML = "";
-    const def = document.createElement("option");
-    def.value = "";
-    def.textContent = "System default";
-    setupMicSelect.appendChild(def);
-    mics.forEach((m) => {
-      const o = document.createElement("option");
-      o.value = m.deviceId;
-      o.textContent = m.label || `Microphone (${m.deviceId.slice(0, 6)})`;
-      setupMicSelect.appendChild(o);
-    });
-    if (txCfg && txCfg.micDeviceId) setupMicSelect.value = txCfg.micDeviceId;
-  } catch (e) {
-    log("Setup mic enumeration failed: " + e.message, "err");
-  }
-}
-
-[setupRoleSpeaker, setupRoleSupporter].forEach((el) => {
-  el.addEventListener("change", applySetupRoleVisibility);
-});
-
-setupSavePortBtn.addEventListener("click", async () => {
-  const port = parseInt(setupPortEl.value, 10);
-  if (!Number.isFinite(port) || port < 1 || port > 65535) {
-    window.alert("Enter a valid port (1–65535)");
-    return;
-  }
-  await window.api.setNetworkConfig({ speakerPort: port });
-  flashSaved(setupPortEl);
-  log(`Default port saved: ${port}`, "info");
-});
-
-setupSaveAddressBtn.addEventListener("click", async () => {
-  const addr = setupAddressEl.value.trim();
-  if (!/^[^:\s]+:\d+$/.test(addr)) {
-    window.alert("Enter address as host:port (e.g. 172.16.98.11:2000)");
-    return;
-  }
-  await window.api.setNetworkConfig({ supporterAddress: addr });
-  flashSaved(setupAddressEl);
-  log(`Default address saved: ${addr}`, "info");
-});
-
-setupCaptureLanguage.addEventListener("change", () =>
-  window.api.setCaptureConfig({ language: setupCaptureLanguage.value }),
-);
-setupCapturePollMs.addEventListener("change", () => {
-  const v = parseInt(setupCapturePollMs.value, 10);
-  if (Number.isFinite(v) && v >= 200)
-    window.api.setCaptureConfig({ pollMs: v });
-});
-
-function updateSetupEngineBlocks(engine) {
-  const dg = document.getElementById("setupDeepgramBlock");
-  const xa = document.getElementById("setupXaiBlock");
-  if (dg) dg.hidden = engine !== "deepgram";
-  if (xa) xa.hidden = engine !== "xai";
-}
-
-setupEngineDeepgram.addEventListener("change", () => {
-  if (!setupEngineDeepgram.checked) return;
-  txCfg = { ...(txCfg || {}), engine: "deepgram" };
-  window.api.setTranscriptionConfig({ engine: "deepgram" });
-  updateSetupEngineBlocks("deepgram");
-});
-if (setupEngineXai) setupEngineXai.addEventListener("change", () => {
-  if (!setupEngineXai.checked) return;
-  txCfg = { ...(txCfg || {}), engine: "xai" };
-  window.api.setTranscriptionConfig({ engine: "xai" });
-  updateSetupEngineBlocks("xai");
-});
-setupDeepgramKey.addEventListener("change", () =>
-  window.api.setTranscriptionConfig({
-    deepgramApiKey: setupDeepgramKey.value.trim(),
-  }),
-);
-if (setupXaiKey) setupXaiKey.addEventListener("change", () =>
-  window.api.setTranscriptionConfig({
-    xaiApiKey: setupXaiKey.value.trim(),
-  }),
-);
-setupVoiceLanguage.addEventListener("change", () =>
-  window.api.setTranscriptionConfig({ language: setupVoiceLanguage.value }),
-);
-setupCaptureMic.addEventListener("change", () =>
-  window.api.setTranscriptionConfig({ captureMic: setupCaptureMic.checked }),
-);
-setupCaptureSystem.addEventListener("change", () =>
-  window.api.setTranscriptionConfig({
-    captureSystem: setupCaptureSystem.checked,
-  }),
-);
-setupMicSelect.addEventListener("change", () =>
-  window.api.setTranscriptionConfig({ micDeviceId: setupMicSelect.value }),
-);
-
-setupMaxSupporters.addEventListener("change", () => {
-  const n = parseInt(setupMaxSupporters.value, 10);
-  if (Number.isFinite(n) && n >= 1)
-    window.api.setNetworkConfig({ maxSupporters: n });
-});
-if (setupTwoWay) setupTwoWay.addEventListener("change", () => {});
-
-async function refreshSetupUI() {
-  const m = await window.api.getMode();
-  setupModeCaption.checked = m !== "voice";
-  setupModeVoice.checked = m === "voice";
-  applySetupModeTabVisibility(m === "voice" ? "voice" : "caption");
-
-  const netC = await window.api.getNetworkConfig();
-  const role = netC.role || "speaker";
-  setupRoleSpeaker.checked = role === "speaker";
-  setupRoleSupporter.checked = role === "supporter";
-  setupPortEl.value = netC.speakerPort || parsePort(netC.address) || 2000;
-  setupAddressEl.value =
-    netC.supporterAddress ||
-    (netC.address && !netC.address.startsWith("0.0.0.0")
-      ? netC.address
-      : "172.16.98.11:2000");
-  setupMaxSupporters.value = netC.maxSupporters || 1;
-  if (setupTwoWay) setupTwoWay.checked = true;
-  applySetupRoleVisibility();
-
-  const tx = await window.api.getTranscriptionConfig();
-  txCfg = tx;
-  setupEngineDeepgram.checked = tx.engine !== "xai";
-  if (setupEngineXai) setupEngineXai.checked = tx.engine === "xai";
-  setupDeepgramKey.value = tx.deepgramApiKey || "";
-  if (setupXaiKey) setupXaiKey.value = tx.xaiApiKey || "";
-  updateSetupEngineBlocks(tx.engine);
-  setupVoiceLanguage.value = tx.language || "auto";
-  setupCaptureMic.checked = tx.captureMic !== false;
-  setupCaptureSystem.checked = tx.captureSystem !== false;
-
-  const cap = await window.api.getCaptureConfig();
-  capCfg = cap;
-  setupCaptureLanguage.value = cap.language || "English";
-  setupCapturePollMs.value = cap.pollMs || 700;
-
-  refreshSetupMicList();
-  // Sync the Prompts tab (answer key/model + presets) with saved state.
-  if (typeof refreshPresetSelect === "function") refreshPresetSelect();
-}
-
 function applyRoleClass(role) {
   document.body.classList.toggle("role-supporter", role === "supporter");
   document.body.classList.toggle("role-speaker", role === "speaker");
@@ -366,21 +228,9 @@ function applyRoleClass(role) {
   applyRoleSettingsTabs(role === "supporter");
 }
 
-function applyRoleSettingsTabs(isSupporter) {
-  const hiddenForSupporter = ["general", "voice", "caption", "hotkeys"];
-  const shownForSupporter = ["network", "log", "help"];
-  document.querySelectorAll(".tab-btn").forEach((btn) => {
-    const tab = btn.dataset.tab;
-    if (isSupporter) {
-      btn.style.display = hiddenForSupporter.includes(tab) ? "none" : "";
-    } else {
-      btn.style.display = "";
-    }
-  });
-  if (isSupporter) {
-    const activeBtn = document.querySelector(".tab-btn.active");
-    if (activeBtn && activeBtn.style.display === "none") activateTab("network");
-  }
+function applyRoleSettingsTabs() {
+  // Settings is now just API keys / Prompts / Hotkeys — shown for both roles.
+  document.querySelectorAll(".tab-btn").forEach((btn) => { btn.style.display = ""; });
 }
 
 const answerMain = document.getElementById("answerMain");
@@ -392,8 +242,7 @@ function showSetup() {
   endBtn.classList.remove("live");
   applyRoleClass("");
   if (answerMain) answerMain.hidden = true;
-  activateSetupTab("essentials");
-  refreshSetupUI();
+  if (typeof refreshKb === "function") refreshKb();
 }
 
 function hideSetup() {
@@ -401,58 +250,116 @@ function hideSetup() {
   setupOverlay.hidden = true;
   document.body.classList.add("in-interview");
   endBtn.classList.add("live");
-  const role = setupRoleSpeaker.checked
-    ? "speaker"
-    : setupRoleSupporter.checked
-      ? "supporter"
-      : "";
+  const role = (setupRoleSupporterV && setupRoleSupporterV.checked) ? "supporter" : "speaker";
   applyRoleClass(role);
   // The speaker sees the Grok answer panel; the supporter uses the chat panel.
   if (answerMain) answerMain.hidden = role === "supporter";
 }
 
-setupStartBtn.addEventListener("click", async () => {
-  const chosenMode = setupModeCaption.checked ? "caption" : "voice";
-  const chosenRole = setupRoleSpeaker.checked ? "speaker" : "supporter";
+// ===== New Interview-Setup page (Stage 2): gear, role toggle, Start, uploads =====
+const setupSettingsBtn = document.getElementById("setupSettingsBtn");
+if (setupSettingsBtn) setupSettingsBtn.addEventListener("click", () => openSettings());
+
+const setupRoleSpeakerV = document.getElementById("setupRoleSpeakerV");
+const setupRoleSupporterV = document.getElementById("setupRoleSupporterV");
+const setupAddressV = document.getElementById("setupAddressV");
+const setupStartBtnV = document.getElementById("setupStartBtnV");
+
+function syncSetupRoleV() {
+  const sup = !!(setupRoleSupporterV && setupRoleSupporterV.checked);
+  if (setupAddressV) setupAddressV.hidden = !sup;
+}
+if (setupRoleSpeakerV) setupRoleSpeakerV.addEventListener("change", syncSetupRoleV);
+if (setupRoleSupporterV) setupRoleSupporterV.addEventListener("change", syncSetupRoleV);
+syncSetupRoleV();
+
+if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
+  const sup = !!(setupRoleSupporterV && setupRoleSupporterV.checked);
+  const chosenRole = sup ? "supporter" : "speaker";
   const patch = { role: chosenRole };
-  if (chosenRole === "speaker") {
-    const port = parseInt(setupPortEl.value, 10);
-    if (!Number.isFinite(port) || port < 1 || port > 65535) {
-      window.alert("Enter a valid port (1–65535)");
-      return;
-    }
-    patch.speakerPort = port;
-  } else {
-    const addr = setupAddressEl.value.trim();
+  if (sup) {
+    const addr = (setupAddressV && setupAddressV.value.trim()) || "172.16.98.11:2000";
     if (!/^[^:\s]+:\d+$/.test(addr)) {
       window.alert("Enter address as host:port (e.g. 172.16.98.11:2000)");
       return;
     }
     patch.supporterAddress = addr;
+  } else {
+    patch.speakerPort = 2000;
   }
-  await window.api.setMode(chosenMode);
-  mode = chosenMode;
+  await window.api.setMode("voice");
+  mode = "voice";
   updateModeToggleBtn();
   await window.api.setNetworkConfig(patch);
   netCfg = await window.api.getNetworkConfig();
-  log(`Setup-start: netCfg refreshed (role=${netCfg.role || "none"})`, "info");
   await window.api.startNetwork();
   hideSetup();
-  const showAddr =
-    chosenRole === "speaker"
-      ? `0.0.0.0:${patch.speakerPort}`
-      : patch.supporterAddress;
-  log(`Started: ${chosenMode} mode as ${chosenRole} on ${showAddr}`, "info");
+  log(`Started: voice mode as ${chosenRole}`, "info");
+});
 
-  if (chosenMode === "caption") {
-    const cap = await window.api.getCaptureConfig();
-    if (!cap.rect) {
-      log("Caption mode: pick a screen area to OCR", "info");
-      pendingCaptureStart = true;
-      setTimeout(() => window.api.selectCaptureArea(), 300);
+// Upload zones — read each file's bytes, send to main for text extraction, and
+// render chips from the stored (persisted) knowledge.
+const KB_KINDS = ["cv", "jd", "support", "meetings"];
+const cap1 = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+function renderKbList(kind, items) {
+  const el = document.getElementById("files" + cap1(kind));
+  if (!el) return;
+  el.innerHTML = "";
+  (items || []).forEach((it, i) => {
+    const chip = document.createElement("span");
+    chip.className = "upload-chip";
+    const kb = it.chars ? ` · ${Math.max(1, Math.round(it.chars / 1000))}k` : "";
+    chip.textContent = it.name + kb;
+    const x = document.createElement("button");
+    x.className = "upload-chip-x";
+    x.textContent = "×";
+    x.title = "Remove";
+    x.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await window.api.kbRemove(kind, i);
+      refreshKb();
+    });
+    chip.appendChild(x);
+    el.appendChild(chip);
+  });
+}
+
+async function refreshKb() {
+  if (!window.api.kbGet) return;
+  const kb = await window.api.kbGet();
+  for (const kind of KB_KINDS) renderKbList(kind, kb[kind] || []);
+}
+
+async function addKbFiles(kind, fileList) {
+  const files = Array.from(fileList || []);
+  for (const f of files) {
+    try {
+      const buf = await f.arrayBuffer();
+      const r = await window.api.kbAdd(kind, f.name, buf);
+      if (r && !r.ok) log(`Upload failed (${f.name}): ${r.error || "error"}`, "err");
+    } catch (err) {
+      log(`Upload failed (${f.name}): ${err.message}`, "err");
     }
   }
+  refreshKb();
+}
+
+KB_KINDS.forEach((kind) => {
+  const zone = document.getElementById("drop" + cap1(kind));
+  const input = document.getElementById("file" + cap1(kind));
+  if (!zone || !input) return;
+  zone.addEventListener("click", () => input.click());
+  input.addEventListener("change", () => { addKbFiles(kind, input.files); input.value = ""; });
+  zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("dragover"); });
+  zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    zone.classList.remove("dragover");
+    addKbFiles(kind, e.dataTransfer && e.dataTransfer.files);
+  });
 });
+refreshKb();
 
 const endModal = document.getElementById("endModal");
 const endModalList = document.getElementById("endModalList");
@@ -561,44 +468,6 @@ if (updaterInstallBtn)
     window.api.installUpdateNow(),
   );
 
-// ---- Session cookie export / import ----
-const cookieExportBtn = document.getElementById("cookieExportBtn");
-const cookieImportBtn = document.getElementById("cookieImportBtn");
-const cookieStatusEl = document.getElementById("cookieStatus");
-function setCookieStatus(msg) {
-  if (cookieStatusEl) cookieStatusEl.textContent = msg;
-}
-if (cookieExportBtn)
-  cookieExportBtn.addEventListener("click", async () => {
-    setCookieStatus("Exporting…");
-    const r = await window.api.exportCookies();
-    if (r && r.ok) setCookieStatus(`Exported ${r.count} cookies. Keep this file private.`);
-    else if (r && r.canceled) setCookieStatus("Export canceled.");
-    else setCookieStatus("Export failed: " + ((r && r.error) || "unknown error"));
-  });
-if (cookieImportBtn)
-  cookieImportBtn.addEventListener("click", async () => {
-    setCookieStatus("Importing…");
-    const r = await window.api.importCookies();
-    if (r && r.ok)
-      setCookieStatus(`Imported ${r.imported} cookies${r.skipped ? `, skipped ${r.skipped}` : ""}. Reloading the site…`);
-    else if (r && r.canceled) setCookieStatus("Import canceled.");
-    else setCookieStatus("Import failed: " + ((r && r.error) || "unknown error"));
-  });
-
-// Setup-wizard import (same handler) for restoring a session on a new machine.
-const setupImportCookiesBtn = document.getElementById("setupImportCookiesBtn");
-const setupCookieStatusEl = document.getElementById("setupCookieStatus");
-if (setupImportCookiesBtn)
-  setupImportCookiesBtn.addEventListener("click", async () => {
-    if (setupCookieStatusEl) setupCookieStatusEl.textContent = "Importing…";
-    const r = await window.api.importCookies();
-    if (setupCookieStatusEl) {
-      if (r && r.ok) setupCookieStatusEl.textContent = `Imported ${r.imported} cookies.`;
-      else if (r && r.canceled) setupCookieStatusEl.textContent = "";
-      else setupCookieStatusEl.textContent = "Failed: " + ((r && r.error) || "error");
-    }
-  });
 
 // ---- Prompt library ----
 const promptListEl = document.getElementById("promptList");
@@ -757,11 +626,8 @@ if (logClearBtn)
 
 function openSettings() {
   settingsOverlay.hidden = false;
-  const inInterview = document.body.classList.contains("in-interview");
   const isSupporter = netCfg && netCfg.role === "supporter";
-  let defaultTab = "general";
-  if (inInterview) defaultTab = "network";
-  activateTab(defaultTab);
+  activateTab("apikeys");
   refreshModeUI();
   refreshTranscriptionUI();
   refreshCaptureUI();
@@ -1240,6 +1106,12 @@ window.api.onTranscriptLiveError((msg) => {
 });
 
 window.api.onCaptureText((text) => {
+  // Messages starting with '[' are internal status/log lines (e.g. "[sticky sent: ...]"),
+  // not real OCR content — log them but never inject them into the composer.
+  if (text && text.trimStart().startsWith('[')) {
+    log(text);
+    return;
+  }
   log("OCR: " + text);
   appendToComposer(text);
   window.api.sessionLogAdd({ ts: Date.now(), kind: "ocr", text });
@@ -1259,14 +1131,265 @@ const answerClearBtn = document.getElementById("answerClearBtn");
 const presetSelect = document.getElementById("presetSelect");
 const answerKeyEl = document.getElementById("answerKey");
 const answerModelEl = document.getElementById("answerModel");
+const answerModelHeaderEl = document.getElementById("answerModelHeader");
 let currentAnswerEl = null;
+
+// Short hint labels shown next to each model ID in the dropdown.
+// Applied to both the static fallback list and the live list from xAI.
+// Clean display names shown in the dropdown instead of raw API IDs.
+const MODEL_DISPLAY = {
+  "grok-4":                           "Grok 4  ⚡ latest",
+  "grok-4-0709":                      "Grok 4 (Jul)  ⚡ latest",
+  "grok-4.3":                         "Grok 4.3  🧠 smartest",
+  "grok-4.20-0309-non-reasoning":     "Grok 4.20 Fast  ⚡ no reasoning",
+  "grok-4.20-0309-reasoning":         "Grok 4.20 Reasoning  🧠 slower",
+  "grok-4.20-multi-agent-0309":       "Grok 4.20 Multi-Agent  🔗",
+  "grok-3":                           "Grok 3",
+  "grok-3-fast":                      "Grok 3 Fast  ⚡",
+  "grok-3-mini":                      "Grok 3 Mini  ⚡ cheap",
+  "grok-3-mini-fast":                 "Grok 3 Mini Fast  ⚡ cheapest",
+  "grok-2-1212":                      "Grok 2  (legacy)",
+  "grok-2-vision-1212":               "Grok 2 Vision  (legacy)",
+  "grok-beta":                        "Grok Beta  (experimental)",
+  "grok-build-0.1":                   "Grok Build  🔧 code",
+  "grok-imagine-image":               "Grok Image Gen  🎨",
+  "grok-imagine-image-quality":       "Grok Image HQ  🎨",
+  "grok-imagine-video":               "Grok Video Gen  🎬",
+  "grok-imagine-video-1.5":           "Grok Video Gen v1.5  🎬",
+};
+
+function modelLabel(id) {
+  return MODEL_DISPLAY[id] || id;
+}
+
+// Fallback model list (used when the live list from xAI can't be fetched, e.g.
+// no key yet). The live list from the API supersedes this when available.
+const FALLBACK_MODELS = [
+  { id: "grok-4.20-0309-non-reasoning" },
+  { id: "grok-4.3" },
+  { id: "grok-4.20-0309-reasoning" },
+  { id: "grok-4.20-multi-agent-0309" },
+];
+
+// Populate BOTH model dropdowns (Setup/Settings panel + header) from the live
+// xAI model list for the current key, falling back to the static list.
+async function populateModelSelects() {
+  const cfg = await window.api.getAnswerConfig();
+  const current = cfg.model || FALLBACK_MODELS[0].id;
+  let opts;
+  let live = null;
+  try { live = await window.api.listXaiModels(); } catch {}
+  if (Array.isArray(live) && live.length) {
+    opts = live.map((id) => ({ id }));
+  } else {
+    opts = FALLBACK_MODELS.slice();
+  }
+  if (!opts.some((o) => o.id === current)) opts.unshift({ id: current });
+  for (const sel of [answerModelEl, answerModelHeaderEl]) {
+    if (!sel) continue;
+    sel.innerHTML = "";
+    for (const o of opts) {
+      const opt = document.createElement("option");
+      opt.value = o.id;
+      opt.textContent = modelLabel(o.id);
+      sel.appendChild(opt);
+    }
+    sel.value = current;
+    if (sel._cselRefresh) sel._cselRefresh();
+  }
+}
+
+function setAnswerModel(value) {
+  if (!value) return;
+  window.api.setAnswerConfig({ model: value });
+  if (answerModelEl && answerModelEl.value !== value) {
+    answerModelEl.value = value;
+    if (answerModelEl._cselRefresh) answerModelEl._cselRefresh();
+  }
+  if (answerModelHeaderEl && answerModelHeaderEl.value !== value) {
+    answerModelHeaderEl.value = value;
+    if (answerModelHeaderEl._cselRefresh) answerModelHeaderEl._cselRefresh();
+  }
+}
+if (answerModelEl) answerModelEl.addEventListener("change", () => setAnswerModel(answerModelEl.value));
+if (answerModelHeaderEl) answerModelHeaderEl.addEventListener("change", () => setAnswerModel(answerModelHeaderEl.value));
+
+// ===== Composer image attachments (multiple screenshots via Alt+A) =====
+const composerImgStrip = document.getElementById("composerImgStrip");
+
+// Array of { base64, mime } — supports multiple images.
+let attachedImages = [];
+// Saved at submit time so onAnswerStart can embed images in the question bubble.
+let pendingBubbleImages = [];
+
+function renderImgStrip() {
+  if (!composerImgStrip) return;
+  composerImgStrip.innerHTML = "";
+  if (attachedImages.length === 0) { composerImgStrip.hidden = true; return; }
+  composerImgStrip.hidden = false;
+  attachedImages.forEach((img, idx) => {
+    const wrap = document.createElement("div");
+    wrap.className = "composer-thumb-wrap";
+    const el = document.createElement("img");
+    el.src = `data:${img.mime};base64,${img.base64}`;
+    el.className = "composer-thumb";
+    el.alt = "screenshot";
+    const rm = document.createElement("button");
+    rm.className = "composer-thumb-rm";
+    rm.textContent = "×";
+    rm.title = "Remove";
+    rm.addEventListener("click", () => {
+      attachedImages.splice(idx, 1);
+      renderImgStrip();
+    });
+    wrap.appendChild(el);
+    wrap.appendChild(rm);
+    composerImgStrip.appendChild(wrap);
+  });
+}
+
+function addAttachedImage(base64, mime) {
+  attachedImages.push({ base64, mime: mime || "image/png" });
+  renderImgStrip();
+}
+
+function clearAttachedImages() {
+  attachedImages = [];
+  renderImgStrip();
+}
+
+// Screenshot via Alt+A hotkey.
+// Captured entirely in the renderer using getUserMedia (chromeMediaSource:'desktop')
+// — the same mechanism used for system-audio capture — so no main-process IPC needed.
+async function doScreenshot() {
+  let stream = null;
+  let video  = null;
+  try {
+    // Get all sources + cursor display index in parallel.
+    let allSources = [], displayIdx = 0;
+    try { allSources  = await window.api.getCursorScreenSourceId(); } catch {}
+    try { displayIdx  = await window.api.getCursorDisplayIndex();   } catch {}
+
+    // Filter to screen-only sources (IDs start with "screen:"), sort by name.
+    const screenSources = (allSources || [])
+      .filter((s) => s.id && s.id.startsWith("screen:"))
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { numeric: true }));
+
+    let sourceId = (screenSources[displayIdx] || screenSources[0])?.id || null;
+    if (!sourceId) {
+      try { sourceId = await window.api.getDesktopSourceId(); } catch {}
+    }
+    if (!sourceId) { log("Screenshot: no desktop source available", "err"); return; }
+
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        mandatory: {
+          chromeMediaSource: "desktop",
+          chromeMediaSourceId: sourceId,
+          maxWidth: 3840,
+          maxHeight: 2160,
+        },
+      },
+    });
+
+    // Attach video to DOM — Chromium requires this to decode desktop capture frames.
+    video = document.createElement("video");
+    video.style.cssText = "position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;top:0;left:0;";
+    video.muted = true;
+    video.playsInline = true;
+    document.body.appendChild(video);
+    video.srcObject = stream;
+
+    await new Promise((resolve, reject) => {
+      video.onloadedmetadata = resolve;
+      video.onerror = (e) => reject(new Error("video error: " + (e.message || e)));
+      setTimeout(() => reject(new Error("metadata timeout")), 5000);
+    });
+    await video.play();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    const canvas = document.createElement("canvas");
+    canvas.width  = video.videoWidth  || 1920;
+    canvas.height = video.videoHeight || 1080;
+    canvas.getContext("2d").drawImage(video, 0, 0);
+
+    // JPEG at 0.82 quality — roughly 10× smaller than PNG, safe to send through IPC
+    // even with multiple screenshots attached.
+    const dataUrl  = canvas.toDataURL("image/jpeg", 0.82);
+    const commaIdx = dataUrl.indexOf(",");
+    const b64      = dataUrl.slice(commaIdx + 1);
+    addAttachedImage(b64, "image/jpeg");
+  } catch (e) {
+    log("Screenshot failed: " + e.message, "err");
+  } finally {
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    if (video && video.parentNode) video.parentNode.removeChild(video);
+  }
+}
+if (window.api.onTriggerScreenshot) window.api.onTriggerScreenshot(doScreenshot);
+
+// ── Latency optimizations ──────────────────────────────────
+// Pre-warm the TLS connection on first keypress, so the API handshake is
+// already done before the user hits send.
+let _apiConnectionWarmed = false;
+// Debounced speculative request: after 800 ms of inactivity, start streaming
+// the answer — so it may be fully ready by the time the user hits send.
+let _speculativeTimer = null;
+let _speculativeText = null;
+
+if (composerInput) {
+  composerInput.addEventListener("input", () => {
+    // One-time connection warm-up
+    if (!_apiConnectionWarmed) {
+      _apiConnectionWarmed = true;
+      if (window.api.warmApiConnection) window.api.warmApiConnection();
+    }
+    // Debounce speculative: cancel previous timer, schedule new one
+    if (_speculativeTimer) { clearTimeout(_speculativeTimer); _speculativeTimer = null; }
+    const text = composerInput.value.trim();
+    if (!text || text.length < 8) {
+      // Too short or empty — cancel any running speculation
+      if (_speculativeText) {
+        _speculativeText = null;
+        if (window.api.speculativeCancel) window.api.speculativeCancel();
+      }
+      return;
+    }
+    _speculativeTimer = setTimeout(() => {
+      _speculativeTimer = null;
+      // Only speculate when no images are attached (vision requests aren't speculative)
+      if (attachedImages.length > 0) return;
+      _speculativeText = text;
+      if (window.api.speculativeStart) window.api.speculativeStart({ question: text });
+    }, 800);
+  });
+}
 
 function submitComposer() {
   if (!composerInput) return;
   const q = composerInput.value.trim();
-  if (!q) return;
-  window.api.generateAnswer(q);
+  if (!q && attachedImages.length === 0) return;
+
+  // Cancel pending speculative timer — we're submitting now
+  if (_speculativeTimer) { clearTimeout(_speculativeTimer); _speculativeTimer = null; }
+
+  pendingBubbleImages = attachedImages.slice();
+  const hasImages = attachedImages.length > 0;
+
+  if (!hasImages && _speculativeText === q && window.api.speculativeCommit) {
+    // Speculative request is already streaming or done — adopt it
+    _speculativeText = null;
+    window.api.speculativeCommit({ question: q, images: null });
+  } else {
+    // Cancel any speculation, start a fresh request
+    _speculativeText = null;
+    if (window.api.speculativeCancel) window.api.speculativeCancel();
+    window.api.generateAnswer(q, hasImages ? attachedImages : null);
+  }
+
   composerInput.value = "";
+  clearAttachedImages();
   if (typeof resetLiveSeg === "function") resetLiveSeg();
 }
 
@@ -1284,38 +1407,449 @@ if (answerClearBtn) {
     if (answerHistory)
       answerHistory.querySelectorAll(".answer-turn").forEach((n) => n.remove());
     if (answerEmpty) answerEmpty.hidden = false;
+    // Reset spacer so first new turn starts flush
+    if (answerSpacer) answerSpacer.style.height = "0px";
   });
 }
 
-function addAnswerTurn(question) {
+// Spacer div pinned at the bottom of answerHistory — always sized to the
+// panel height so there is always room to scroll any turn to the top,
+// even when total content is shorter than the panel.
+let answerSpacer = null;
+function ensureSpacer() {
+  if (!answerHistory) return;
+  if (!answerSpacer) {
+    answerSpacer = document.createElement("div");
+    answerSpacer.className = "answer-spacer";
+    answerHistory.appendChild(answerSpacer);
+  }
+  // Keep spacer = full panel height so any turn can reach the top
+  answerSpacer.style.height = answerHistory.clientHeight + "px";
+}
+
+function addAnswerTurn(question, imgs) {
   if (!answerHistory) return null;
   if (answerEmpty) answerEmpty.hidden = true;
+
   const turn = document.createElement("div");
   turn.className = "answer-turn";
   const q = document.createElement("div");
   q.className = "answer-q";
-  q.textContent = question || "";
+  if (imgs && imgs.length) {
+    const strip = document.createElement("div");
+    strip.className = "answer-q-img-strip";
+    imgs.forEach((imgData) => {
+      const img = document.createElement("img");
+      img.src = `data:${imgData.mime || "image/png"};base64,${imgData.base64}`;
+      img.className = "answer-q-img";
+      img.alt = "screenshot";
+      strip.appendChild(img);
+    });
+    q.appendChild(strip);
+  }
+  if (question) q.appendChild(document.createTextNode(question));
   const a = document.createElement("div");
   a.className = "answer-a streaming";
   turn.appendChild(q);
   turn.appendChild(a);
-  answerHistory.appendChild(turn);
-  answerHistory.scrollTop = answerHistory.scrollHeight;
+
+  // Ensure the spacer exists and is tall enough, then insert turn before it
+  ensureSpacer();
+  answerHistory.insertBefore(turn, answerSpacer);
+
+  // After layout settles, compute the question's scroll position and jump to it.
+  // getBoundingClientRect gives real rendered positions, so this is always accurate.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const cRect = answerHistory.getBoundingClientRect();
+    const qRect = q.getBoundingClientRect();
+    const qTopInScroll = answerHistory.scrollTop + (qRect.top - cRect.top);
+    const qH = q.offsetHeight;
+    const panelH = answerHistory.clientHeight;
+    const keepVisible = 54; // ~3 lines of a long question
+    const extra = qH > panelH * 0.45 ? qH - keepVisible : 0;
+    answerHistory.scrollTop = qTopInScroll + extra;
+  }));
   return a;
 }
 
-window.api.onAnswerStart(({ question }) => {
-  currentAnswerEl = addAnswerTurn(question || "");
+window.api.onAnswerStart((data) => {
+  const question = data && typeof data === "object" ? String(data.question || "") : String(data || "");
+  // If a previous answer bubble is still streaming and has no content yet,
+  // remove it — it was interrupted before any tokens arrived.
+  if (currentAnswerEl && currentAnswerEl.classList.contains("streaming") && !currentAnswerEl.textContent.trim()) {
+    const oldTurn = currentAnswerEl.parentElement;
+    if (oldTurn && oldTurn.classList.contains("answer-turn")) oldTurn.remove();
+    if (answerHistory && !answerHistory.querySelector(".answer-turn") && answerEmpty) answerEmpty.hidden = false;
+    currentAnswerEl = null;
+  }
+  const imgs = pendingBubbleImages.slice();
+  pendingBubbleImages = [];
+  currentAnswerEl = addAnswerTurn(question, imgs);
 });
 window.api.onAnswerChunk((delta) => {
   if (!currentAnswerEl) currentAnswerEl = addAnswerTurn("");
   currentAnswerEl.textContent += delta;
-  if (answerHistory) answerHistory.scrollTop = answerHistory.scrollHeight;
+  if (answerHistory && currentAnswerEl) {
+    // Keep the growing answer's bottom edge visible, but only if the user
+    // hasn't scrolled up more than 120px away from following.
+    const elRect = currentAnswerEl.getBoundingClientRect();
+    const cRect  = answerHistory.getBoundingClientRect();
+    const elBottomBelowFold = elRect.bottom > cRect.bottom;
+    const userScrolledUp = cRect.bottom - elRect.bottom > 120;
+    if (elBottomBelowFold && !userScrolledUp) {
+      currentAnswerEl.scrollIntoView({ block: 'end', behavior: 'instant' });
+    }
+  }
 });
 window.api.onAnswerDone(() => {
-  if (currentAnswerEl) currentAnswerEl.classList.remove("streaming");
+  if (currentAnswerEl) {
+    currentAnswerEl.classList.remove("streaming");
+    const rawText = currentAnswerEl.textContent || '';
+    const stickyMatch = rawText.match(/<sticky>([\s\S]*?)<\/sticky>/i);
+
+    if (stickyMatch) {
+      const script = stickyMatch[1].trim();
+      // Strip <sticky> block from the main text before Markdown rendering
+      currentAnswerEl.textContent = rawText.replace(/<sticky>[\s\S]*?<\/sticky>/i, '').trimEnd();
+      // Render diagram + markdown in the bubble
+      renderMermaidInElement(currentAnswerEl);
+      // Append the formatted script section inside the same answer bubble
+      appendScriptToAnswer(currentAnswerEl, script);
+      // Also send to sticky note (which auto-resizes)
+      if (window.api.openSticky) window.api.openSticky();
+      if (window.api.sendStickyText) window.api.sendStickyText(script);
+    } else {
+      renderMermaidInElement(currentAnswerEl);
+    }
+  }
   currentAnswerEl = null;
 });
+
+// Render the structured talking-script as a styled block inside the answer bubble.
+function appendScriptToAnswer(el, script) {
+  const SECTIONS = ['OVERVIEW', 'WALKTHROUGH', 'KEY INSIGHT'];
+  const wrapper = document.createElement('div');
+  wrapper.className = 'answer-script';
+
+  const header = document.createElement('div');
+  header.className = 'answer-script-header';
+  header.textContent = '📋 Presenter Script';
+  wrapper.appendChild(header);
+
+  const lines = script.split('\n');
+  let currentSection = null;
+  let bodyLines = [];
+
+  function flushSection() {
+    if (!currentSection) return;
+    const sec = document.createElement('div');
+    sec.className = 'answer-script-section';
+
+    const label = document.createElement('div');
+    label.className = 'answer-script-label';
+    label.textContent = currentSection;
+    sec.appendChild(label);
+
+    const body = bodyLines.join('\n').trim();
+    if (body) {
+      body.split(/\n\n+/).forEach(para => {
+        const p = document.createElement('p');
+        p.className = 'answer-script-body';
+        p.textContent = para.trim();
+        sec.appendChild(p);
+      });
+    }
+    wrapper.appendChild(sec);
+    bodyLines = [];
+    currentSection = null;
+  }
+
+  lines.forEach(line => {
+    const heading = SECTIONS.find(s => line.trim() === s);
+    if (heading) {
+      flushSection();
+      currentSection = heading;
+    } else if (currentSection) {
+      bodyLines.push(line);
+    }
+  });
+  flushSection();
+
+  el.appendChild(wrapper);
+}
+
+// Initialise Mermaid — only use themeVariables keys that exist in v11 'base'.
+// Invalid keys silently corrupt the config and cause render() to throw.
+if (typeof mermaid !== 'undefined') {
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    securityLevel: 'loose',
+    fontSize: 16,
+    themeVariables: {
+      primaryColor:        '#dbeafe',   // node fill — light blue
+      primaryTextColor:    '#1e3a5f',   // node label — dark navy (high contrast)
+      primaryBorderColor:  '#2563eb',   // node border — vivid blue
+      lineColor:           '#1f2937',   // arrows/edges — near-black
+      edgeLabelBackground: '#f0f9ff',   // edge label pill background
+      clusterBkg:          '#f1f5f9',   // subgraph fill
+      background:          '#ffffff',
+      mainBkg:             '#dbeafe',
+      nodeBorder:          '#2563eb',
+      titleColor:          '#1e3a5f',
+      fontFamily:          'system-ui, sans-serif',
+    },
+    flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' },
+    sequence:  { useMaxWidth: true, actorFontSize: 15, noteFontSize: 13, messageFontSize: 14 },
+    gantt:     { useMaxWidth: true, fontSize: 14 },
+    er:        { useMaxWidth: true, fontSize: 14 },
+    mindmap:   { useMaxWidth: true },
+  });
+}
+
+// Configure marked: safe HTML output, no pedantic mode.
+if (typeof marked !== 'undefined') {
+  marked.setOptions({ breaks: true, gfm: true });
+}
+
+// Render the completed answer: Markdown for text, SVG for mermaid blocks.
+// Strategy: extract mermaid blocks first (replace with unique tokens), run
+// the rest through marked, then swap tokens back in as rendered SVG divs.
+let _mermaidIdSeq = 0;
+function renderMermaidInElement(el) {
+  const raw = el.textContent || '';
+
+  // 1. Pull out mermaid blocks, replace with stable tokens.
+  const diagrams = [];
+  const TOKEN = '\x00MERMAID_BLOCK_';
+  const withTokens = raw.replace(/```mermaid\s*([\s\S]*?)```/gi, (_, code) => {
+    const idx = diagrams.length;
+    diagrams.push(code.trim());
+    return TOKEN + idx + '\x00';
+  });
+
+  // 2. Render remaining text as Markdown (or fall back to plain text).
+  let html;
+  if (typeof marked !== 'undefined') {
+    html = marked.parse(withTokens);
+  } else {
+    html = withTokens.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+  }
+
+  // 3. Replace tokens with mermaid placeholder divs.
+  const baseId = _mermaidIdSeq++;
+  diagrams.forEach((_, i) => {
+    html = html.replace(
+      TOKEN + i + '\x00',
+      `<div class="mermaid-block" id="mermaid-ph-${baseId}-${i}"></div>`
+    );
+  });
+
+  el.innerHTML = html;
+
+  // 4. Pre-process and render each mermaid diagram.
+  if (typeof mermaid !== 'undefined' && diagrams.length > 0) {
+    el.classList.add('has-diagram');
+
+    diagrams.forEach((code, i) => {
+      const ph = document.getElementById(`mermaid-ph-${baseId}-${i}`);
+      if (!ph) return;
+
+      const cleanCode = sanitizeMermaid(code);
+
+      mermaid.render('mermaid-svg-' + baseId + '-' + i, cleanCode)
+        .then(function(result) {
+          ph.innerHTML = result.svg;
+          var svgEl = ph.querySelector('svg');
+          if (svgEl) {
+            if (!svgEl.getAttribute('viewBox')) {
+              var w = parseFloat(svgEl.getAttribute('width')  || 0);
+              var h = parseFloat(svgEl.getAttribute('height') || 0);
+              if (w && h) svgEl.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+            }
+            svgEl.removeAttribute('width');
+            svgEl.removeAttribute('height');
+            svgEl.style.width  = '100%';
+            svgEl.style.height = 'auto';
+            applyDiagramContrast(svgEl);
+          }
+        })
+        .catch(function(err) {
+          // Show the error message so the issue is diagnosable
+          ph.innerHTML = '<div class="mermaid-error"><b>Diagram error:</b> ' +
+            escapeHtml(String(err && err.message || err)) + '</div>' +
+            '<pre class="mermaid-raw">' + escapeHtml(cleanCode) + '</pre>';
+        });
+    });
+  }
+}
+
+// Fix common AI-generated Mermaid syntax errors before handing to the parser.
+function sanitizeMermaid(code) {
+  return code
+    // Strip HTML tags (e.g. <br/>) from node labels
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    // [/text] — incomplete trapezoid (needs [/text/]) — flatten to plain rectangle
+    .replace(/\[\/([^\/\]\\]+)\]/g, '[$1]')
+    // [\text] — incomplete trapezoid alt — flatten
+    .replace(/\[\\([^\/\]\\]+)\]/g, '[$1]')
+    // Strip "color:" from style lines — not supported in all Mermaid builds
+    .replace(/(style\s+\w+\s+[^;\n]*),\s*color:[^,;\n]*/gi, '$1')
+    // Trim trailing whitespace on each line
+    .split('\n').map(function(l) { return l.trimEnd(); }).join('\n');
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Diagram contrast ──────────────────────────────────────────────────────────
+// After Mermaid renders an SVG, walk every node shape, measure its fill
+// luminance, and force the label text to white (dark bg) or near-black (light bg).
+
+function parseFillColor(el) {
+  // Try attribute first, then inline style, then computed style.
+  var fill = el.getAttribute('fill') ||
+             (el.style && el.style.fill) ||
+             getComputedStyle(el).fill || '';
+  return fill.trim();
+}
+
+function hexToRgb(hex) {
+  hex = hex.replace(/^#/, '');
+  if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+  if (hex.length !== 6) return null;
+  return {
+    r: parseInt(hex.slice(0,2),16),
+    g: parseInt(hex.slice(2,4),16),
+    b: parseInt(hex.slice(4,6),16)
+  };
+}
+
+function cssColorToRgb(color) {
+  if (!color || color === 'none' || color === 'transparent') return null;
+  if (color.startsWith('#')) return hexToRgb(color);
+  // rgb(...) / rgba(...)
+  var m = color.match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
+  if (m) return { r: +m[1], g: +m[2], b: +m[3] };
+  return null;
+}
+
+function relativeLuminance(r, g, b) {
+  var rgb = [r, g, b].map(function(c) {
+    c = c / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+}
+
+function fillIsDark(colorStr) {
+  var rgb = cssColorToRgb(colorStr);
+  if (!rgb) return false;
+  return relativeLuminance(rgb.r, rgb.g, rgb.b) < 0.25;
+}
+
+function applyDiagramContrast(svgEl) {
+  // ── 1. Node text contrast ────────────────────────────────────────────────
+  var nodeGroups = svgEl.querySelectorAll(
+    '.node, .actor-top, .actor-bottom, .actor, .label-container, ' +
+    '.er-entity, .cluster'
+  );
+
+  nodeGroups.forEach(function(group) {
+    var shape = group.querySelector('rect, circle, ellipse, polygon, path');
+    if (!shape) return;
+
+    var fill = parseFillColor(shape);
+    if (!fill || fill === 'none' || fill === 'transparent') return;
+
+    var dark = fillIsDark(fill);
+    var textColor = dark ? '#ffffff' : '#1a1a1a';
+
+    group.querySelectorAll('text, tspan').forEach(function(t) {
+      t.setAttribute('fill', textColor);
+      t.style.fill = textColor;
+    });
+    group.querySelectorAll('foreignObject *').forEach(function(t) {
+      t.style.color = textColor;
+    });
+
+    // Node border: visibly distinct from the node fill
+    var borderColor = dark ? 'rgba(255,255,255,0.55)' : '#1e3a5f';
+    shape.setAttribute('stroke', borderColor);
+    shape.style.stroke = borderColor;
+    var sw = parseFloat(shape.getAttribute('stroke-width') || '0');
+    if (sw < 1.5) shape.setAttribute('stroke-width', '1.5');
+  });
+
+  // ── 2. Sequence diagram note boxes ──────────────────────────────────────
+  svgEl.querySelectorAll('.note rect, .noteText, .edgeLabel').forEach(function(el) {
+    if (el.tagName === 'rect' || el.tagName === 'RECT') return;
+    var parent = el.closest('.note') || el.parentElement;
+    var shape = parent && parent.querySelector('rect');
+    if (!shape) return;
+    var fill = parseFillColor(shape);
+    var dark = fillIsDark(fill);
+    el.setAttribute && el.setAttribute('fill', dark ? '#ffffff' : '#1a1a1a');
+    el.style && (el.style.color = dark ? '#ffffff' : '#1a1a1a');
+  });
+
+  // ── 3. Connector lines / arrows ─────────────────────────────────────────
+  // Determine diagram background to pick a contrasting line color.
+  var diagramBg = '#ffffff';
+  var bgRect = svgEl.querySelector('rect.background, rect#background, rect[class*="background"]');
+  if (!bgRect) bgRect = svgEl.querySelector('rect');
+  if (bgRect) {
+    var bgFill = parseFillColor(bgRect);
+    if (bgFill && bgFill !== 'none') diagramBg = bgFill;
+  }
+  var bgDark = fillIsDark(diagramBg);
+  var lineColor = bgDark ? '#e2e8f0' : '#1f2937';
+
+  // Edge paths (flowchart arrows, sequence lines, ER relations)
+  svgEl.querySelectorAll(
+    '.edgePath path, .edgePaths path, .flowchart-link, ' +
+    '.messageLine0, .messageLine1, .loopLine, ' +
+    '.relation, .er-relationship, path.transition, line'
+  ).forEach(function(p) {
+    if (p.getAttribute('stroke') === 'none') return;
+    p.setAttribute('stroke', lineColor);
+    p.style.stroke = lineColor;
+    var sw = parseFloat(p.getAttribute('stroke-width') || '0');
+    if (sw < 1.5) p.setAttribute('stroke-width', '1.5');
+    // Edge paths in flowcharts have fill="none" — keep it that way
+    if ((p.getAttribute('fill') || '').toLowerCase() === 'none') {
+      p.setAttribute('fill', 'none');
+    }
+  });
+
+  // Arrowhead markers — inject a <style> block so context-stroke/context-fill
+  // values also resolve correctly, then also set attributes directly.
+  var existingStyle = svgEl.querySelector('style.ace-contrast-arrows');
+  if (!existingStyle) {
+    var st = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+    st.className = 'ace-contrast-arrows';
+    st.textContent =
+      'marker path, marker polygon, marker circle { fill: ' + lineColor + ' !important; stroke: ' + lineColor + ' !important; }';
+    svgEl.insertBefore(st, svgEl.firstChild);
+  }
+  // Also set attributes directly for non-CSS rendering paths
+  svgEl.querySelectorAll('marker path, marker polygon, marker circle').forEach(function(m) {
+    m.setAttribute('fill', lineColor);
+    m.setAttribute('stroke', lineColor);
+    m.style.fill = lineColor;
+    m.style.stroke = lineColor;
+  });
+
+  // Sequence diagram activation boxes
+  svgEl.querySelectorAll('.activation0, .activation1, .activation2').forEach(function(el) {
+    el.setAttribute('stroke', lineColor);
+    el.style.stroke = lineColor;
+  });
+}
 window.api.onAnswerError((msg) => {
   if (currentAnswerEl) {
     currentAnswerEl.classList.remove("streaming");
@@ -1349,9 +1883,10 @@ async function refreshPresetSelect() {
       presetSelect.appendChild(opt);
     }
     presetSelect.value = cfg.activePromptId || "";
+    if (presetSelect._cselRefresh) presetSelect._cselRefresh();
   }
   if (answerKeyEl) answerKeyEl.value = cfg.apiKey || "";
-  if (answerModelEl) answerModelEl.value = cfg.model || "grok-4.3";
+  await populateModelSelects();
 }
 if (presetSelect) {
   presetSelect.addEventListener("change", () => {
@@ -1361,11 +1896,8 @@ if (presetSelect) {
 if (answerKeyEl) {
   answerKeyEl.addEventListener("change", () => {
     window.api.setAnswerConfig({ apiKey: answerKeyEl.value.trim() });
-  });
-}
-if (answerModelEl) {
-  answerModelEl.addEventListener("change", () => {
-    window.api.setAnswerConfig({ model: answerModelEl.value });
+    // A new key may expose a different model list — refresh it.
+    populateModelSelects();
   });
 }
 refreshPresetSelect();
@@ -1639,7 +2171,7 @@ async function refreshNetworkUI() {
   netAddressEl.value = netCfg.address || "";
   const port = parsePort(netCfg.address) || 2000;
   if (netPortEl) netPortEl.value = port;
-  maxSupportersEl.value = netCfg.maxSupporters || 1;
+  maxSupportersEl.value = netCfg.maxSupporters || 5;
   if (twoWayEl) twoWayEl.checked = true;
   const v = Math.round((netCfg.incomingVolume ?? 1) * 100);
   incomingVolumeEl.value = v;
@@ -1817,7 +2349,7 @@ netActionBtn.addEventListener("click", async () => {
   await persistNet({ address: addr });
   const msg =
     role === "speaker"
-      ? `Start hosting on ${addr}?\n\nThis will:\n  • Bind a WebSocket server on the port\n  • Capture your microphone + system audio when a supporter connects\n  • Stream audio to up to ${netCfg.maxSupporters || 1} supporter(s)`
+      ? `Start hosting on ${addr}?\n\nThis will:\n  • Bind a WebSocket server on the port\n  • Capture your microphone + system audio when a supporter connects\n  • Stream audio to up to ${netCfg.maxSupporters || 5} supporter(s)`
       : `Connect to ${addr}?\n\nThis will:\n  • Open a WebSocket connection to the speaker\n  • Receive their microphone + system audio\n  • Auto-reconnect every 5s if dropped`;
   if (!window.confirm(msg)) return;
   if (role === "supporter") netActionBtn.dataset.connecting = "1";

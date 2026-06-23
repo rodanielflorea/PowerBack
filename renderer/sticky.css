@@ -169,6 +169,31 @@ html, body {
   line-height: 1.4;
 }
 
+/* Structured talking-script messages */
+.script-section-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.9px;
+  text-transform: uppercase;
+  color: #92400e;
+  background: rgba(253, 224, 71, 0.4);
+  border-radius: 3px;
+  padding: 2px 6px;
+  margin: 10px 0 4px;
+  display: inline-block;
+}
+.script-section-label:first-child { margin-top: 2px; }
+
+.script-body {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: #1c1917;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.script-body:last-child { margin-bottom: 0; }
+
 .msg-image {
   max-width: 100%;
   max-height: 240px;
