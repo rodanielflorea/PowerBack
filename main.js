@@ -1732,6 +1732,16 @@ ipcMain.handle('paste-text', (_e, text) => pasteToForeground(text));
 let answerAbort = null;
 // Speculative answer state
 let speculativeAbort = null;
+// ── IDE Typing session state ─────────────────────────────────────────────────
+let ideTypingActive = false;
+let ideTypingPaused = false;   // manual pause
+let ideFocusPaused = false;    // auto-pause when our window gains focus
+let ideTypingProc = null;
+let ideTypingCancelled = false;
+function notifyTypingState() {
+  if (win && !win.isDestroyed())
+    win.webContents.send('ide-typing-state', { paused: ideTypingPaused || ideFocusPaused, active: ideTypingActive });
+}
 let speculativeQuestion = null;
 let speculativeActive = false;
 let speculativeCommitted = false; // true after commit — stream pipes directly to renderer
@@ -2441,145 +2451,151 @@ ipcMain.handle('sticky-clear', () => {
   return true;
 });
 
-// ── Write-to-IDE: types code into the foreground window via PowerShell SendKeys ──
-// Human-like rhythm:
-//   • Type 2-4 word-token runs fast (~1 char / 75-105 ms), then pause 800-1000 ms
-//   • At most ONE typo queued per burst (word char only, ~6 % chance)
-//   • The typo is NOT corrected immediately; ALL chars typed after it are tracked
-//     as a "suffix". At the pause: backspace (suffix.length + 1) to reach the
-//     wrong char, type the correct char, retype the suffix — cursor lands exactly
-//     where it was, text is correct.
-ipcMain.handle('write-to-ide', async (_e, code) => {
+ipcMain.handle('pause-ide-typing',  () => { ideTypingPaused = true;  notifyTypingState(); });
+ipcMain.handle('resume-ide-typing', () => { ideTypingPaused = false; notifyTypingState(); });
+
+// ── Write-to-IDE ──────────────────────────────────────────────────────────────
+// Drives a persistent PowerShell stdin session from a Node.js async loop.
+// Delays live in Node.js (not PS Sleep), so we can pause/resume without
+// killing the process:  pause = stop advancing the loop;  resume = continue.
+// Focus events: our app gaining focus → auto-pause; losing focus → auto-resume.
+ipcMain.handle('write-to-ide', async (_e, { code, speedFactor } = {}) => {
   const text = String(code || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   if (!text) return { ok: false, error: 'No code provided' };
 
+  // Cancel any still-running session
+  ideTypingCancelled = true;
+  if (ideTypingProc) { try { ideTypingProc.kill(); } catch {} ideTypingProc = null; }
+  await new Promise(r => setTimeout(r, 80));
+
+  ideTypingActive    = true;
+  ideTypingCancelled = false;
+  ideTypingPaused    = false;
+  ideFocusPaused     = false;
+
+  // Speed slider 1-5 → delay multiplier
+  const SPEED_TABLE = [2.0, 1.4, 1.0, 0.6, 0.35];
+  const sf = SPEED_TABLE[Math.max(0, Math.min(4, Math.round(Number(speedFactor) || 3) - 1))];
+
+  // Attach focus/blur listeners for this session only
+  const onWinFocus = () => { if (!ideTypingActive) return; ideFocusPaused = true;  notifyTypingState(); };
+  const onWinBlur  = () => { if (!ideTypingActive) return; if (ideFocusPaused) { ideFocusPaused = false; notifyTypingState(); } };
+  if (win) { win.on('focus', onWinFocus); win.on('blur', onWinBlur); }
+
+  // Persistent PS session — reads stdin line-by-line, executes immediately
+  const proc = spawn('powershell.exe',
+    ['-NonInteractive', '-ExecutionPolicy', 'Bypass', '-NoProfile', '-Command', '-'],
+    { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] }
+  );
+  ideTypingProc = proc;
+
+  const psWrite = (line) => new Promise(res => {
+    if (proc.killed || proc.stdin.destroyed) return res();
+    proc.stdin.write(line + '\n', () => res());
+  });
+  // Node.js delay scaled by speed factor
+  const nd = (lo, hi) => new Promise(r =>
+    setTimeout(r, Math.max(10, Math.round((lo + Math.random() * (hi - lo)) * sf)))
+  );
+  // Spin while paused (manual or focus-based), 80 ms poll
+  const waitPause = async () => {
+    while ((ideTypingPaused || ideFocusPaused) && !ideTypingCancelled)
+      await new Promise(r => setTimeout(r, 80));
+  };
+
+  // Init WScript.Shell and wait for sentinel so first SendKeys fires only after init
+  await psWrite('Add-Type -AssemblyName System.Windows.Forms; $wsh = New-Object -ComObject WScript.Shell; Write-Host "ACE_READY"');
+  await new Promise(resolve => {
+    const onData = d => { if (String(d).includes('ACE_READY')) { proc.stdout.off('data', onData); resolve(); } };
+    proc.stdout.on('data', onData);
+    setTimeout(resolve, 2000); // fallback
+  });
+
+  // ── Key helpers ───────────────────────────────────────────────────────────
   const SENDKEY_MAP = {
-    '\n': '{ENTER}', '{': '{{}', '}': '{}}',
-    '+': '{+}', '^': '{^}', '%': '{%}', '~': '{~}',
+    '\n':'{ENTER}','{':'{{}'  ,'}':'{}}'  ,
+    '+':'{+}'     ,'^':'{^}'  ,'%':'{%}'  ,'~':'{~}',
     '(': '{(}', ')': '{)}',
   };
-  function toToken(ch) { return SENDKEY_MAP[ch] || ch; }
-
+  const toToken = ch => SENDKEY_MAP[ch] || ch;
   const ADJ = {
     a:'sq',b:'vgn',c:'xdv',d:'sfe',e:'wrd',f:'dge',g:'fht',h:'gjy',i:'uko',
-    j:'hkn',k:'jlm',l:'kop',m:'nk',n:'bmh',o:'ilp',p:'ol',q:'wa',r:'eft',
+    j:'hkn',k:'jlm',l:'kop',m:'nk', n:'bmh',o:'ilp',p:'ol', q:'wa', r:'eft',
     s:'adwz',t:'rgy',u:'yhi',v:'bcf',w:'qse',x:'zcs',y:'tuh',z:'xs',
-    '0':'9', '1':'2', '2':'13','3':'24','4':'35','5':'46',
-    '6':'57','7':'68','8':'79','9':'80',
+    '0':'9','1':'2','2':'13','3':'24','4':'35','5':'46','6':'57','7':'68','8':'79','9':'80',
   };
-  function nearbyKey(ch) {
-    const adj = ADJ[ch.toLowerCase()];
-    return adj ? adj[Math.floor(Math.random() * adj.length)] : null;
-  }
-  function isWordChar(ch) { return /[a-zA-Z0-9_]/.test(ch); }
+  const nearbyKey = ch => { const a = ADJ[ch.toLowerCase()]; return a ? a[Math.floor(Math.random() * a.length)] : null; };
+  const isWordChar = ch => /[a-zA-Z0-9_]/.test(ch);
 
-  const psLines = [
-    'Add-Type -AssemblyName System.Windows.Forms',
-    '$wsh = New-Object -ComObject WScript.Shell',
-  ];
-  function emitKey(ch, loMs, hiMs) {
-    const t = toToken(ch).replace(/'/g, "''");
-    psLines.push(`$wsh.SendKeys('${t}'); Start-Sleep -Milliseconds (Get-Random -Minimum ${loMs} -Maximum ${hiMs})`);
-  }
-  function emitFixed(ms) {
-    psLines.push(`Start-Sleep -Milliseconds ${ms}`);
-  }
-  function emitBackspace(n) {
-    for (let i = 0; i < n; i++)
-      psLines.push(`$wsh.SendKeys('{BACKSPACE}'); Start-Sleep -Milliseconds (Get-Random -Minimum 55 -Maximum 105)`);
-  }
+  const sendKey = async (ch, lo, hi) => {
+    await psWrite(`$wsh.SendKeys('${toToken(ch).replace(/'/g, "''")}')`);
+    await nd(lo, hi);
+  };
+  const sendBS = async () => { await psWrite(`$wsh.SendKeys('{BACKSPACE}')`); await nd(55, 105); };
 
-  const chars = [...text];
-  // pendingFix: { correct: char, suffix: char[] } | null
-  // suffix = every char typed ON SCREEN after the typo, until the next pause.
-  // At flush: backspace (suffix.length + 1) → type correct → retype suffix.
-  // Only ONE typo per burst so suffix tracking stays unambiguous.
-  let pendingFix = null;
-  let tokenCount = 0;
-  let inWord = false;
+  // ── Typing loop ───────────────────────────────────────────────────────────
+  let pendingFix = null;   // { correct: char, suffix: char[] }
+  let tokenCount = 0, inWord = false;
   let burstTarget = Math.random() < 0.5 ? 2 : 4;
 
-  function flushFix() {
+  const flushFix = async () => {
     if (!pendingFix) return;
     const { correct, suffix } = pendingFix;
     pendingFix = null;
-    // Brief pause — human notices the mistake before reaching for backspace
-    emitFixed(80 + Math.floor(Math.random() * 80)); // 80-160 ms
-    // Go back: past suffix chars + the 1 wrong char
-    emitBackspace(suffix.length + 1);
-    // Type the correct char
-    emitKey(correct, 55, 95);
-    // Retype everything that was after the typo
-    for (const sc of suffix) emitKey(sc, 55, 95);
-  }
+    await nd(80, 160);                                    // hesitate before reaching for backspace
+    for (let i = 0; i < suffix.length + 1; i++) await sendBS(); // erase suffix + wrong char
+    await sendKey(correct, 55, 95);
+    for (const sc of suffix) await sendKey(sc, 55, 95);  // retype everything after the typo
+  };
 
-  function doPause() {
-    flushFix();
-    emitFixed(800 + Math.floor(Math.random() * 200)); // 800-1000 ms
+  const doPause = async () => {
+    await flushFix();
+    await nd(800, 1000);
+    await waitPause();
     tokenCount = 0;
     burstTarget = Math.random() < 0.5 ? 2 : 4;
-  }
+  };
 
-  for (let i = 0; i < chars.length; i++) {
-    const ch = chars[i];
+  for (const ch of [...text]) {
+    if (ideTypingCancelled) break;
     const wasInWord = inWord;
     inWord = isWordChar(ch);
-
-    // New word-run starts: count it and pause if burst is full
-    if (inWord && !wasInWord) {
-      tokenCount++;
-      if (tokenCount > burstTarget) doPause();
-    }
+    if (inWord && !wasInWord) { tokenCount++; if (tokenCount > burstTarget) await doPause(); }
+    if (ideTypingCancelled) break;
 
     if (ch === '\n') {
-      // Fix any pending typo BEFORE pressing Enter — backspace cannot cross lines
-      // safely; if we fix after Enter the cursor is on the wrong line.
-      flushFix();
-      emitKey(ch, 10, 30);
-      // Thinking pause after newline (no second flushFix needed)
-      emitFixed(800 + Math.floor(Math.random() * 200));
-      tokenCount = 0;
-      burstTarget = Math.random() < 0.5 ? 2 : 4;
+      await flushFix();        // must fix BEFORE Enter — backspace can't cross lines
+      await sendKey(ch, 10, 30);
+      await nd(800, 1000);
+      await waitPause();
+      tokenCount = 0; burstTarget = Math.random() < 0.5 ? 2 : 4;
       continue;
     }
-
     if (!isWordChar(ch)) {
-      // Punctuation / space — medium speed, never typo'd
-      const lo = ch === ' ' ? 60 : 50;
-      const hi = ch === ' ' ? 130 : 110;
-      emitKey(ch, lo, hi);
-      // Still counts toward suffix if a fix is pending
+      await sendKey(ch, ch === ' ' ? 60 : 50, ch === ' ' ? 130 : 110);
       if (pendingFix) pendingFix.suffix.push(ch);
       continue;
     }
-
-    // Word char — ~1.5 % typo rate, one queued fix per burst max
+    // Word char — 1.5 % typo, one per burst
     const wrong = (!pendingFix && Math.random() < 0.015) ? nearbyKey(ch) : null;
     if (wrong) {
-      emitKey(wrong, 65, 105); // type the wrong char
-      pendingFix = { correct: ch, suffix: [] }; // queue the fix; suffix starts empty
+      await sendKey(wrong, 65, 105);
+      pendingFix = { correct: ch, suffix: [] };
     } else {
-      emitKey(ch, 65, 105);
-      if (pendingFix) pendingFix.suffix.push(ch); // track chars typed after typo
+      await sendKey(ch, 65, 105);
+      if (pendingFix) pendingFix.suffix.push(ch);
     }
   }
 
-  // End of code — flush any remaining fix
-  flushFix();
+  if (!ideTypingCancelled) await flushFix();
 
-  const tmpFile = path.join(os.tmpdir(), `ace_ide_${Date.now()}.ps1`);
-  fs.writeFileSync(tmpFile, psLines.join('\n'), 'utf8');
-
-  return new Promise((resolve) => {
-    const proc = spawn('powershell.exe', ['-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', tmpFile], {
-      windowsHide: true,
-      stdio: ['ignore', 'ignore', 'pipe'],
-    });
-    const cleanup = () => { try { fs.unlinkSync(tmpFile); } catch {} };
-    proc.on('close', code => { cleanup(); resolve({ ok: code === 0 }); });
-    proc.on('error', err => { cleanup(); resolve({ ok: false, error: err.message }); });
-    setTimeout(() => { try { proc.kill(); } catch {} cleanup(); }, 300000);
-  });
+  // ── Teardown ──────────────────────────────────────────────────────────────
+  if (win) { win.off('focus', onWinFocus); win.off('blur', onWinBlur); }
+  ideTypingActive = false; ideTypingPaused = false; ideFocusPaused = false;
+  notifyTypingState();
+  try { proc.stdin.end(); } catch {}
+  ideTypingProc = null;
+  return { ok: !ideTypingCancelled };
 });
 
 ipcMain.handle('sticky-send-text', (_e, text) => {

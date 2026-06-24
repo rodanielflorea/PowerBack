@@ -171,6 +171,32 @@ body:not(.in-interview) .right-rail { display: none !important; }
   letter-spacing: -0.3px;
 }
 
+/* ── Typing-speed slider (vertical) ──────────────────────────── */
+.rail-speed-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  margin-top: 4px;
+  -webkit-app-region: no-drag;
+}
+.rail-speed-label {
+  font-size: 9px;
+  color: var(--muted);
+  line-height: 1;
+  user-select: none;
+}
+.rail-speed-slider {
+  -webkit-appearance: slider-vertical;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 8px;
+  height: 72px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  -webkit-app-region: no-drag;
+}
+
 /* ── 6. REC DOT ────────────────────────────────────────────── */
 .rec-dot {
   width: 10px; height: 10px;
@@ -663,6 +689,20 @@ body.in-interview .end-btn.live::before {
   border-color: var(--accent);
 }
 .code-action-btn--ide:hover { opacity: 0.88; }
+.code-action-btn--pause {
+  min-width: 30px;
+  font-size: 13px;
+  padding: 6px 10px;
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+}
+.code-action-btn--pause:hover { background: var(--accent-dim); border-color: var(--accent); }
+.code-action-btn--paused {
+  background: #fef9c3;
+  border-color: #fde047;
+  color: #713f12;
+}
 .code-action-btn--counting {
   background: #fef9c3;
   border-color: #fde047;
