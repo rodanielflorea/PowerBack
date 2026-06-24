@@ -2443,12 +2443,12 @@ ipcMain.handle('sticky-clear', () => {
 
 // ── Write-to-IDE: types code into the foreground window via PowerShell SendKeys ──
 // Human-like rhythm:
-//   • Type 2-4 "tokens" (words / punct runs) fast (~1 char / 75-110 ms)
-//   • Pause 800-1000 ms after the burst (simulates thinking / reviewing)
-//   • Any typo made during the burst is fixed ONLY during the pause — not mid-word
-//   • Variable-name chars (~6 %) get a nearby-key typo queued; corrected at pause time
-//   • Occasional variable-name style variation (camelCase ↔ snake_case) is handled
-//     by the caller (the AI already varies names; we just type whatever we receive)
+//   • Type 2-4 word-token runs fast (~1 char / 75-105 ms), then pause 800-1000 ms
+//   • At most ONE typo queued per burst (word char only, ~6 % chance)
+//   • The typo is NOT corrected immediately; ALL chars typed after it are tracked
+//     as a "suffix". At the pause: backspace (suffix.length + 1) to reach the
+//     wrong char, type the correct char, retype the suffix — cursor lands exactly
+//     where it was, text is correct.
 ipcMain.handle('write-to-ide', async (_e, code) => {
   const text = String(code || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   if (!text) return { ok: false, error: 'No code provided' };
@@ -2472,13 +2472,6 @@ ipcMain.handle('write-to-ide', async (_e, code) => {
     return adj ? adj[Math.floor(Math.random() * adj.length)] : null;
   }
   function isWordChar(ch) { return /[a-zA-Z0-9_]/.test(ch); }
-  // A "token boundary" is any non-word character — space, newline, punct, operator.
-  // We count tokens as contiguous runs of word chars.
-  function isBoundary(ch) { return !isWordChar(ch); }
-
-  // ── Build a structured plan of events, then emit PS lines ──────────────────
-  // Each event: { type: 'key', ch } | { type: 'sleep', ms } | { type: 'fix', wrong, correct }
-  // We collect typo-fix pairs and flush them (with their backspace) at pause points.
 
   const psLines = [
     'Add-Type -AssemblyName System.Windows.Forms',
@@ -2486,42 +2479,43 @@ ipcMain.handle('write-to-ide', async (_e, code) => {
   ];
   function emitKey(ch, loMs, hiMs) {
     const t = toToken(ch).replace(/'/g, "''");
-    // Randomise inline with a small PS expression so each run differs
     psLines.push(`$wsh.SendKeys('${t}'); Start-Sleep -Milliseconds (Get-Random -Minimum ${loMs} -Maximum ${hiMs})`);
   }
   function emitFixed(ms) {
     psLines.push(`Start-Sleep -Milliseconds ${ms}`);
   }
-  function emitBackspace(n = 1) {
+  function emitBackspace(n) {
     for (let i = 0; i < n; i++)
-      psLines.push(`$wsh.SendKeys('{BACKSPACE}'); Start-Sleep -Milliseconds (Get-Random -Minimum 55 -Maximum 110)`);
+      psLines.push(`$wsh.SendKeys('{BACKSPACE}'); Start-Sleep -Milliseconds (Get-Random -Minimum 55 -Maximum 105)`);
   }
 
   const chars = [...text];
-  // pendingFixes: array of { wrongToken, correctToken } to flush at next pause
-  let pendingFixes = [];
-  // tokenCount: how many word-char runs typed since last pause
+  // pendingFix: { correct: char, suffix: char[] } | null
+  // suffix = every char typed ON SCREEN after the typo, until the next pause.
+  // At flush: backspace (suffix.length + 1) → type correct → retype suffix.
+  // Only ONE typo per burst so suffix tracking stays unambiguous.
+  let pendingFix = null;
   let tokenCount = 0;
-  // inWord: are we currently inside a word-char run?
   let inWord = false;
-  // burstTarget: how many word-runs before we pause (2 or 4, chosen at each pause)
   let burstTarget = Math.random() < 0.5 ? 2 : 4;
 
-  function flushFixes() {
-    if (!pendingFixes.length) return;
-    // Short hesitation before starting to correct (human notices the typo)
-    emitFixed(Math.floor(Math.random() * 60) + 80); // 80-140 ms
-    for (const { wrongLen, correctChars } of pendingFixes) {
-      emitBackspace(wrongLen);
-      for (const cc of correctChars) emitKey(cc, 55, 100);
-    }
-    pendingFixes = [];
+  function flushFix() {
+    if (!pendingFix) return;
+    const { correct, suffix } = pendingFix;
+    pendingFix = null;
+    // Brief pause — human notices the mistake before reaching for backspace
+    emitFixed(80 + Math.floor(Math.random() * 80)); // 80-160 ms
+    // Go back: past suffix chars + the 1 wrong char
+    emitBackspace(suffix.length + 1);
+    // Type the correct char
+    emitKey(correct, 55, 95);
+    // Retype everything that was after the typo
+    for (const sc of suffix) emitKey(sc, 55, 95);
   }
 
   function doPause() {
-    flushFixes();
-    // Main pause: 800-1000 ms
-    emitFixed(Math.floor(Math.random() * 200) + 800);
+    flushFix();
+    emitFixed(800 + Math.floor(Math.random() * 200)); // 800-1000 ms
     tokenCount = 0;
     burstTarget = Math.random() < 0.5 ? 2 : 4;
   }
@@ -2531,46 +2525,41 @@ ipcMain.handle('write-to-ide', async (_e, code) => {
     const wasInWord = inWord;
     inWord = isWordChar(ch);
 
-    // Detect word-run start (transition from boundary → word char)
+    // New word-run starts: count it and pause if burst is full
     if (inWord && !wasInWord) {
       tokenCount++;
-      // If we've completed burstTarget runs and the next char starts a new run,
-      // pause NOW (before typing the first char of the new run).
       if (tokenCount > burstTarget) doPause();
     }
 
     if (ch === '\n') {
-      // Newline always triggers a pause (end of line = natural thinking point).
       emitKey(ch, 10, 30);
-      doPause();
+      doPause(); // newline = natural thinking boundary
       continue;
     }
 
     if (!isWordChar(ch)) {
-      // Punctuation / operator / space — type at medium speed, no typo.
+      // Punctuation / space — medium speed, never typo'd
       const lo = ch === ' ' ? 60 : 50;
       const hi = ch === ' ' ? 130 : 110;
       emitKey(ch, lo, hi);
+      // Still counts toward suffix if a fix is pending
+      if (pendingFix) pendingFix.suffix.push(ch);
       continue;
     }
 
-    // Word char — fast typing, ~6 % typo rate
-    const doTypo = Math.random() < 0.06;
-    const wrong = doTypo ? nearbyKey(ch) : null;
-
+    // Word char — ~6 % typo, but only if no fix is already queued this burst
+    const wrong = (!pendingFix && Math.random() < 0.06) ? nearbyKey(ch) : null;
     if (wrong) {
-      // Type the wrong key now, queue the fix for the upcoming pause
-      const wt = toToken(wrong).replace(/'/g, "''");
-      psLines.push(`$wsh.SendKeys('${wt}'); Start-Sleep -Milliseconds (Get-Random -Minimum 65 -Maximum 105)`);
-      // Fix = delete 1 char, retype correct char
-      pendingFixes.push({ wrongLen: 1, correctChars: [ch] });
+      emitKey(wrong, 65, 105); // type the wrong char
+      pendingFix = { correct: ch, suffix: [] }; // queue the fix; suffix starts empty
     } else {
-      emitKey(ch, 65, 105); // ~1 char per 75-105 ms (≈ 1 char / 0.85 s average)
+      emitKey(ch, 65, 105);
+      if (pendingFix) pendingFix.suffix.push(ch); // track chars typed after typo
     }
   }
 
-  // Flush any remaining fixes and do a final pause
-  flushFixes();
+  // End of code — flush any remaining fix
+  flushFix();
 
   const tmpFile = path.join(os.tmpdir(), `ace_ide_${Date.now()}.ps1`);
   fs.writeFileSync(tmpFile, psLines.join('\n'), 'utf8');
