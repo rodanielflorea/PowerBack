@@ -2532,8 +2532,14 @@ ipcMain.handle('write-to-ide', async (_e, code) => {
     }
 
     if (ch === '\n') {
+      // Fix any pending typo BEFORE pressing Enter — backspace cannot cross lines
+      // safely; if we fix after Enter the cursor is on the wrong line.
+      flushFix();
       emitKey(ch, 10, 30);
-      doPause(); // newline = natural thinking boundary
+      // Thinking pause after newline (no second flushFix needed)
+      emitFixed(800 + Math.floor(Math.random() * 200));
+      tokenCount = 0;
+      burstTarget = Math.random() < 0.5 ? 2 : 4;
       continue;
     }
 
@@ -2547,8 +2553,8 @@ ipcMain.handle('write-to-ide', async (_e, code) => {
       continue;
     }
 
-    // Word char — ~6 % typo, but only if no fix is already queued this burst
-    const wrong = (!pendingFix && Math.random() < 0.06) ? nearbyKey(ch) : null;
+    // Word char — ~1.5 % typo rate, one queued fix per burst max
+    const wrong = (!pendingFix && Math.random() < 0.015) ? nearbyKey(ch) : null;
     if (wrong) {
       emitKey(wrong, 65, 105); // type the wrong char
       pendingFix = { correct: ch, suffix: [] }; // queue the fix; suffix starts empty
