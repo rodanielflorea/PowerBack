@@ -265,9 +265,14 @@ const setupRoleSupporterV = document.getElementById("setupRoleSupporterV");
 const setupAddressV = document.getElementById("setupAddressV");
 const setupStartBtnV = document.getElementById("setupStartBtnV");
 
+const roleCardSpeaker   = document.getElementById("roleCardSpeaker");
+const roleCardSupporter = document.getElementById("roleCardSupporter");
+
 function syncSetupRoleV() {
   const sup = !!(setupRoleSupporterV && setupRoleSupporterV.checked);
   if (setupAddressV) setupAddressV.hidden = !sup;
+  if (roleCardSpeaker)   roleCardSpeaker.classList.toggle("role-card--active", !sup);
+  if (roleCardSupporter) roleCardSupporter.classList.toggle("role-card--active",  sup);
 }
 if (setupRoleSpeakerV) setupRoleSpeakerV.addEventListener("change", syncSetupRoleV);
 if (setupRoleSupporterV) setupRoleSupporterV.addEventListener("change", syncSetupRoleV);
@@ -310,7 +315,10 @@ function renderKbList(kind, items) {
     const chip = document.createElement("span");
     chip.className = "upload-chip";
     const kb = it.chars ? ` · ${Math.max(1, Math.round(it.chars / 1000))}k` : "";
-    chip.textContent = it.name + kb;
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "upload-chip-name";
+    nameSpan.textContent = it.name + kb;
+    chip.appendChild(nameSpan);
     const x = document.createElement("button");
     x.className = "upload-chip-x";
     x.textContent = "×";
@@ -1457,17 +1465,16 @@ function addAnswerTurn(question, imgs) {
   ensureSpacer();
   answerHistory.insertBefore(turn, answerSpacer);
 
-  // After layout settles, compute the question's scroll position and jump to it.
-  // getBoundingClientRect gives real rendered positions, so this is always accurate.
+  // After layout settles, scroll so the last few lines of the question are
+  // visible at the top of the panel, with the answer starting just below.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     const cRect = answerHistory.getBoundingClientRect();
     const qRect = q.getBoundingClientRect();
-    const qTopInScroll = answerHistory.scrollTop + (qRect.top - cRect.top);
-    const qH = q.offsetHeight;
-    const panelH = answerHistory.clientHeight;
-    const keepVisible = 54; // ~3 lines of a long question
-    const extra = qH > panelH * 0.45 ? qH - keepVisible : 0;
-    answerHistory.scrollTop = qTopInScroll + extra;
+    const qTopInScroll    = answerHistory.scrollTop + (qRect.top  - cRect.top);
+    const qBottomInScroll = answerHistory.scrollTop + (qRect.bottom - cRect.top);
+    // Show up to 72px of the question tail (≈3 lines); if question is shorter show all of it
+    const tail = Math.min(72, qRect.height);
+    answerHistory.scrollTop = qBottomInScroll - tail;
   }));
   return a;
 }
@@ -1489,17 +1496,7 @@ window.api.onAnswerStart((data) => {
 window.api.onAnswerChunk((delta) => {
   if (!currentAnswerEl) currentAnswerEl = addAnswerTurn("");
   currentAnswerEl.textContent += delta;
-  if (answerHistory && currentAnswerEl) {
-    // Keep the growing answer's bottom edge visible, but only if the user
-    // hasn't scrolled up more than 120px away from following.
-    const elRect = currentAnswerEl.getBoundingClientRect();
-    const cRect  = answerHistory.getBoundingClientRect();
-    const elBottomBelowFold = elRect.bottom > cRect.bottom;
-    const userScrolledUp = cRect.bottom - elRect.bottom > 120;
-    if (elBottomBelowFold && !userScrolledUp) {
-      currentAnswerEl.scrollIntoView({ block: 'end', behavior: 'instant' });
-    }
-  }
+  // No auto-scroll during streaming — user reads from the top and scrolls manually.
 });
 window.api.onAnswerDone(() => {
   if (currentAnswerEl) {
@@ -1871,28 +1868,42 @@ if (window.api.onScrollAnswer) window.api.onScrollAnswer((dir) => {
 if (window.api.onInsertPromptText) window.api.onInsertPromptText((text) => appendToComposer(text));
 
 // ---- Preset bar + answer settings (reuse the saved prompt store) ----
+const setupPresetSelect = document.getElementById("setupPresetSelect");
+
 async function refreshPresetSelect() {
   const cfg = await window.api.getAnswerConfig();
-  if (presetSelect) {
-    const prompts = await window.api.getPrompts();
-    presetSelect.innerHTML = '<option value="">(no prompt)</option>';
+  const prompts = await window.api.getPrompts();
+  const activeId = cfg.activePromptId || "";
+
+  // Populate both selects with the same list
+  for (const sel of [presetSelect, setupPresetSelect]) {
+    if (!sel) continue;
+    sel.innerHTML = '<option value="">(no prompt)</option>';
     for (const p of prompts) {
       const opt = document.createElement("option");
       opt.value = p.id;
       opt.textContent = p.title || "(untitled)";
-      presetSelect.appendChild(opt);
+      sel.appendChild(opt);
     }
-    presetSelect.value = cfg.activePromptId || "";
-    if (presetSelect._cselRefresh) presetSelect._cselRefresh();
+    sel.value = activeId;
+    if (sel._cselRefresh) sel._cselRefresh();
   }
+
   if (answerKeyEl) answerKeyEl.value = cfg.apiKey || "";
   await populateModelSelects();
 }
-if (presetSelect) {
-  presetSelect.addEventListener("change", () => {
-    window.api.setAnswerConfig({ activePromptId: presetSelect.value || null });
-  });
+
+function onPresetChange(sourceSelect) {
+  const id = sourceSelect.value || null;
+  window.api.setAnswerConfig({ activePromptId: id });
+  // Keep both selects in sync
+  for (const sel of [presetSelect, setupPresetSelect]) {
+    if (sel && sel !== sourceSelect) sel.value = id || "";
+  }
 }
+
+if (presetSelect) presetSelect.addEventListener("change", () => onPresetChange(presetSelect));
+if (setupPresetSelect) setupPresetSelect.addEventListener("change", () => onPresetChange(setupPresetSelect));
 if (answerKeyEl) {
   answerKeyEl.addEventListener("change", () => {
     window.api.setAnswerConfig({ apiKey: answerKeyEl.value.trim() });

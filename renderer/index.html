@@ -594,11 +594,32 @@
 
       <div class="setup-bottom">
         <div class="setup-roles">
-          <label class="radio"><input type="radio" name="setupRoleV" value="speaker" id="setupRoleSpeakerV" checked /> Speaker</label>
-          <label class="radio"><input type="radio" name="setupRoleV" value="supporter" id="setupRoleSupporterV" /> Supporter</label>
+          <p class="setup-roles-label">Select your role</p>
+          <div class="role-cards">
+            <label class="role-card" id="roleCardSpeaker">
+              <input type="radio" name="setupRoleV" value="speaker" id="setupRoleSpeakerV" checked hidden />
+              <span class="role-card-icon">🎤</span>
+              <span class="role-card-name">Speaker</span>
+              <span class="role-card-desc">You are being interviewed</span>
+            </label>
+            <label class="role-card" id="roleCardSupporter">
+              <input type="radio" name="setupRoleV" value="supporter" id="setupRoleSupporterV" hidden />
+              <span class="role-card-icon">🛡️</span>
+              <span class="role-card-name">Supporter</span>
+              <span class="role-card-desc">You assist a speaker remotely</span>
+            </label>
+          </div>
           <input type="text" id="setupAddressV" class="setup-address-input" placeholder="172.16.98.11:2000" spellcheck="false" hidden />
         </div>
-        <button class="action-btn setup-start-btn" id="setupStartBtnV">Start</button>
+
+        <div class="setup-prompt-row">
+          <p class="setup-roles-label">System prompt</p>
+          <select id="setupPresetSelect" class="setup-preset-select">
+            <option value="">(no prompt)</option>
+          </select>
+        </div>
+
+        <button class="action-btn setup-start-btn" id="setupStartBtnV">START</button>
       </div>
 
     </div>
