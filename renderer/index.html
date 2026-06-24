@@ -45,7 +45,7 @@
     <button class="rail-btn rec-btn" id="recBtn" title="Start transcription">
       <span class="rec-dot"></span>
     </button>
-    <button class="rail-btn" id="promptRailBtn" title="Insert a saved prompt">&#9998;</button>
+    <button class="rail-btn rail-model-btn" id="railModelBtn" title="Select answer model">M</button>
   </aside>
 
   <section class="settings-overlay" id="settingsOverlay" hidden>
@@ -119,6 +119,18 @@
             <button id="promptNewBtn">New / Clear</button>
           </div>
           <div class="updater-status" id="promptStatus"></div>
+        </section>
+
+        <section class="settings-section">
+          <h3>Avoid phrases</h3>
+          <p class="hint">One phrase or pattern per line. These are always blocked regardless of which prompt is active — the AI is explicitly told never to use them.</p>
+          <div class="field">
+            <textarea id="avoidPhrasesInput" rows="6" placeholder="e.g.&#10;years of experience&#10;In my current role&#10;I led the end-to-end&#10;passionate about&#10;proven track record" spellcheck="false"></textarea>
+          </div>
+          <div class="updater-row">
+            <button id="avoidPhrasesSaveBtn">Save</button>
+            <span class="updater-status" id="avoidPhrasesStatus"></span>
+          </div>
         </section>
       </div>
 
@@ -644,12 +656,14 @@
 
   <section class="answer-main" id="answerMain" hidden>
     <div class="answer-presetbar">
-      <span class="answer-preset-label">Preset</span>
-      <select id="presetSelect" class="answer-preset-select">
+      <select id="presetSelect" class="answer-preset-select" style="display:none">
         <option value="">(no prompt)</option>
       </select>
-      <span class="answer-preset-label">Model</span>
-      <select id="answerModelHeader" class="answer-preset-select"></select>
+      <div class="mode-seg" id="modeSeg">
+        <button class="mode-seg-btn mode-seg-btn--active" data-mode="ANSWER" title="Plain text answer">Text</button>
+        <button class="mode-seg-btn" data-mode="CODE" title="Force code answer">Code</button>
+        <button class="mode-seg-btn" data-mode="DIAGRAM" title="Force diagram answer">Diagram</button>
+      </div>
       <button id="answerClearBtn" class="answer-clear-btn" title="Clear answers">Clear</button>
     </div>
     <div class="answer-history" id="answerHistory">

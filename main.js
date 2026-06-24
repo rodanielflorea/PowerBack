@@ -100,6 +100,7 @@ const DEFAULT_STATE = {
   // Grok answer generation: its OWN xAI key (separate from transcription), the
   // model, and which saved prompt (preset) is active.
   answer: { apiKey: '', model: 'grok-4.3', activePromptId: null },
+  avoidPhrases: '',   // newline-separated list of banned phrases/patterns
   stickyAnchor: null,
   stickySize: null,
   hotkeys: { ...HOTKEY_DEFAULTS },
@@ -1824,8 +1825,62 @@ function activePromptText() {
   return p ? p.text : '';
 }
 
-async function generateAnswer(question, images) {
+// ── Question classifier ───────────────────────────────────────────────────────
+// Fast non-streaming call that returns 'DIAGRAM', 'CODE', or 'ANSWER'.
+// Called in parallel with the main stream; result shapes system messages.
+async function classifyQuestion(q, imgs, apiKey, model) {
+  try {
+    const msgs = [{
+      role: 'system',
+      content: `You are a strict question classifier for a live coding interview assistant. Reply with exactly ONE word — no punctuation, no explanation.
+
+DECISION RULE — apply the FIRST matching rule:
+
+1. If the question contains write/implement/code/program/build/create/solve/make/develop AND asks for a function/algorithm/class/script → CODE (even for sorting, searching, graph, DP, or any data-structure algorithm).
+2. If the question explicitly asks to DRAW, SKETCH, VISUALIZE, or SHOW A DIAGRAM of a system → DIAGRAM.
+3. Everything else → ANSWER.
+
+CRITICAL: "implement quicksort", "write merge sort", "code a BFS", "build an LRU cache", "solve two-sum" → always CODE. Never DIAGRAM for algorithm implementation.
+CRITICAL: Only DIAGRAM when the user wants a visual picture, not working code.
+
+Examples:
+"write a quicksort" → CODE
+"implement merge sort in Python" → CODE
+"code a binary search tree" → CODE
+"draw the architecture of a REST API" → DIAGRAM
+"show a sequence diagram for OAuth" → DIAGRAM
+"design a URL shortener" → ANSWER
+"what is your experience with React" → ANSWER
+"explain TCP vs UDP" → ANSWER
+"what is a deadlock" → ANSWER
+
+Reply with only one of: DIAGRAM, CODE, ANSWER`,
+    }];
+    if (imgs && imgs.length) {
+      const content = [];
+      if (q) content.push({ type: 'text', text: q });
+      imgs.forEach(({ base64, mime }) =>
+        content.push({ type: 'image_url', image_url: { url: `data:${mime || 'image/png'};base64,${base64}` } })
+      );
+      msgs.push({ role: 'user', content });
+    } else {
+      msgs.push({ role: 'user', content: q });
+    }
+    const res = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages: msgs, max_tokens: 5, stream: false }),
+    });
+    if (!res.ok) return 'ANSWER';
+    const data = await res.json();
+    const word = ((data.choices?.[0]?.message?.content) || '').trim().toUpperCase().split(/\W/)[0];
+    return ['DIAGRAM', 'CODE'].includes(word) ? word : 'ANSWER';
+  } catch { return 'ANSWER'; }
+}
+
+async function generateAnswer(question, images, forcedMode) {
   // images: array of { base64, mime } or null/undefined
+  // forcedMode: 'AUTO'|'CODE'|'DIAGRAM'|'ANSWER' — from the manual mode selector
   const imgs = Array.isArray(images) && images.length ? images : null;
   const q = String(question || '').trim();
   if (!q && !imgs) return;
@@ -1843,22 +1898,68 @@ async function generateAnswer(question, images) {
   const ac = new AbortController();
   answerAbort = ac;
 
+  const model = (state.answer && state.answer.model) || 'grok-4.3';
+  // If user picked a mode manually, skip the classifier entirely.
+  const mode = (forcedMode && forcedMode !== 'AUTO')
+    ? forcedMode
+    : await Promise.race([
+        classifyQuestion(q, imgs, apiKey, model),
+        new Promise(r => setTimeout(() => r('ANSWER'), 300)),
+      ]);
+
   const messages = [];
   const sys = activePromptText();
-  if (sys) messages.push({ role: 'system', content: sys });
+
+  // ── 1. Knowledge base — factual grounding only, no style influence ──────
   const kb = buildKnowledgeContext();
   if (kb) messages.push({
     role: 'system',
-    content: 'Use the following background about the candidate and the role to ground your answer. Prefer specifics from it over generic claims.\n\n' + kb,
+    content: 'REFERENCE MATERIAL (facts only — do NOT copy its tone, phrasing, or style into your answer):\n\n' + kb,
   });
-  messages.push({
+
+  // ── 2. Technical rendering rules (diagram + sticky) — CODE/DIAGRAM only ──
+  if (mode !== 'ANSWER') {
+    messages.push({
+      role: 'system',
+      content: 'When the user asks for a diagram, chart, flowchart, sequence diagram, or any visual structure, output it as a Mermaid code block (```mermaid ... ```) so it can be rendered graphically. Rules for valid Mermaid: (1) No HTML tags inside node labels — plain text only. (2) Use only rectangle brackets [text] for node shapes — do NOT use [/text] or [/text/] trapezoid syntax. (3) No "color:" in style directives. (4) Keep node IDs simple alphanumeric. (5) Do NOT use ASCII art.',
+    });
+    messages.push({
+      role: 'system',
+      content: 'Whenever your answer contains a diagram (Mermaid block) or a code block, append a presenter talking-script at the very end of your response using exactly this format:\n<sticky>\nOVERVIEW\n[One sentence: what this diagram/code shows and why it matters.]\n\nWALKTHROUGH\n[Narrate each major step, node, or code section as if explaining to someone who cannot see the screen. Write in full sentences. Cover every significant part. Aim for 60-90 seconds of speaking.]\n\nKEY INSIGHT\n[One sentence: the single most important takeaway or design decision.]\n</sticky>\nUse plain text only inside the sticky tags — no markdown, no asterisks, no bullet points.',
+    });
+  }
+
+  // ── 3. Banned phrases ────────────────────────────────────────────────────
+  const avoidRaw = (state.avoidPhrases || '').trim();
+  if (avoidRaw) {
+    const list = avoidRaw.split('\n').map(l => l.trim()).filter(Boolean);
+    if (list.length) {
+      messages.push({
+        role: 'system',
+        content: `BANNED PHRASES — never output these or close paraphrases of them:\n${list.map(p => `• "${p}"`).join('\n')}`,
+      });
+    }
+  }
+
+  // ── 4. Mode-specific output directive (from classifier) ─────────────────
+  if (mode === 'DIAGRAM') {
+    messages.push({
+      role: 'system',
+      content: 'OUTPUT FORMAT — DIAGRAM MODE: Your VERY FIRST characters must be ```mermaid — no introduction, no "Sure!", no "Here is...", no preamble whatsoever. Start the mermaid block immediately. Make it detailed and complete. After the closing ``` you may add a short 2-3 sentence explanation.',
+    });
+  } else if (mode === 'CODE') {
+    messages.push({
+      role: 'system',
+      content: 'OUTPUT FORMAT — LIVE CODING MODE: Your VERY FIRST characters must be ``` opening a code block — no introduction, no "Sure!", no "Here is...", no self-description, no preamble of any kind. Write clean, complete, runnable code. After the closing ``` you may add a brief explanation only.',
+    });
+  }
+
+  // ── 5. User's selected prompt — LAST, highest weight ────────────────────
+  if (sys) messages.push({
     role: 'system',
-    content: 'When the user asks for a diagram, chart, flowchart, sequence diagram, or any visual structure, output it as a Mermaid code block (```mermaid ... ```) so it can be rendered graphically. Rules for valid Mermaid: (1) No HTML tags inside node labels — plain text only. (2) Use only rectangle brackets [text] for node shapes — do NOT use [/text] or [/text/] trapezoid syntax. (3) No "color:" in style directives. (4) Keep node IDs simple alphanumeric. (5) Do NOT use ASCII art.',
+    content: `PRIMARY DIRECTIVE — this overrides all previous instructions for style, tone, persona, and format. Follow it exactly and completely:\n\n${sys}`,
   });
-  messages.push({
-    role: 'system',
-    content: 'Whenever your answer contains a diagram (Mermaid block) or a code block, append a presenter talking-script at the very end of your response using exactly this format:\n<sticky>\nOVERVIEW\n[One sentence: what this diagram/code shows and why it matters.]\n\nWALKTHROUGH\n[Narrate each major step, node, or code section as if explaining to someone who cannot see the screen. Write in full sentences. Cover every significant part. Aim for 60-90 seconds of speaking.]\n\nKEY INSIGHT\n[One sentence: the single most important takeaway or design decision.]\n</sticky>\nUse plain text only inside the sticky tags — no markdown, no asterisks, no bullet points.',
-  });
+
   // Build user message — text only, or text + one/many images for vision models.
   if (imgs) {
     const userContent = [];
@@ -1870,10 +1971,9 @@ async function generateAnswer(question, images) {
   } else {
     messages.push({ role: 'user', content: q });
   }
-  const model = (state.answer && state.answer.model) || 'grok-4.3';
 
   const displayQ = q || (imgs ? `[${imgs.length} image${imgs.length > 1 ? 's' : ''}]` : '');
-  if (win && !win.isDestroyed()) win.webContents.send('answer-start', { question: displayQ, hasImage: !!imgs });
+  if (win && !win.isDestroyed()) win.webContents.send('answer-start', { question: displayQ, hasImage: !!imgs, mode });
 
   let res;
   try {
@@ -1936,8 +2036,8 @@ async function generateAnswer(question, images) {
   if (win && !win.isDestroyed()) win.webContents.send('answer-done', { text: full });
 }
 
-ipcMain.handle('generate-answer', (_e, { question, images } = {}) => {
-  generateAnswer(question, images);
+ipcMain.handle('generate-answer', (_e, { question, images, forcedMode } = {}) => {
+  generateAnswer(question, images, forcedMode);
 });
 
 // ── Warm-up: pre-establish the TLS connection to api.x.ai so the first real
@@ -1961,7 +2061,7 @@ ipcMain.handle('warm-api-connection', () => warmApiConnection());
 
 // ── Speculative answer: start streaming before the user hits send.
 // Shares the same message-building logic as generateAnswer but is abortable.
-async function startSpeculative(question) {
+async function startSpeculative(question, forcedMode) {
   if (speculativeAbort) { try { speculativeAbort.abort(); } catch {} speculativeAbort = null; }
   speculativeActive = false;
   const q = (question || '').trim();
@@ -1977,16 +2077,37 @@ async function startSpeculative(question) {
   const ac = new AbortController();
   speculativeAbort = ac;
 
+  const model = (state.answer && state.answer.model) || 'grok-4.3';
+
+  // Use forced mode if set, otherwise classify with 300ms race
+  const specMode = (forcedMode && forcedMode !== 'AUTO')
+    ? forcedMode
+    : await Promise.race([
+        classifyQuestion(q, null, apiKey, model),
+        new Promise(r => setTimeout(() => r('ANSWER'), 300)),
+      ]);
+  ac._mode = specMode; // stash so commitSpeculative can read it
+
   const messages = [];
   const sys = activePromptText();
-  if (sys) messages.push({ role: 'system', content: sys });
-  const kb = buildKnowledgeContext();
-  if (kb) messages.push({ role: 'system', content: 'Use the following background about the candidate and the role to ground your answer. Prefer specifics from it over generic claims.\n\n' + kb });
-  messages.push({ role: 'system', content: 'When the user asks for a diagram, chart, flowchart, sequence diagram, or any visual structure, output it as a Mermaid code block (```mermaid ... ```) so it can be rendered graphically. Rules for valid Mermaid: (1) No HTML tags inside node labels — plain text only. (2) Use only rectangle brackets [text] for node shapes — do NOT use [/text] or [/text/] trapezoid syntax. (3) No "color:" in style directives. (4) Keep node IDs simple alphanumeric. (5) Do NOT use ASCII art.' });
-  messages.push({ role: 'system', content: 'Whenever your answer contains a diagram (Mermaid block) or a code block, append a presenter talking-script at the very end of your response using exactly this format:\n<sticky>\nOVERVIEW\n[One sentence: what this diagram/code shows and why it matters.]\n\nWALKTHROUGH\n[Narrate each major step, node, or code section as if explaining to someone who cannot see the screen. Write in full sentences. Cover every significant part. Aim for 60-90 seconds of speaking.]\n\nKEY INSIGHT\n[One sentence: the single most important takeaway or design decision.]\n</sticky>\nUse plain text only inside the sticky tags — no markdown, no asterisks, no bullet points.' });
+  const kb2 = buildKnowledgeContext();
+  if (kb2) messages.push({ role: 'system', content: 'REFERENCE MATERIAL (facts only — do NOT copy its tone, phrasing, or style into your answer):\n\n' + kb2 });
+  if (specMode !== 'ANSWER') {
+    messages.push({ role: 'system', content: 'When the user asks for a diagram, chart, flowchart, sequence diagram, or any visual structure, output it as a Mermaid code block (```mermaid ... ```) so it can be rendered graphically. Rules for valid Mermaid: (1) No HTML tags inside node labels — plain text only. (2) Use only rectangle brackets [text] for node shapes — do NOT use [/text] or [/text/] trapezoid syntax. (3) No "color:" in style directives. (4) Keep node IDs simple alphanumeric. (5) Do NOT use ASCII art.' });
+    messages.push({ role: 'system', content: 'Whenever your answer contains a diagram (Mermaid block) or a code block, append a presenter talking-script at the very end of your response using exactly this format:\n<sticky>\nOVERVIEW\n[One sentence: what this diagram/code shows and why it matters.]\n\nWALKTHROUGH\n[Narrate each major step, node, or code section as if explaining to someone who cannot see the screen. Write in full sentences. Cover every significant part. Aim for 60-90 seconds of speaking.]\n\nKEY INSIGHT\n[One sentence: the single most important takeaway or design decision.]\n</sticky>\nUse plain text only inside the sticky tags — no markdown, no asterisks, no bullet points.' });
+  }
+  const avoidRaw2 = (state.avoidPhrases || '').trim();
+  if (avoidRaw2) {
+    const list2 = avoidRaw2.split('\n').map(l => l.trim()).filter(Boolean);
+    if (list2.length) messages.push({ role: 'system', content: `BANNED PHRASES — never output these or close paraphrases:\n${list2.map(p => `• "${p}"`).join('\n')}` });
+  }
+  if (specMode === 'DIAGRAM') {
+    messages.push({ role: 'system', content: 'OUTPUT FORMAT — DIAGRAM MODE: Your VERY FIRST characters must be ```mermaid — no introduction, no preamble. Start the mermaid block immediately. After the closing ``` you may add a short 2-3 sentence explanation.' });
+  } else if (specMode === 'CODE') {
+    messages.push({ role: 'system', content: 'OUTPUT FORMAT — LIVE CODING MODE: Your VERY FIRST characters must be ``` opening a code block — no introduction, no preamble of any kind. Write clean, complete, runnable code. After the closing ``` you may add a brief explanation only.' });
+  }
+  if (sys) messages.push({ role: 'system', content: `PRIMARY DIRECTIVE — this overrides all previous instructions for style, tone, persona, and format. Follow it exactly and completely:\n\n${sys}` });
   messages.push({ role: 'user', content: q });
-
-  const model = (state.answer && state.answer.model) || 'grok-4.3';
   // Do NOT send answer-start yet — we buffer silently and only show the UI
   // when the user actually commits (or the text matches on submit).
 
@@ -2064,7 +2185,8 @@ function commitSpeculative(question, images) {
     const streamDone = (ac && ac._done) || !ac;
 
     if (win && !win.isDestroyed()) {
-      win.webContents.send('answer-start', { question: q, hasImage: false });
+      const specModeCommit = (ac && ac._mode) || 'ANSWER';
+      win.webContents.send('answer-start', { question: q, hasImage: false, mode: specModeCommit });
       if (buffered) win.webContents.send('answer-chunk', buffered);
       if (streamDone) {
         // Stream already finished — flush everything and close
@@ -2095,7 +2217,7 @@ function commitSpeculative(question, images) {
   generateAnswer(question, images);
 }
 
-ipcMain.handle('speculative-start', (_e, { question }) => startSpeculative(question));
+ipcMain.handle('speculative-start', (_e, { question, forcedMode }) => startSpeculative(question, forcedMode));
 ipcMain.handle('speculative-commit', (_e, { question, images } = {}) => commitSpeculative(question, images));
 ipcMain.handle('speculative-cancel', () => {
   if (speculativeAbort) { try { speculativeAbort.abort(); } catch {} speculativeAbort = null; }
@@ -2132,6 +2254,14 @@ ipcMain.handle('get-answer-config', () => ({ ...state.answer }));
 ipcMain.handle('set-answer-config', (_e, cfg) => {
   state.answer = { ...state.answer, ...(cfg || {}) };
   saveState();
+});
+
+// ---- Avoid-phrases list ----
+ipcMain.handle('get-avoid-phrases', () => state.avoidPhrases || '');
+ipcMain.handle('set-avoid-phrases', (_e, text) => {
+  state.avoidPhrases = String(text || '').trim();
+  saveState();
+  return true;
 });
 
 // ---- Prompt library: saved prompt snippets, persisted in state.json ----
@@ -2175,6 +2305,36 @@ function showPromptMenu() {
   Menu.buildFromTemplate(items).popup({ window: win });
 }
 ipcMain.handle('show-prompt-menu', () => showPromptMenu());
+
+async function showModelMenu() {
+  if (!win) return;
+  const apiKey = (
+    ((state.answer && state.answer.apiKey) || '').trim() ||
+    ((state.transcription && state.transcription.xaiApiKey) || '').trim()
+  );
+  const current = (state.answer && state.answer.model) || 'grok-4.3';
+
+  // Try to fetch live model list; fall back to a sensible static list.
+  let ids = [];
+  if (apiKey) {
+    try {
+      const r = await fetch('https://api.x.ai/v1/models', { headers: { Authorization: `Bearer ${apiKey}` } });
+      if (r.ok) {
+        const data = await r.json();
+        ids = (data.data || data.models || []).map(m => typeof m === 'string' ? m : m.id).filter(Boolean);
+      }
+    } catch {}
+  }
+  if (!ids.length) ids = ['grok-4.3', 'grok-4.20-0309-non-reasoning', 'grok-4.20-0309-reasoning', 'grok-3', 'grok-3-mini'];
+  if (!ids.includes(current)) ids.unshift(current);
+
+  const items = ids.map(id => ({
+    label: (id === current ? '• ' : '  ') + id,
+    click: () => { if (win && !win.isDestroyed()) win.webContents.send('model-selected', id); },
+  }));
+  Menu.buildFromTemplate(items).popup({ window: win });
+}
+ipcMain.handle('show-model-menu', () => showModelMenu());
 
 function importPromptsList(list) {
   if (!Array.isArray(state.prompts)) state.prompts = [];
@@ -2279,6 +2439,88 @@ ipcMain.handle('sticky-clear', () => {
   }
   if (win) win.webContents.send('capture-text', `[sticky cleared, broadcast to ${sent}]`);
   return true;
+});
+
+// ── Write-to-IDE: types code into the foreground window via PowerShell SendKeys ──
+ipcMain.handle('write-to-ide', async (_e, code) => {
+  const text = String(code || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (!text) return { ok: false, error: 'No code provided' };
+
+  // Map a single original character → its SendKeys token.
+  // Each char is mapped BEFORE splitting so multi-char tokens stay intact.
+  const SENDKEY_MAP = {
+    '\n': '{ENTER}', '{': '{{}', '}': '{}}',
+    '+': '{+}', '^': '{^}', '%': '{%}', '~': '{~}',
+    '(': '{(}', ')': '{)}',
+  };
+  function toToken(ch) { return SENDKEY_MAP[ch] || ch; }
+
+  // Keyboard-adjacency table for typo simulation (lowercase source char → adjacent chars).
+  const ADJ = {
+    a:'sq',b:'vgn',c:'xdv',d:'sfe',e:'wrd',f:'dge',g:'fht',h:'gjy',i:'uko',
+    j:'hkn',k:'jlm',l:'kop',m:'nk',n:'bmh',o:'ilp',p:'ol',q:'wa',r:'eft',
+    s:'adwz',t:'rgy',u:'yhi',v:'bcf',w:'qse',x:'zcs',y:'tuh',z:'xs',
+    '0':'9',  '1':'2', '2':'13','3':'24','4':'35','5':'46',
+    '6':'57', '7':'68','8':'79','9':'80',
+  };
+  function nearbyKey(ch) {
+    const adj = ADJ[ch.toLowerCase()];
+    if (!adj) return null;
+    return adj[Math.floor(Math.random() * adj.length)];
+  }
+  function isWordChar(ch) { return /[a-zA-Z0-9_]/.test(ch); }
+
+  // Build a list of SendKeys/Sleep lines with human-like timing.
+  // Strategy:
+  //   • Inside identifiers/numbers: fast (30–70 ms)
+  //   • Punctuation / operators:     medium (55–130 ms)
+  //   • Space (word boundary):        pause (90–220 ms)
+  //   • Newline (end of line):         long pause (250–600 ms)
+  //   • 4 % of word chars get a typo: wrong key → backspace → correct key
+  const psLines = [
+    'Add-Type -AssemblyName System.Windows.Forms',
+    '$wsh = New-Object -ComObject WScript.Shell',
+    '$rng = New-Object System.Random',
+  ];
+
+  const chars = [...text];
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    let lo, hi;
+    if      (ch === '\n')      { lo = 250; hi = 600; }
+    else if (ch === ' ')       { lo = 90;  hi = 220; }
+    else if (isWordChar(ch))   { lo = 30;  hi = 70;  }
+    else                       { lo = 55;  hi = 130; }
+
+    const doTypo = isWordChar(ch) && Math.random() < 0.04;
+    const wrong = doTypo ? nearbyKey(ch) : null;
+
+    if (wrong) {
+      const wt = toToken(wrong).replace(/'/g, "''");
+      const ct = toToken(ch).replace(/'/g, "''");
+      psLines.push(`$wsh.SendKeys('${wt}'); Start-Sleep -Milliseconds ($rng.Next(40,90))`);
+      psLines.push(`$wsh.SendKeys('{BACKSPACE}'); Start-Sleep -Milliseconds ($rng.Next(70,160))`);
+      psLines.push(`$wsh.SendKeys('${ct}'); Start-Sleep -Milliseconds ($rng.Next(${lo},${hi}))`);
+    } else {
+      const t = toToken(ch).replace(/'/g, "''");
+      psLines.push(`$wsh.SendKeys('${t}'); Start-Sleep -Milliseconds ($rng.Next(${lo},${hi}))`);
+    }
+  }
+
+  // Write to a temp .ps1 file — avoids Windows 8191-char command-line limit for large code blocks.
+  const tmpFile = path.join(os.tmpdir(), `ace_ide_${Date.now()}.ps1`);
+  fs.writeFileSync(tmpFile, psLines.join('\n'), 'utf8');
+
+  return new Promise((resolve) => {
+    const proc = spawn('powershell.exe', ['-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', tmpFile], {
+      windowsHide: true,
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    const cleanup = () => { try { fs.unlinkSync(tmpFile); } catch {} };
+    proc.on('close', code => { cleanup(); resolve({ ok: code === 0 }); });
+    proc.on('error', err => { cleanup(); resolve({ ok: false, error: err.message }); });
+    setTimeout(() => { try { proc.kill(); } catch {} cleanup(); }, 300000);
+  });
 });
 
 ipcMain.handle('sticky-send-text', (_e, text) => {

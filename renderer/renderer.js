@@ -603,6 +603,34 @@ if (promptImportBtn)
 
 if (window.api && window.api.getPrompts) window.api.getPrompts().then(renderPrompts);
 
+// ---- Avoid-phrases UI ----
+const avoidPhrasesInput  = document.getElementById("avoidPhrasesInput");
+const avoidPhrasesSaveBtn = document.getElementById("avoidPhrasesSaveBtn");
+const avoidPhrasesStatus  = document.getElementById("avoidPhrasesStatus");
+
+function setAvoidStatus(msg, ok) {
+  if (!avoidPhrasesStatus) return;
+  avoidPhrasesStatus.textContent = msg;
+  avoidPhrasesStatus.style.color = ok ? 'var(--accent)' : 'var(--danger, #ef4444)';
+  setTimeout(() => { if (avoidPhrasesStatus) avoidPhrasesStatus.textContent = ''; }, 2500);
+}
+
+async function loadAvoidPhrases() {
+  if (!avoidPhrasesInput || !window.api.getAvoidPhrases) return;
+  const text = await window.api.getAvoidPhrases();
+  avoidPhrasesInput.value = text || '';
+}
+
+if (avoidPhrasesSaveBtn) {
+  avoidPhrasesSaveBtn.addEventListener('click', async () => {
+    const text = avoidPhrasesInput ? avoidPhrasesInput.value : '';
+    await window.api.setAvoidPhrases(text);
+    setAvoidStatus('Saved.', true);
+  });
+}
+
+loadAvoidPhrases();
+
 if (window.api && window.api.onUpdaterStatus) {
   window.api.onUpdaterStatus((s) => {
     if (!updaterStatusEl) return;
@@ -638,6 +666,7 @@ function openSettings() {
   activateTab("apikeys");
   refreshModeUI();
   refreshTranscriptionUI();
+  loadAvoidPhrases();
   refreshCaptureUI();
   refreshMicList();
   refreshHotkeysUI();
@@ -1140,7 +1169,37 @@ const presetSelect = document.getElementById("presetSelect");
 const answerKeyEl = document.getElementById("answerKey");
 const answerModelEl = document.getElementById("answerModel");
 const answerModelHeaderEl = document.getElementById("answerModelHeader");
+const modeSeg = document.getElementById("modeSeg");
+const railModelBtn = document.getElementById("railModelBtn");
 let currentAnswerEl = null;
+
+// Rail model button — opens native popup menu, same style as prompt menu
+if (railModelBtn && window.api.showModelMenu) {
+  railModelBtn.addEventListener('click', () => window.api.showModelMenu());
+}
+if (window.api.onModelSelected) {
+  window.api.onModelSelected((id) => {
+    setAnswerModel(id);
+    // Update button label to a short abbreviation of the selected model
+    if (railModelBtn) {
+      // Show something like "G4" for grok-4, "G3" for grok-3, etc.
+      const abbr = id.replace('grok-', 'G').replace(/\.\d+$/, '').replace(/-.*/, '').slice(0, 4);
+      railModelBtn.textContent = abbr || 'M';
+      railModelBtn.title = id;
+    }
+  });
+}
+
+// Manual mode — default Text; CODE/DIAGRAM force specific output format.
+let manualMode = 'ANSWER';
+if (modeSeg) {
+  modeSeg.addEventListener('click', (e) => {
+    const btn = e.target.closest('.mode-seg-btn');
+    if (!btn) return;
+    manualMode = btn.dataset.mode;
+    modeSeg.querySelectorAll('.mode-seg-btn').forEach(b => b.classList.toggle('mode-seg-btn--active', b === btn));
+  });
+}
 
 // Short hint labels shown next to each model ID in the dropdown.
 // Applied to both the static fallback list and the live list from xAI.
@@ -1204,6 +1263,12 @@ async function populateModelSelects() {
     }
     sel.value = current;
     if (sel._cselRefresh) sel._cselRefresh();
+  }
+  // Update rail model button label to show current model abbreviation
+  if (railModelBtn) {
+    const abbr = current.replace('grok-', 'G').replace(/\.\d+$/, '').replace(/-.*/, '').slice(0, 4);
+    railModelBtn.textContent = abbr || 'M';
+    railModelBtn.title = current;
   }
 }
 
@@ -1369,7 +1434,7 @@ if (composerInput) {
       // Only speculate when no images are attached (vision requests aren't speculative)
       if (attachedImages.length > 0) return;
       _speculativeText = text;
-      if (window.api.speculativeStart) window.api.speculativeStart({ question: text });
+      if (window.api.speculativeStart) window.api.speculativeStart({ question: text, forcedMode: manualMode });
     }, 800);
   });
 }
@@ -1393,7 +1458,7 @@ function submitComposer() {
     // Cancel any speculation, start a fresh request
     _speculativeText = null;
     if (window.api.speculativeCancel) window.api.speculativeCancel();
-    window.api.generateAnswer(q, hasImages ? attachedImages : null);
+    window.api.generateAnswer(q, hasImages ? attachedImages : null, manualMode);
   }
 
   composerInput.value = "";
@@ -1435,7 +1500,7 @@ function ensureSpacer() {
   answerSpacer.style.height = answerHistory.clientHeight + "px";
 }
 
-function addAnswerTurn(question, imgs) {
+function addAnswerTurn(question, imgs, mode) {
   if (!answerHistory) return null;
   if (answerEmpty) answerEmpty.hidden = true;
 
@@ -1458,6 +1523,18 @@ function addAnswerTurn(question, imgs) {
   if (question) q.appendChild(document.createTextNode(question));
   const a = document.createElement("div");
   a.className = "answer-a streaming";
+  a.dataset.mode = mode || 'ANSWER';
+  if (mode && mode !== 'ANSWER') {
+    const badge = document.createElement("span");
+    badge.className = "answer-mode-badge answer-mode-badge--" + mode.toLowerCase();
+    badge.textContent = mode === 'DIAGRAM' ? '⬡ Diagram' : '⌨ Live Code';
+    a.appendChild(badge);
+  }
+  // Streaming text goes into a child div so the badge span is never touched
+  const streamDiv = document.createElement("div");
+  streamDiv.className = "answer-stream";
+  a.appendChild(streamDiv);
+  a._streamEl = streamDiv;
   turn.appendChild(q);
   turn.appendChild(a);
 
@@ -1481,9 +1558,11 @@ function addAnswerTurn(question, imgs) {
 
 window.api.onAnswerStart((data) => {
   const question = data && typeof data === "object" ? String(data.question || "") : String(data || "");
+  const answerMode = (data && data.mode) || 'ANSWER';
   // If a previous answer bubble is still streaming and has no content yet,
   // remove it — it was interrupted before any tokens arrived.
-  if (currentAnswerEl && currentAnswerEl.classList.contains("streaming") && !currentAnswerEl.textContent.trim()) {
+  const streamContent = currentAnswerEl && currentAnswerEl._streamEl ? currentAnswerEl._streamEl.textContent : (currentAnswerEl && currentAnswerEl.textContent);
+  if (currentAnswerEl && currentAnswerEl.classList.contains("streaming") && !(streamContent || '').trim()) {
     const oldTurn = currentAnswerEl.parentElement;
     if (oldTurn && oldTurn.classList.contains("answer-turn")) oldTurn.remove();
     if (answerHistory && !answerHistory.querySelector(".answer-turn") && answerEmpty) answerEmpty.hidden = false;
@@ -1491,36 +1570,130 @@ window.api.onAnswerStart((data) => {
   }
   const imgs = pendingBubbleImages.slice();
   pendingBubbleImages = [];
-  currentAnswerEl = addAnswerTurn(question, imgs);
+  currentAnswerEl = addAnswerTurn(question, imgs, answerMode);
 });
 window.api.onAnswerChunk((delta) => {
-  if (!currentAnswerEl) currentAnswerEl = addAnswerTurn("");
-  currentAnswerEl.textContent += delta;
+  if (!currentAnswerEl) currentAnswerEl = addAnswerTurn("", null, 'ANSWER');
+  // Stream into the child div so the badge span is never destroyed by textContent=
+  const target = currentAnswerEl._streamEl || currentAnswerEl;
+  target.textContent += delta;
   // No auto-scroll during streaming — user reads from the top and scrolls manually.
 });
+// Strip any prose before the first code/mermaid block for CODE and DIAGRAM modes.
+// Belt-and-suspenders: works even when the model ignores the no-intro instruction.
+function stripLeadingIntro(text, mode) {
+  if (mode === 'CODE') {
+    const idx = text.indexOf('```');
+    // idx >= 0: marker found — slice from it (idx=0 means already at start, safe)
+    // idx === -1: no code block found — return as-is
+    return idx >= 0 ? text.slice(idx) : text;
+  }
+  if (mode === 'DIAGRAM') {
+    const idx = text.toLowerCase().indexOf('```mermaid');
+    return idx >= 0 ? text.slice(idx) : text;
+  }
+  return text;
+}
+
 window.api.onAnswerDone(() => {
   if (currentAnswerEl) {
     currentAnswerEl.classList.remove("streaming");
-    const rawText = currentAnswerEl.textContent || '';
+    const answerMode = currentAnswerEl.dataset.mode || 'ANSWER';
+    // Read raw streamed text from the child stream div (keeps badge untouched)
+    const streamEl = currentAnswerEl._streamEl || currentAnswerEl;
+    let rawText = streamEl.textContent || '';
+
+    // Strip intro prose for CODE/DIAGRAM before any further processing
+    if (answerMode === 'CODE' || answerMode === 'DIAGRAM') {
+      const stripped = stripLeadingIntro(rawText, answerMode);
+      rawText = stripped;
+    }
+
     const stickyMatch = rawText.match(/<sticky>([\s\S]*?)<\/sticky>/i);
 
     if (stickyMatch) {
       const script = stickyMatch[1].trim();
-      // Strip <sticky> block from the main text before Markdown rendering
-      currentAnswerEl.textContent = rawText.replace(/<sticky>[\s\S]*?<\/sticky>/i, '').trimEnd();
-      // Render diagram + markdown in the bubble
-      renderMermaidInElement(currentAnswerEl);
-      // Append the formatted script section inside the same answer bubble
+      streamEl.textContent = rawText.replace(/<sticky>[\s\S]*?<\/sticky>/i, '').trimEnd();
+      renderMermaidInElement(streamEl);
+      if (streamEl.classList.contains('has-diagram')) currentAnswerEl.classList.add('has-diagram');
       appendScriptToAnswer(currentAnswerEl, script);
-      // Also send to sticky note (which auto-resizes)
       if (window.api.openSticky) window.api.openSticky();
       if (window.api.sendStickyText) window.api.sendStickyText(script);
     } else {
-      renderMermaidInElement(currentAnswerEl);
+      streamEl.textContent = rawText;
+      renderMermaidInElement(streamEl);
+      if (streamEl.classList.contains('has-diagram')) currentAnswerEl.classList.add('has-diagram');
+    }
+
+    // For CODE mode — add Copy + Write to IDE action bar
+    if (answerMode === 'CODE') {
+      appendCodeActions(currentAnswerEl);
     }
   }
   currentAnswerEl = null;
 });
+
+// ── Code action bar: Copy + Write to IDE ─────────────────────────────────────
+function extractCodeFromEl(el) {
+  // Look in the stream child div first, then fall back to the element itself
+  const root = el._streamEl || el;
+  const pre = root.querySelector('pre code') || root.querySelector('pre') || root.querySelector('code');
+  return (pre ? pre.textContent : root.textContent).trim();
+}
+
+function appendCodeActions(el) {
+  const bar = document.createElement('div');
+  bar.className = 'code-action-bar';
+
+  // Copy button
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'code-action-btn';
+  copyBtn.textContent = 'Copy';
+  copyBtn.addEventListener('click', () => {
+    const code = extractCodeFromEl(el);
+    navigator.clipboard.writeText(code).then(() => {
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1800);
+    });
+  });
+
+  // Write to IDE button
+  const ideBtn = document.createElement('button');
+  ideBtn.className = 'code-action-btn code-action-btn--ide';
+  ideBtn.textContent = 'Write to IDE';
+  ideBtn.addEventListener('click', () => startWriteToIde(el, ideBtn));
+
+  bar.appendChild(copyBtn);
+  bar.appendChild(ideBtn);
+  el.appendChild(bar);
+}
+
+function startWriteToIde(el, btn) {
+  const code = extractCodeFromEl(el);
+  if (!code) return;
+
+  // Countdown: 3…2…1… then type
+  let count = 3;
+  btn.disabled = true;
+  btn.classList.add('code-action-btn--counting');
+
+  const tick = () => {
+    btn.textContent = `Switch to IDE… ${count}`;
+    if (count === 0) {
+      btn.textContent = 'Typing…';
+      window.api.writeToIde(code).then(res => {
+        btn.disabled = false;
+        btn.classList.remove('code-action-btn--counting');
+        btn.textContent = res && res.ok ? 'Done ✓' : 'Error — try again';
+        setTimeout(() => { btn.textContent = 'Write to IDE'; }, 2500);
+      });
+    } else {
+      count--;
+      setTimeout(tick, 1000);
+    }
+  };
+  tick();
+}
 
 // Render the structured talking-script as a styled block inside the answer bubble.
 function appendScriptToAnswer(el, script) {
