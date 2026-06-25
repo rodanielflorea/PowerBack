@@ -1521,9 +1521,28 @@ function addAnswerTurn(question, imgs, mode) {
     q.appendChild(strip);
   }
   if (question) q.appendChild(document.createTextNode(question));
+
+  // Edit / Resend controls (ChatGPT/Claude-style). Shown on hover.
+  const turnMode = mode || 'ANSWER';
+  const qActions = document.createElement("div");
+  qActions.className = "answer-q-actions";
+  const editBtn = document.createElement("button");
+  editBtn.className = "answer-q-action";
+  editBtn.title = "Edit & resend";
+  editBtn.textContent = "✎";
+  editBtn.addEventListener("click", () => editTurn(question, imgs, turnMode));
+  const resendBtn = document.createElement("button");
+  resendBtn.className = "answer-q-action";
+  resendBtn.title = "Resend (regenerate)";
+  resendBtn.textContent = "↻";
+  resendBtn.addEventListener("click", () => resendTurn(question, imgs, turnMode));
+  qActions.appendChild(editBtn);
+  qActions.appendChild(resendBtn);
+  q.appendChild(qActions);
+
   const a = document.createElement("div");
   a.className = "answer-a streaming";
-  a.dataset.mode = mode || 'ANSWER';
+  a.dataset.mode = turnMode;
   if (mode && mode !== 'ANSWER') {
     const badge = document.createElement("span");
     badge.className = "answer-mode-badge answer-mode-badge--" + mode.toLowerCase();
@@ -1554,6 +1573,39 @@ function addAnswerTurn(question, imgs, mode) {
     answerHistory.scrollTop = qBottomInScroll - tail;
   }));
   return a;
+}
+
+// Reflect a mode in the segmented control + manualMode state.
+function setManualMode(mode) {
+  manualMode = mode || 'ANSWER';
+  if (modeSeg) modeSeg.querySelectorAll('.mode-seg-btn').forEach((b) =>
+    b.classList.toggle('mode-seg-btn--active', b.dataset.mode === manualMode));
+}
+
+// Resend (regenerate): re-submit the same question/images/mode as a new turn.
+function resendTurn(question, imgs, mode) {
+  const hasImgs = Array.isArray(imgs) && imgs.length > 0;
+  if (!question && !hasImgs) return;
+  // Cancel any in-flight speculation, then fire a fresh request.
+  _speculativeText = null;
+  if (window.api.speculativeCancel) window.api.speculativeCancel();
+  // onAnswerStart embeds these into the new question bubble.
+  pendingBubbleImages = hasImgs ? imgs.slice() : [];
+  window.api.generateAnswer(question || "", hasImgs ? imgs : null, mode || 'ANSWER');
+}
+
+// Edit: load the question (text + images + mode) back into the composer so the
+// user can tweak it and submit normally — creating a new turn.
+function editTurn(question, imgs, mode) {
+  if (composerInput) {
+    composerInput.value = question || "";
+    composerInput.focus();
+    // Move caret to end
+    try { composerInput.setSelectionRange(composerInput.value.length, composerInput.value.length); } catch {}
+  }
+  attachedImages = (Array.isArray(imgs) ? imgs : []).map((i) => ({ base64: i.base64, mime: i.mime }));
+  renderImgStrip();
+  setManualMode(mode || 'ANSWER');
 }
 
 window.api.onAnswerStart((data) => {

@@ -812,6 +812,33 @@ body.in-interview .end-btn.live::before {
   box-shadow: var(--shadow-sm);
 }
 
+/* Edit / Resend controls on the question bubble — shown on hover */
+.answer-q-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.answer-turn:hover .answer-q-actions { opacity: 1; }
+.answer-q-action {
+  -webkit-app-region: no-drag;
+  border: none;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease;
+}
+.answer-q-action:hover { background: rgba(255, 255, 255, 0.34); }
+
 /* Answer bubble — AI, left-aligned */
 .answer-a {
   align-self: flex-start;
