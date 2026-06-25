@@ -1927,7 +1927,26 @@ async function generateAnswer(question, images, forcedMode) {
     content: 'REFERENCE MATERIAL (facts only — do NOT copy its tone, phrasing, or style into your answer):\n\n' + kb,
   });
 
-  // ── 2. Technical rendering rules (diagram + sticky) — CODE/DIAGRAM only ──
+  // ── 2. Persona / selected prompt ────────────────────────────────────────
+  // ANSWER mode: persona is the PRIMARY directive — it controls everything.
+  // CODE/DIAGRAM mode: the persona must NOT override the output format. An
+  // interview persona ("answer as the candidate…") otherwise makes the model
+  // introduce itself instead of drawing/coding. So here the persona is demoted
+  // to content/voice guidance and the format directive (section 5) is placed
+  // LAST as the authoritative instruction.
+  if (sys && mode === 'ANSWER') {
+    messages.push({
+      role: 'system',
+      content: `PRIMARY DIRECTIVE — this overrides all previous instructions for style, tone, persona, and format. Follow it exactly and completely:\n\n${sys}`,
+    });
+  } else if (sys) {
+    messages.push({
+      role: 'system',
+      content: `PERSONA & CONTENT GUIDANCE — apply this only to WORDING and technical choices. It must NOT change the required output format below, and must NOT make you introduce yourself or describe your experience when a diagram or code is requested:\n\n${sys}`,
+    });
+  }
+
+  // ── 3. Technical rendering rules (diagram + sticky) — CODE/DIAGRAM only ──
   if (mode !== 'ANSWER') {
     messages.push({
       role: 'system',
@@ -1939,7 +1958,7 @@ async function generateAnswer(question, images, forcedMode) {
     });
   }
 
-  // ── 3. Banned phrases ────────────────────────────────────────────────────
+  // ── 4. Banned phrases ────────────────────────────────────────────────────
   const avoidRaw = (state.avoidPhrases || '').trim();
   if (avoidRaw) {
     const list = avoidRaw.split('\n').map(l => l.trim()).filter(Boolean);
@@ -1951,24 +1970,18 @@ async function generateAnswer(question, images, forcedMode) {
     }
   }
 
-  // ── 4. Mode-specific output directive (from classifier) ─────────────────
+  // ── 5. Mode-specific output directive — LAST so it has highest priority ──
   if (mode === 'DIAGRAM') {
     messages.push({
       role: 'system',
-      content: 'OUTPUT FORMAT — DIAGRAM MODE: Your VERY FIRST characters must be ```mermaid — no introduction, no "Sure!", no "Here is...", no preamble whatsoever. Start the mermaid block immediately. Make it detailed and complete. After the closing ``` you may add a short 2-3 sentence explanation.',
+      content: 'OUTPUT FORMAT — DIAGRAM MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above, INCLUDING the persona/content guidance. Draw a diagram of the system described in the USER MESSAGE below. Your VERY FIRST characters must be ```mermaid — no introduction, no greeting, no self-description, no "Sure!", no "Here is...", no preamble whatsoever. Do NOT introduce yourself or talk about your experience. Start the mermaid block immediately. Make it detailed and complete. After the closing ``` you may add a short 2-3 sentence explanation.',
     });
   } else if (mode === 'CODE') {
     messages.push({
       role: 'system',
-      content: 'OUTPUT FORMAT — LIVE CODING MODE: Your VERY FIRST characters must be ``` opening a code block — no introduction, no "Sure!", no "Here is...", no self-description, no preamble of any kind. Write clean, complete, runnable code. After the closing ``` you may add a brief explanation only.',
+      content: 'OUTPUT FORMAT — LIVE CODING MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above, INCLUDING the persona/content guidance. Write code that solves the USER MESSAGE below. Your VERY FIRST characters must be ``` opening a code block — no introduction, no greeting, no self-description, no "Sure!", no "Here is...", no preamble of any kind. Do NOT introduce yourself or talk about your experience. Write clean, complete, runnable code. After the closing ``` you may add a brief explanation only.',
     });
   }
-
-  // ── 5. User's selected prompt — LAST, highest weight ────────────────────
-  if (sys) messages.push({
-    role: 'system',
-    content: `PRIMARY DIRECTIVE — this overrides all previous instructions for style, tone, persona, and format. Follow it exactly and completely:\n\n${sys}`,
-  });
 
   // Build user message — text only, or text + one/many images for vision models.
   if (imgs) {
@@ -1984,6 +1997,8 @@ async function generateAnswer(question, images, forcedMode) {
 
   const displayQ = q || (imgs ? `[${imgs.length} image${imgs.length > 1 ? 's' : ''}]` : '');
   if (win && !win.isDestroyed()) win.webContents.send('answer-start', { question: displayQ, hasImage: !!imgs, mode });
+
+  appendLogLine(`[answer] mode=${mode} forced=${forcedMode || '-'} sysLen=${sys.length} q="${q.slice(0, 80)}" sysMsgs=${messages.filter(m => m.role === 'system').length}`);
 
   let res;
   try {
@@ -2098,10 +2113,17 @@ async function startSpeculative(question, forcedMode) {
       ]);
   ac._mode = specMode; // stash so commitSpeculative can read it
 
+  // Mirrors generateAnswer's message construction (see comments there).
   const messages = [];
   const sys = activePromptText();
   const kb2 = buildKnowledgeContext();
   if (kb2) messages.push({ role: 'system', content: 'REFERENCE MATERIAL (facts only — do NOT copy its tone, phrasing, or style into your answer):\n\n' + kb2 });
+  // Persona: PRIMARY in ANSWER mode; demoted to content-only guidance otherwise.
+  if (sys && specMode === 'ANSWER') {
+    messages.push({ role: 'system', content: `PRIMARY DIRECTIVE — this overrides all previous instructions for style, tone, persona, and format. Follow it exactly and completely:\n\n${sys}` });
+  } else if (sys) {
+    messages.push({ role: 'system', content: `PERSONA & CONTENT GUIDANCE — apply this only to WORDING and technical choices. It must NOT change the required output format below, and must NOT make you introduce yourself or describe your experience when a diagram or code is requested:\n\n${sys}` });
+  }
   if (specMode !== 'ANSWER') {
     messages.push({ role: 'system', content: 'When the user asks for a diagram, chart, flowchart, sequence diagram, or any visual structure, output it as a Mermaid code block (```mermaid ... ```) so it can be rendered graphically. Rules for valid Mermaid: (1) No HTML tags inside node labels — plain text only. (2) Use only rectangle brackets [text] for node shapes — do NOT use [/text] or [/text/] trapezoid syntax. (3) No "color:" in style directives. (4) Keep node IDs simple alphanumeric. (5) Do NOT use ASCII art.' });
     messages.push({ role: 'system', content: 'Whenever your answer contains a diagram (Mermaid block) or a code block, append a presenter talking-script at the very end of your response using exactly this format:\n<sticky>\nOVERVIEW\n[One sentence: what this diagram/code shows and why it matters.]\n\nWALKTHROUGH\n[Narrate each major step, node, or code section as if explaining to someone who cannot see the screen. Write in full sentences. Cover every significant part. Aim for 60-90 seconds of speaking.]\n\nKEY INSIGHT\n[One sentence: the single most important takeaway or design decision.]\n</sticky>\nUse plain text only inside the sticky tags — no markdown, no asterisks, no bullet points.' });
@@ -2111,12 +2133,12 @@ async function startSpeculative(question, forcedMode) {
     const list2 = avoidRaw2.split('\n').map(l => l.trim()).filter(Boolean);
     if (list2.length) messages.push({ role: 'system', content: `BANNED PHRASES — never output these or close paraphrases:\n${list2.map(p => `• "${p}"`).join('\n')}` });
   }
+  // Output-format directive LAST so it has highest priority over the persona.
   if (specMode === 'DIAGRAM') {
-    messages.push({ role: 'system', content: 'OUTPUT FORMAT — DIAGRAM MODE: Your VERY FIRST characters must be ```mermaid — no introduction, no preamble. Start the mermaid block immediately. After the closing ``` you may add a short 2-3 sentence explanation.' });
+    messages.push({ role: 'system', content: 'OUTPUT FORMAT — DIAGRAM MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above, INCLUDING the persona/content guidance. Draw a diagram of the system described in the USER MESSAGE below. Your VERY FIRST characters must be ```mermaid — no introduction, no greeting, no self-description, no preamble. Do NOT introduce yourself or talk about your experience. Start the mermaid block immediately. After the closing ``` you may add a short 2-3 sentence explanation.' });
   } else if (specMode === 'CODE') {
-    messages.push({ role: 'system', content: 'OUTPUT FORMAT — LIVE CODING MODE: Your VERY FIRST characters must be ``` opening a code block — no introduction, no preamble of any kind. Write clean, complete, runnable code. After the closing ``` you may add a brief explanation only.' });
+    messages.push({ role: 'system', content: 'OUTPUT FORMAT — LIVE CODING MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above, INCLUDING the persona/content guidance. Write code that solves the USER MESSAGE below. Your VERY FIRST characters must be ``` opening a code block — no introduction, no greeting, no self-description, no preamble of any kind. Do NOT introduce yourself or talk about your experience. Write clean, complete, runnable code. After the closing ``` you may add a brief explanation only.' });
   }
-  if (sys) messages.push({ role: 'system', content: `PRIMARY DIRECTIVE — this overrides all previous instructions for style, tone, persona, and format. Follow it exactly and completely:\n\n${sys}` });
   messages.push({ role: 'user', content: q });
   // Do NOT send answer-start yet — we buffer silently and only show the UI
   // when the user actually commits (or the text matches on submit).
