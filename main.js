@@ -2170,22 +2170,28 @@ async function startSpeculative(question, forcedMode) {
   }
 
   // Stream finished
-  speculativeAbort = null;
   if (speculativeCommitted) {
     // We were already piping — send done signal
+    speculativeAbort = null;
     speculativeCommitted = false;
     speculativeActive = false;
     speculativeQuestion = null;
     if (speculativeBuffer.trim()) sessionLog.push({ ts: Date.now(), kind: 'answer', text: speculativeBuffer.trim() });
     if (win && !win.isDestroyed()) win.webContents.send('answer-done', { text: speculativeBuffer });
   } else {
-    // Store completed buffer for commitSpeculative to flush
+    // Stream finished BEFORE the user committed. Stash the full buffer on `ac`
+    // and KEEP speculativeAbort pointing at it so commitSpeculative can read
+    // ac._buffer / ac._mode / ac._done. (Previously speculativeAbort was nulled
+    // unconditionally above, making the buffered answer and its mode unreachable
+    // on commit — the renderer then got an empty answer with mode reset to
+    // ANSWER, so follow-up questions appeared unanswered / stuck on the old
+    // diagram's presenter sticky.)
     ac._buffer = speculativeBuffer;
     ac._done = true;
   }
 }
 
-function commitSpeculative(question, images) {
+function commitSpeculative(question, images, forcedMode) {
   const q = (question || '').trim();
   const hasImages = Array.isArray(images) && images.length > 0;
 
@@ -2219,16 +2225,17 @@ function commitSpeculative(question, images) {
     return;
   }
 
-  // Text changed or has images — discard speculation, start fresh
+  // Text changed or has images — discard speculation, start fresh.
+  // Pass forcedMode through so the manual DIAGRAM/CODE selection is preserved.
   if (speculativeAbort) { try { speculativeAbort.abort(); } catch {} speculativeAbort = null; }
   speculativeActive = false;
   speculativeQuestion = null;
   speculativeCommitted = false;
-  generateAnswer(question, images);
+  generateAnswer(question, images, forcedMode);
 }
 
 ipcMain.handle('speculative-start', (_e, { question, forcedMode }) => startSpeculative(question, forcedMode));
-ipcMain.handle('speculative-commit', (_e, { question, images } = {}) => commitSpeculative(question, images));
+ipcMain.handle('speculative-commit', (_e, { question, images, forcedMode } = {}) => commitSpeculative(question, images, forcedMode));
 ipcMain.handle('speculative-cancel', () => {
   if (speculativeAbort) { try { speculativeAbort.abort(); } catch {} speculativeAbort = null; }
   speculativeActive = false;

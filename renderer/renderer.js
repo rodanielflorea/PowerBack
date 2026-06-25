@@ -1453,7 +1453,7 @@ function submitComposer() {
   if (!hasImages && _speculativeText === q && window.api.speculativeCommit) {
     // Speculative request is already streaming or done — adopt it
     _speculativeText = null;
-    window.api.speculativeCommit({ question: q, images: null });
+    window.api.speculativeCommit({ question: q, images: null, forcedMode: manualMode });
   } else {
     // Cancel any speculation, start a fresh request
     _speculativeText = null;
