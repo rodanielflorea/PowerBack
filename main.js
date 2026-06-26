@@ -1934,7 +1934,8 @@ ipcMain.handle('save-session-log', async (_e, suggestedName) => {
 ipcMain.handle('session-finalize', (_e, { company, position } = {}) => {
   const s = currentSession();
   const d = new Date();
-  const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const p2 = (n) => String(n).padStart(2, '0');
+  const dateStr = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
   const title = [String(company || '').trim(), String(position || '').trim(), dateStr].filter(Boolean).join(' · ');
   if (s) {
     s.company = String(company || '').trim();
