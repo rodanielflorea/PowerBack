@@ -61,7 +61,7 @@ function renderHolidays(list) {
     const soon = days >= 0 && days <= 14;
     return '<div class="info-holiday' + (soon ? ' info-holiday--soon' : '') + '">' +
       '<span class="info-holiday-date">' + dateStr + '</span>' +
-      '<span class="info-holiday-name">' + (h.localName || h.name || '') + '</span></div>';
+      '<span class="info-holiday-name">' + (h.name || h.localName || '') + '</span></div>';
   }).join('');
 }
 
