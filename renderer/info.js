@@ -42,6 +42,7 @@ function weatherEmoji(desc) {
 }
 
 function renderWeather(w) {
+  if (w === undefined) { elWeather.innerHTML = '<span class="info-dim">Loading…</span>'; return; }
   if (!w) { elWeather.innerHTML = '<span class="info-dim">Unavailable</span>'; return; }
   const emoji = weatherEmoji(w.desc);
   elWeather.innerHTML =
@@ -97,18 +98,23 @@ function eventLine(e, today) {
     '<span class="info-holiday-name">' + (e.text || '') + '</span></div>';
 }
 
+const LOADING = '<span class="info-dim">Loading…</span>';
 function renderHolidaysAndEvents(data) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const all = (data && data.holidays) || [];
-  renderInto(elHolidays, all.filter(isPublicHoliday), today, 2, 5);
+  const holidays = data ? data.holidays : undefined; // undefined = loading
+  const events = data ? data.events : undefined;
+
+  if (holidays === undefined) { elHolidays.innerHTML = LOADING; }
+  else { renderInto(elHolidays, (holidays || []).filter(isPublicHoliday), today, 2, 5); }
 
   // Special events: prefer the richer Wikimedia events; fall back to Nager's
   // non-public observances if the scrape found nothing for this country.
-  const wiki = (data && data.events) || [];
-  if (wiki.length) {
-    elEvents.innerHTML = wiki.slice(0, 8).map(e => eventLine(e, today)).join('');
+  if (events === undefined) {
+    elEvents.innerHTML = LOADING;
+  } else if (events && events.length) {
+    elEvents.innerHTML = events.slice(0, 8).map(e => eventLine(e, today)).join('');
   } else {
-    renderInto(elEvents, all.filter(h => !isPublicHoliday(h)), today, 2, 5);
+    renderInto(elEvents, (holidays || []).filter(h => !isPublicHoliday(h)), today, 2, 5);
   }
 }
 

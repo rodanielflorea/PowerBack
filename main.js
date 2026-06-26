@@ -766,67 +766,72 @@ async function fetchSpecialEvents(nameVariants, days) {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-// Keyless weather (wttr.in), holidays (date.nager.at), and richer special events
-// (Wikimedia on-this-day). No API key/signup.
-async function fetchInfoData(profile) {
-  const out = { weather: null, holidays: null, events: null, errors: [] };
-  const city = (profile && profile.city || '').trim();
-  const country = (profile && profile.country || '').trim();
-
-  // Weather — wttr.in/<query>?format=j1
+// Weather via wttr.in (keyless JSON). Returns the current-condition or null.
+async function fetchWeather(city, country) {
   const q = [city, country].filter(Boolean).join(',');
-  if (q) {
-    try {
-      const r = await tfetch('https://wttr.in/' + encodeURIComponent(q) + '?format=j1', {
-        headers: { 'User-Agent': 'curl/8' }, // wttr serves JSON cleanly to curl-like UAs
-      });
-      if (r.ok) {
-        const j = await r.json();
-        const cur = j.current_condition && j.current_condition[0];
-        if (cur) {
-          out.weather = {
-            tempC: Number(cur.temp_C),
-            feelsC: Number(cur.FeelsLikeC),
-            humidity: Number(cur.humidity),
-            desc: (cur.weatherDesc && cur.weatherDesc[0] && cur.weatherDesc[0].value) || '',
-          };
-        }
-      } else out.errors.push('weather ' + r.status);
-    } catch (e) { out.errors.push('weather: ' + e.message); }
-  }
-
-  // Holidays — full year list for the country (both past and upcoming); the
-  // widget splits recent-past vs upcoming. Carries `types` for classification.
-  if (country) {
-    const nameVariants = [country];
-    try {
-      const code = await countryNameToCode(country);
-      if (code) {
-        const canonical = (_nagerCountries || []).find(c => c.countryCode === code);
-        if (canonical && canonical.name) nameVariants.push(canonical.name);
-        const year = new Date().getFullYear();
-        const r = await tfetch('https://date.nager.at/api/v3/PublicHolidays/' + year + '/' + code);
-        if (r.ok) {
-          const all = await r.json();
-          out.holidays = all
-            .map(h => ({ date: h.date, name: h.name, localName: h.localName, types: h.types || [], global: h.global }))
-            .sort((a, b) => a.date.localeCompare(b.date));
-        } else out.errors.push('holidays ' + r.status);
-      } else out.errors.push('country code not found');
-    } catch (e) { out.errors.push('holidays: ' + e.message); }
-
-    // Deeper special events for the country (next ~10 days), from Wikimedia.
-    try { out.events = await fetchSpecialEvents(nameVariants, 10); }
-    catch (e) { out.errors.push('events: ' + e.message); }
-  }
-  return out;
+  if (!q) return null;
+  try {
+    const r = await tfetch('https://wttr.in/' + encodeURIComponent(q) + '?format=j1',
+      { headers: { 'User-Agent': 'curl/8' } }, 7000); // curl-like UA → clean JSON
+    if (!r.ok) return null;
+    const j = await r.json();
+    const cur = j.current_condition && j.current_condition[0];
+    if (!cur) return null;
+    return {
+      tempC: Number(cur.temp_C), feelsC: Number(cur.FeelsLikeC),
+      humidity: Number(cur.humidity),
+      desc: (cur.weatherDesc && cur.weatherDesc[0] && cur.weatherDesc[0].value) || '',
+    };
+  } catch { return null; }
 }
 
+// Public holidays (full year) + the country name variants for event matching.
+async function fetchHolidays(country) {
+  const nameVariants = country ? [country] : [];
+  if (!country) return { holidays: null, nameVariants };
+  try {
+    const code = await countryNameToCode(country);
+    if (!code) return { holidays: null, nameVariants };
+    const canonical = (_nagerCountries || []).find(c => c.countryCode === code);
+    if (canonical && canonical.name) nameVariants.push(canonical.name);
+    const year = new Date().getFullYear();
+    const r = await tfetch('https://date.nager.at/api/v3/PublicHolidays/' + year + '/' + code);
+    if (!r.ok) return { holidays: null, nameVariants };
+    const all = await r.json();
+    const holidays = all
+      .map(h => ({ date: h.date, name: h.name, localName: h.localName, types: h.types || [], global: h.global }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    return { holidays, nameVariants };
+  } catch { return { holidays: null, nameVariants }; }
+}
+
+// Fetch weather / holidays / events CONCURRENTLY and push each to the widget the
+// moment it resolves, so one slow endpoint never blocks the others.
+// Field convention: undefined = still loading, null = done-but-empty, value = data.
 async function refreshInfoData() {
   if (!infoWin || infoWin.isDestroyed()) return;
-  const data = await fetchInfoData(infoProfile || {});
-  if (infoWin && !infoWin.isDestroyed())
-    infoWin.webContents.send('info-data', Object.assign({ profile: infoProfile || {} }, data));
+  const profile = infoProfile || {};
+  const city = (profile.city || '').trim();
+  const country = (profile.country || '').trim();
+  const acc = { profile, weather: undefined, holidays: undefined, events: undefined };
+  const push = () => { if (infoWin && !infoWin.isDestroyed()) infoWin.webContents.send('info-data', acc); };
+  push(); // clock + "Loading…" immediately
+
+  const jobs = [];
+  if (city || country) jobs.push(fetchWeather(city, country).then(w => { acc.weather = w || null; push(); }));
+  else acc.weather = null;
+
+  if (country) {
+    jobs.push(fetchHolidays(country).then(async ({ holidays, nameVariants }) => {
+      acc.holidays = holidays || null; push();
+      try { acc.events = (await fetchSpecialEvents(nameVariants, 10)) || null; }
+      catch { acc.events = null; }
+      push();
+    }));
+  } else { acc.holidays = null; acc.events = null; }
+
+  await Promise.allSettled(jobs);
+  push();
 }
 
 ipcMain.handle('info-open', (_e, profile) => { openInfoWindow(profile); return true; });
