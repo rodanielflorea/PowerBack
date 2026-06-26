@@ -2041,6 +2041,13 @@ function knowledgeMeta(k) {
   for (const kind of KB_KIND_LIST) out[kind] = (k[kind] || []).map(i => i.name);
   return out;
 }
+// Per-kind items with sizes, for editable chips on the continue page.
+function knowledgeItems(k) {
+  k = k || {};
+  const out = {};
+  for (const kind of KB_KIND_LIST) out[kind] = (k[kind] || []).map(i => ({ name: i.name, chars: i.chars || (i.text ? i.text.length : 0) }));
+  return out;
+}
 
 // Lightweight list for the picker (no turn bodies/images/knowledge text).
 ipcMain.handle('session-list', () =>
@@ -2101,6 +2108,39 @@ ipcMain.handle('session-delete', (_e, id) => {
   if (currentSessionId === id) { currentSessionId = null; convoHistory = []; }
   saveSessions();
   return true;
+});
+
+// ── Per-session knowledge editing (continue page upload zones) ────────────────
+ipcMain.handle('session-kb-get', (_e, id) => {
+  const s = sessions.find(x => x.id === id);
+  return s ? knowledgeItems(s.knowledge) : null;
+});
+ipcMain.handle('session-kb-add', async (_e, { id, kind, name, data } = {}) => {
+  if (!KB_KIND_LIST.includes(kind)) return { ok: false, error: 'bad kind' };
+  const s = sessions.find(x => x.id === id);
+  if (!s) return { ok: false, error: 'no session' };
+  let text = '';
+  try { text = await extractDocText(data, name); }
+  catch (e) { return { ok: false, error: 'Could not read ' + name + ' (' + e.message + ')', name }; }
+  if (!s.knowledge) s.knowledge = {};
+  if (!s.knowledge[kind]) s.knowledge[kind] = [];
+  const item = { name, text, chars: text.length };
+  // CV and JD are single-document; support/meetings accumulate.
+  if (kind === 'cv' || kind === 'jd') s.knowledge[kind] = [item];
+  else s.knowledge[kind].push(item);
+  if (s.id === currentSessionId) state.knowledge = JSON.parse(JSON.stringify(s.knowledge));
+  s.updatedAt = Date.now();
+  saveSessions();
+  return { ok: true, name, chars: text.length };
+});
+ipcMain.handle('session-kb-remove', (_e, { id, kind, index } = {}) => {
+  const s = sessions.find(x => x.id === id);
+  if (!s || !s.knowledge || !s.knowledge[kind]) return { ok: false };
+  s.knowledge[kind].splice(index, 1);
+  if (s.id === currentSessionId) state.knowledge = JSON.parse(JSON.stringify(s.knowledge));
+  s.updatedAt = Date.now();
+  saveSessions();
+  return { ok: true };
 });
 
 const KB_KINDS = ['cv', 'jd', 'support', 'meetings'];

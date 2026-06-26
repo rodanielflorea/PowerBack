@@ -446,13 +446,18 @@ async function selectContinueSession(id) {
   renderContinueDetail(meta);
 }
 
-// Right panel = the session's pre-setup page (editable profile + its materials).
+// Right panel = the session's pre-setup page (editable profile + materials).
+const CONTINUE_KB_KINDS = [
+  { kind: "cv", label: "Resume / CV", multi: false },
+  { kind: "jd", label: "Job Description", multi: false },
+  { kind: "support", label: "Support material", multi: true },
+  { kind: "meetings", label: "Meeting records", multi: true },
+];
 function renderContinueDetail(meta) {
   if (!continueDetail) return;
   if (!meta) { continueDetail.innerHTML = '<p class="continue-empty">Session not found.</p>'; return; }
   const p = meta.profile || {};
-  const km = meta.knowledgeMeta || {};
-  const kindLabel = { cv: "Resume / CV", jd: "Job Description", support: "Support material", meetings: "Meeting records" };
+  const id = meta.id;
 
   let html = '<div class="cd-section"><div class="cd-label">Your profile</div>' +
     '<div class="profile-inputs profile-inputs--vertical">' +
@@ -462,16 +467,85 @@ function renderContinueDetail(meta) {
     '<input type="text" id="cProfileTimezone" class="profile-input" list="tzList" placeholder="Timezone (e.g. America/New_York)" spellcheck="false" value="' + esc(p.timezone) + '" />' +
     "</div></div>";
 
-  ["cv", "jd", "support", "meetings"].forEach((kind) => {
-    const names = km[kind] || [];
-    html += '<div class="cd-section"><div class="cd-label">' + kindLabel[kind] + "</div>";
-    html += names.length
-      ? '<ul class="cd-files">' + names.map((n) => "<li>" + esc(n) + "</li>").join("") + "</ul>"
-      : '<div class="cd-dim">None attached</div>';
-    html += "</div>";
+  html += '<div class="cd-section"><div class="cd-label">Materials</div><div class="upload-grid upload-grid--continue">';
+  CONTINUE_KB_KINDS.forEach(({ kind, label, multi }) => {
+    const K = cap1(kind);
+    html += '<div class="upload-zone" id="cDrop' + K + '" data-kind="' + kind + '">' +
+      '<div class="upload-zone-title">' + label + "</div>" +
+      '<div class="upload-zone-hint">Click or drag &amp; drop' + (multi ? " · multiple" : "") + "</div>" +
+      '<div class="upload-files" id="cFiles' + K + '"></div>' +
+      '<input type="file" id="cFile' + K + '" hidden' + (multi ? " multiple" : "") + " /></div>";
   });
+  html += "</div></div>";
   html += '<div class="cd-section"><div class="cd-meta">' + meta.turnCount + " message" + (meta.turnCount === 1 ? "" : "s") + "</div></div>";
   continueDetail.innerHTML = html;
+
+  wireContinueKbZones(id);
+  renderContinueKb(id);
+}
+
+// Render the chip lists for the selected session's materials.
+async function renderContinueKb(id) {
+  if (!window.api.sessionKbGet) return;
+  const kb = await window.api.sessionKbGet(id);
+  if (!kb) return;
+  CONTINUE_KB_KINDS.forEach(({ kind }) => {
+    const el = document.getElementById("cFiles" + cap1(kind));
+    if (!el) return;
+    el.innerHTML = "";
+    (kb[kind] || []).forEach((it, i) => {
+      const chip = document.createElement("span");
+      chip.className = "upload-chip";
+      const kbz = it.chars ? ` · ${Math.max(1, Math.round(it.chars / 1000))}k` : "";
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "upload-chip-name";
+      nameSpan.textContent = it.name + kbz;
+      chip.appendChild(nameSpan);
+      const x = document.createElement("button");
+      x.className = "upload-chip-x";
+      x.textContent = "×";
+      x.title = "Remove";
+      x.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        await window.api.sessionKbRemove(id, kind, i);
+        renderContinueKb(id);
+      });
+      chip.appendChild(x);
+      el.appendChild(chip);
+    });
+  });
+}
+
+async function addContinueKbFiles(id, kind, fileList) {
+  const files = Array.from(fileList || []);
+  for (const f of files) {
+    try {
+      const buf = await f.arrayBuffer();
+      const r = await window.api.sessionKbAdd(id, kind, f.name, buf);
+      if (r && !r.ok) log(`Upload failed (${f.name}): ${r.error || "error"}`, "err");
+    } catch (err) {
+      log(`Upload failed (${f.name}): ${err.message}`, "err");
+    }
+  }
+  renderContinueKb(id);
+}
+
+function wireContinueKbZones(id) {
+  CONTINUE_KB_KINDS.forEach(({ kind }) => {
+    const K = cap1(kind);
+    const zone = document.getElementById("cDrop" + K);
+    const input = document.getElementById("cFile" + K);
+    if (!zone || !input) return;
+    zone.addEventListener("click", () => input.click());
+    input.addEventListener("change", () => { addContinueKbFiles(id, kind, input.files); input.value = ""; });
+    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("dragover"); });
+    zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      zone.classList.remove("dragover");
+      addContinueKbFiles(id, kind, e.dataTransfer && e.dataTransfer.files);
+    });
+  });
 }
 
 if (sessionSearch) sessionSearch.addEventListener("input", () => renderContinueList(sessionSearch.value));

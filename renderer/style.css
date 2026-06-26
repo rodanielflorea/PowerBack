@@ -1456,6 +1456,9 @@ body.in-interview .end-btn.live::before {
   flex-direction: column;
   gap: 8px;
 }
+/* Compact upload zones inside the continue page's right detail panel */
+.upload-grid--continue { gap: 6px; }
+.upload-grid--continue .upload-zone { padding: 8px 10px; min-height: 0; }
 .upload-zone {
   -webkit-app-region: no-drag;
   background: var(--surface);
