@@ -387,10 +387,13 @@ function renderLoadedTurns(turns) {
     if (mode2 === "CODE" || mode2 === "DIAGRAM") txt = stripLeadingIntro(txt, mode2);
     const m = txt.match(/<sticky>([\s\S]*?)<\/sticky>/i);
     if (m) {
-      streamEl.textContent = txt.replace(/<sticky>[\s\S]*?<\/sticky>/i, "").trimEnd();
+      const md = txt.replace(/<sticky>[\s\S]*?<\/sticky>/i, "").trimEnd();
+      el._rawText = md;
+      streamEl.textContent = md;
       renderMermaidInElement(streamEl);
       appendScriptToAnswer(el, m[1].trim());
     } else {
+      el._rawText = txt;
       streamEl.textContent = txt;
       renderMermaidInElement(streamEl);
     }
@@ -1839,13 +1842,16 @@ window.api.onAnswerDone(() => {
 
     if (stickyMatch) {
       const script = stickyMatch[1].trim();
-      streamEl.textContent = rawText.replace(/<sticky>[\s\S]*?<\/sticky>/i, '').trimEnd();
+      const md = rawText.replace(/<sticky>[\s\S]*?<\/sticky>/i, '').trimEnd();
+      currentAnswerEl._rawText = md; // raw markdown for double-click → sticky
+      streamEl.textContent = md;
       renderMermaidInElement(streamEl);
       if (streamEl.classList.contains('has-diagram')) currentAnswerEl.classList.add('has-diagram');
       appendScriptToAnswer(currentAnswerEl, script);
       if (window.api.openSticky) window.api.openSticky();
       if (window.api.sendStickyText) window.api.sendStickyText(script);
     } else {
+      currentAnswerEl._rawText = rawText; // raw markdown for double-click → sticky
       streamEl.textContent = rawText;
       renderMermaidInElement(streamEl);
       if (streamEl.classList.contains('has-diagram')) currentAnswerEl.classList.add('has-diagram');
@@ -1870,38 +1876,20 @@ window.api.onAnswerDone(() => {
   currentAnswerEl = null;
 });
 
-// Double-click handler: push an answer bubble to the sticky note. Diagrams are
-// sent as rendered images; the remaining prose/code is sent as text.
+// Double-click handler: push an answer bubble to the sticky note as rich
+// markdown, so the sticky renders its diagrams and code exactly like the chat.
 function injectAnswerToSticky(answerEl) {
   if (!answerEl) return;
   // Clear the word-selection that a double-click leaves behind.
   try { window.getSelection().removeAllRanges(); } catch {}
-  const streamEl = answerEl._streamEl || answerEl;
-
-  // 1. Each rendered diagram → standalone SVG image in the sticky.
-  let sentDiagram = false;
-  streamEl.querySelectorAll('svg').forEach((svg) => {
-    try {
-      const clone = svg.cloneNode(true);
-      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-      // Give it a concrete size so it renders crisply as an <img>.
-      const vb = (clone.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
-      if (vb[2] && vb[3]) { clone.setAttribute('width', vb[2]); clone.setAttribute('height', vb[3]); }
-      clone.style.width = ''; clone.style.height = ''; clone.style.maxHeight = '';
-      const svgStr = new XMLSerializer().serializeToString(clone);
-      const dataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
-      if (window.api.sendStickyImage) { window.api.sendStickyImage(dataUrl); sentDiagram = true; }
-    } catch {}
-  });
-
-  // 2. Remaining text + code (diagrams removed) → text message in the sticky.
-  const clone = streamEl.cloneNode(true);
-  clone.querySelectorAll('.mermaid-block').forEach((n) => n.remove());
-  const text = (clone.textContent || '').trim();
-  if (text && window.api.sendStickyText) window.api.sendStickyText(text);
-
+  // Prefer the stored raw markdown (has ```mermaid / code fences); fall back to
+  // the rendered text if it's missing.
+  const md = (answerEl._rawText || (answerEl._streamEl || answerEl).textContent || '').trim();
+  if (!md) return;
+  if (window.api.sendStickyRich) window.api.sendStickyRich(md);
+  else if (window.api.sendStickyText) window.api.sendStickyText(md);
   if (window.api.openSticky) window.api.openSticky();
-  if (text || sentDiagram) showStealthToast('Sent to sticky note');
+  showStealthToast('Sent to sticky note');
 }
 
 // Subtle, auto-dismissing notice (kept low-key for stealth).
@@ -2084,114 +2072,15 @@ function appendScriptToAnswer(el, script) {
   el.appendChild(wrapper);
 }
 
-// Initialise Mermaid — only use themeVariables keys that exist in v11 'base'.
-// Invalid keys silently corrupt the config and cause render() to throw.
-if (typeof mermaid !== 'undefined') {
-  mermaid.initialize({
-    startOnLoad: false,
-    theme: 'base',
-    securityLevel: 'loose',
-    fontSize: 16,
-    themeVariables: {
-      primaryColor:        '#dbeafe',   // node fill — light blue
-      primaryTextColor:    '#1e3a5f',   // node label — dark navy (high contrast)
-      primaryBorderColor:  '#2563eb',   // node border — vivid blue
-      lineColor:           '#1f2937',   // arrows/edges — near-black
-      edgeLabelBackground: '#f0f9ff',   // edge label pill background
-      clusterBkg:          '#f1f5f9',   // subgraph fill
-      background:          '#ffffff',
-      mainBkg:             '#dbeafe',
-      nodeBorder:          '#2563eb',
-      titleColor:          '#1e3a5f',
-      fontFamily:          'system-ui, sans-serif',
-    },
-    flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' },
-    sequence:  { useMaxWidth: true, actorFontSize: 15, noteFontSize: 13, messageFontSize: 14 },
-    gantt:     { useMaxWidth: true, fontSize: 14 },
-    er:        { useMaxWidth: true, fontSize: 14 },
-    mindmap:   { useMaxWidth: true },
-  });
-}
-
-// Configure marked: safe HTML output, no pedantic mode.
-if (typeof marked !== 'undefined') {
-  marked.setOptions({ breaks: true, gfm: true });
-}
-
-// Render the completed answer: Markdown for text, SVG for mermaid blocks.
-// Strategy: extract mermaid blocks first (replace with unique tokens), run
-// the rest through marked, then swap tokens back in as rendered SVG divs.
-let _mermaidIdSeq = 0;
+// Markdown + Mermaid rendering lives in diagram-shared.js (loaded before this
+// file) so the sticky note renders diagrams/code identically. Here we just add
+// the answer-panel behaviour: click a diagram to open the zoom/pan viewer.
 function renderMermaidInElement(el) {
-  const raw = el.textContent || '';
-
-  // 1. Pull out mermaid blocks, replace with stable tokens.
-  const diagrams = [];
-  const TOKEN = '\x00MERMAID_BLOCK_';
-  const withTokens = raw.replace(/```mermaid\s*([\s\S]*?)```/gi, (_, code) => {
-    const idx = diagrams.length;
-    diagrams.push(code.trim());
-    return TOKEN + idx + '\x00';
+  renderDiagramsMarkdown(el, function (svgEl, ph) {
+    ph.classList.add('expandable');
+    ph.title = 'Click to expand';
+    ph.addEventListener('click', () => openDiagramOverlay(svgEl));
   });
-
-  // 2. Render remaining text as Markdown (or fall back to plain text).
-  let html;
-  if (typeof marked !== 'undefined') {
-    html = marked.parse(withTokens);
-  } else {
-    html = withTokens.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
-  }
-
-  // 3. Replace tokens with mermaid placeholder divs.
-  const baseId = _mermaidIdSeq++;
-  diagrams.forEach((_, i) => {
-    html = html.replace(
-      TOKEN + i + '\x00',
-      `<div class="mermaid-block" id="mermaid-ph-${baseId}-${i}"></div>`
-    );
-  });
-
-  el.innerHTML = html;
-
-  // 4. Pre-process and render each mermaid diagram.
-  if (typeof mermaid !== 'undefined' && diagrams.length > 0) {
-    el.classList.add('has-diagram');
-
-    diagrams.forEach((code, i) => {
-      const ph = document.getElementById(`mermaid-ph-${baseId}-${i}`);
-      if (!ph) return;
-
-      const cleanCode = sanitizeMermaid(code);
-
-      mermaid.render('mermaid-svg-' + baseId + '-' + i, cleanCode)
-        .then(function(result) {
-          ph.innerHTML = result.svg;
-          var svgEl = ph.querySelector('svg');
-          if (svgEl) {
-            if (!svgEl.getAttribute('viewBox')) {
-              var w = parseFloat(svgEl.getAttribute('width')  || 0);
-              var h = parseFloat(svgEl.getAttribute('height') || 0);
-              if (w && h) svgEl.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
-            }
-            svgEl.removeAttribute('width');
-            svgEl.removeAttribute('height');
-            svgEl.style.width  = '100%';
-            svgEl.style.height = 'auto';
-            applyDiagramContrast(svgEl);
-            // Click the diagram to open the full-window zoom/pan viewer.
-            ph.classList.add('expandable');
-            ph.title = 'Click to expand';
-            ph.addEventListener('click', () => openDiagramOverlay(svgEl));
-          }
-        })
-        .catch(function(err) {
-          // Show the error message so the issue is diagnosable
-          ph.innerHTML = '<div class="mermaid-error"><b>Diagram error:</b> ' +
-            escapeHtml(String(err && err.message || err)) + '</div>' +
-            '<pre class="mermaid-raw">' + escapeHtml(cleanCode) + '</pre>';
-        });
-    });
-  }
 }
 
 // ── Full-window diagram zoom/pan viewer ──────────────────────────────────────
@@ -2303,193 +2192,6 @@ if (diagramOverlay) {
   });
 }
 
-// Fix common AI-generated Mermaid syntax errors before handing to the parser.
-function sanitizeMermaid(code) {
-  code = code
-    // Strip HTML tags (e.g. <br/>) from node labels
-    .replace(/<br\s*\/?>/gi, ' ')
-    .replace(/<[^>]+>/g, '')
-    // [/text] — incomplete trapezoid (needs [/text/]) — flatten to plain rectangle
-    .replace(/\[\/([^\/\]\\]+)\]/g, '[$1]')
-    // [\text] — incomplete trapezoid alt — flatten
-    .replace(/\[\\([^\/\]\\]+)\]/g, '[$1]')
-    // Strip "color:" from style lines — not supported in all Mermaid builds
-    .replace(/(style\s+\w+\s+[^;\n]*),\s*color:[^,;\n]*/gi, '$1')
-    // Trim trailing whitespace on each line
-    .split('\n').map(function(l) { return l.trimEnd(); }).join('\n');
-
-  // Fix "Setting X as parent of X would create a cycle": this happens when a
-  // subgraph shares its id with a node (the node becomes its own parent). Give
-  // any such subgraph a unique synthetic id while preserving its displayed title.
-  var lines = code.split('\n');
-  var sgCounter = 0;
-  // Count id usages on a copy with bracket/paren/brace label contents removed,
-  // so text inside labels (e.g. "Auth Service") doesn't count as a node usage.
-  var codeNoLabels = code.replace(/\[[^\]]*\]/g, '').replace(/\([^)]*\)/g, '').replace(/\{[^}]*\}/g, '');
-  for (var i = 0; i < lines.length; i++) {
-    var m = lines[i].match(/^(\s*)subgraph\s+([A-Za-z0-9_]+)(\s*\[[^\]]*\])?\s*$/);
-    if (!m) continue;
-    var indent = m[1], id = m[2], label = m[3] || ('[' + id + ']');
-    // If this id appears elsewhere as a node token (not just its own subgraph
-    // header), renaming the subgraph id breaks the self-parent cycle. Title kept.
-    var occurrences = (codeNoLabels.match(new RegExp('\\b' + id + '\\b', 'g')) || []).length;
-    if (occurrences > 1) {
-      lines[i] = indent + 'subgraph __sg' + (sgCounter++) + label;
-    }
-  }
-  return lines.join('\n');
-}
-
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// ── Diagram contrast ──────────────────────────────────────────────────────────
-// After Mermaid renders an SVG, walk every node shape, measure its fill
-// luminance, and force the label text to white (dark bg) or near-black (light bg).
-
-function parseFillColor(el) {
-  // Try attribute first, then inline style, then computed style.
-  var fill = el.getAttribute('fill') ||
-             (el.style && el.style.fill) ||
-             getComputedStyle(el).fill || '';
-  return fill.trim();
-}
-
-function hexToRgb(hex) {
-  hex = hex.replace(/^#/, '');
-  if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
-  if (hex.length !== 6) return null;
-  return {
-    r: parseInt(hex.slice(0,2),16),
-    g: parseInt(hex.slice(2,4),16),
-    b: parseInt(hex.slice(4,6),16)
-  };
-}
-
-function cssColorToRgb(color) {
-  if (!color || color === 'none' || color === 'transparent') return null;
-  if (color.startsWith('#')) return hexToRgb(color);
-  // rgb(...) / rgba(...)
-  var m = color.match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
-  if (m) return { r: +m[1], g: +m[2], b: +m[3] };
-  return null;
-}
-
-function relativeLuminance(r, g, b) {
-  var rgb = [r, g, b].map(function(c) {
-    c = c / 255;
-    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-  });
-  return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
-}
-
-function fillIsDark(colorStr) {
-  var rgb = cssColorToRgb(colorStr);
-  if (!rgb) return false;
-  return relativeLuminance(rgb.r, rgb.g, rgb.b) < 0.25;
-}
-
-function applyDiagramContrast(svgEl) {
-  // ── 1. Node text contrast ────────────────────────────────────────────────
-  var nodeGroups = svgEl.querySelectorAll(
-    '.node, .actor-top, .actor-bottom, .actor, .label-container, ' +
-    '.er-entity, .cluster'
-  );
-
-  nodeGroups.forEach(function(group) {
-    var shape = group.querySelector('rect, circle, ellipse, polygon, path');
-    if (!shape) return;
-
-    var fill = parseFillColor(shape);
-    if (!fill || fill === 'none' || fill === 'transparent') return;
-
-    var dark = fillIsDark(fill);
-    var textColor = dark ? '#ffffff' : '#1a1a1a';
-
-    group.querySelectorAll('text, tspan').forEach(function(t) {
-      t.setAttribute('fill', textColor);
-      t.style.fill = textColor;
-    });
-    group.querySelectorAll('foreignObject *').forEach(function(t) {
-      t.style.color = textColor;
-    });
-
-    // Node border: visibly distinct from the node fill
-    var borderColor = dark ? 'rgba(255,255,255,0.55)' : '#1e3a5f';
-    shape.setAttribute('stroke', borderColor);
-    shape.style.stroke = borderColor;
-    var sw = parseFloat(shape.getAttribute('stroke-width') || '0');
-    if (sw < 1.5) shape.setAttribute('stroke-width', '1.5');
-  });
-
-  // ── 2. Sequence diagram note boxes ──────────────────────────────────────
-  svgEl.querySelectorAll('.note rect, .noteText, .edgeLabel').forEach(function(el) {
-    if (el.tagName === 'rect' || el.tagName === 'RECT') return;
-    var parent = el.closest('.note') || el.parentElement;
-    var shape = parent && parent.querySelector('rect');
-    if (!shape) return;
-    var fill = parseFillColor(shape);
-    var dark = fillIsDark(fill);
-    el.setAttribute && el.setAttribute('fill', dark ? '#ffffff' : '#1a1a1a');
-    el.style && (el.style.color = dark ? '#ffffff' : '#1a1a1a');
-  });
-
-  // ── 3. Connector lines / arrows ─────────────────────────────────────────
-  // Determine diagram background to pick a contrasting line color.
-  var diagramBg = '#ffffff';
-  var bgRect = svgEl.querySelector('rect.background, rect#background, rect[class*="background"]');
-  if (!bgRect) bgRect = svgEl.querySelector('rect');
-  if (bgRect) {
-    var bgFill = parseFillColor(bgRect);
-    if (bgFill && bgFill !== 'none') diagramBg = bgFill;
-  }
-  var bgDark = fillIsDark(diagramBg);
-  var lineColor = bgDark ? '#e2e8f0' : '#1f2937';
-
-  // Edge paths (flowchart arrows, sequence lines, ER relations)
-  svgEl.querySelectorAll(
-    '.edgePath path, .edgePaths path, .flowchart-link, ' +
-    '.messageLine0, .messageLine1, .loopLine, ' +
-    '.relation, .er-relationship, path.transition, line'
-  ).forEach(function(p) {
-    if (p.getAttribute('stroke') === 'none') return;
-    p.setAttribute('stroke', lineColor);
-    p.style.stroke = lineColor;
-    var sw = parseFloat(p.getAttribute('stroke-width') || '0');
-    if (sw < 1.5) p.setAttribute('stroke-width', '1.5');
-    // Edge paths in flowcharts have fill="none" — keep it that way
-    if ((p.getAttribute('fill') || '').toLowerCase() === 'none') {
-      p.setAttribute('fill', 'none');
-    }
-  });
-
-  // Arrowhead markers — inject a <style> block so context-stroke/context-fill
-  // values also resolve correctly, then also set attributes directly.
-  var existingStyle = svgEl.querySelector('style.ace-contrast-arrows');
-  if (!existingStyle) {
-    var st = document.createElementNS('http://www.w3.org/2000/svg', 'style');
-    st.className = 'ace-contrast-arrows';
-    st.textContent =
-      'marker path, marker polygon, marker circle { fill: ' + lineColor + ' !important; stroke: ' + lineColor + ' !important; }';
-    svgEl.insertBefore(st, svgEl.firstChild);
-  }
-  // Also set attributes directly for non-CSS rendering paths
-  svgEl.querySelectorAll('marker path, marker polygon, marker circle').forEach(function(m) {
-    m.setAttribute('fill', lineColor);
-    m.setAttribute('stroke', lineColor);
-    m.style.fill = lineColor;
-    m.style.stroke = lineColor;
-  });
-
-  // Sequence diagram activation boxes
-  svgEl.querySelectorAll('.activation0, .activation1, .activation2').forEach(function(el) {
-    el.setAttribute('stroke', lineColor);
-    el.style.stroke = lineColor;
-  });
-}
 window.api.onAnswerError((msg) => {
   if (currentAnswerEl) {
     currentAnswerEl.classList.remove("streaming");

@@ -2831,31 +2831,45 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor } = {}) => {
   return { ok: !ideTypingCancelled };
 });
 
+// Resize the sticky to fit ALL accumulated messages (they append, never
+// replace), capped at 80% screen height — beyond that the body scrolls.
+function resizeStickyToContent() {
+  if (!stickyWin || stickyWin.isDestroyed()) return;
+  let lines = 0;
+  for (const m of chatHistory) {
+    if (m.type === 'chat-rich' && m.markdown) {
+      lines += Math.ceil(m.markdown.length / 45) + m.markdown.split('\n').length + 1;
+      lines += (m.markdown.match(/```mermaid/gi) || []).length * 22; // diagrams take vertical room
+    } else if (m.type === 'chat-text' && m.text) {
+      lines += Math.ceil(m.text.length / 45) + m.text.split('\n').length + 1;
+    } else if (m.type === 'chat-image') {
+      lines += 8;
+    }
+  }
+  const needed = 24 + 42 + 32 + Math.max(lines * 18, 80);
+  const maxH = (screen.getPrimaryDisplay().workArea.height * 0.80) | 0;
+  const newH = Math.min(needed, maxH);
+  const [curW] = stickyWin.getSize();
+  try { stickyWin.setSize(curW, newH); } catch {}
+  setTimeout(() => syncStickyPosition(), 50);
+}
+
+// Push a full answer (markdown with diagrams/code) to the sticky, rendered the
+// same way as the chat area. Local only — not broadcast over the network.
+ipcMain.handle('sticky-send-rich', (_e, markdown) => {
+  const md = String(markdown || '').trim();
+  if (!md) return false;
+  pushChatToSticky({ type: 'chat-rich', markdown: md, ts: Date.now(), fromMe: true });
+  resizeStickyToContent();
+  return true;
+});
+
 ipcMain.handle('sticky-send-text', (_e, text) => {
   const t = String(text || '').trim();
   if (!t) return false;
   const msg = { type: 'chat-text', text: t, ts: Date.now(), fromMe: true };
   pushChatToSticky(msg);
-  // Auto-resize sticky to fit ALL accumulated content (scripts append, they do
-  // not replace) — sized to the whole history, capped, then the body scrolls.
-  // Estimate: header(24) + input(42) + padding(32) + ~18px per line, ~45 chars/line.
-  if (stickyWin && !stickyWin.isDestroyed()) {
-    let lines = 0;
-    for (const m of chatHistory) {
-      if (m.type === 'chat-text' && m.text) {
-        lines += Math.ceil(m.text.length / 45) + m.text.split('\n').length + 1; // +1 for time/spacing
-      } else if (m.type === 'chat-image') {
-        lines += 8;
-      }
-    }
-    const needed = 24 + 42 + 32 + Math.max(lines * 18, 80);
-    const maxH = (screen.getPrimaryDisplay().workArea.height * 0.80) | 0;
-    const newH = Math.min(needed, maxH);
-    const [curW] = stickyWin.getSize();
-    try { stickyWin.setSize(curW, newH); } catch {}
-    // Re-sync position so the window doesn't drift off screen after resize
-    setTimeout(() => syncStickyPosition(), 50);
-  }
+  resizeStickyToContent();
   let sent = 0;
   if (state.network.role === 'speaker') {
     const payload = { type: 'chat-text', text: t, ts: msg.ts };

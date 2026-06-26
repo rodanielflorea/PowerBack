@@ -30,7 +30,16 @@ function renderMessage(msg) {
   time.textContent = fmtTime(msg.ts);
   wrap.appendChild(time);
 
-  if (msg.type === 'chat-text') {
+  if (msg.type === 'chat-rich') {
+    // Full answer markdown — render diagrams + code exactly like the chat area.
+    const r = document.createElement('div');
+    r.className = 'msg-text msg-rich';
+    r.textContent = msg.markdown || msg.text || '';
+    wrap.appendChild(r);
+    if (typeof renderDiagramsMarkdown === 'function') {
+      try { renderDiagramsMarkdown(r); } catch (e) { /* leave as plain text */ }
+    }
+  } else if (msg.type === 'chat-text') {
     const t = document.createElement('div');
     t.className = 'msg-text';
     if (isScriptMessage(msg.text)) {

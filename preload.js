@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('api', {
   onClickThroughChanged: (cb) => ipcRenderer.on('click-through-changed', (_e, v) => cb(v)),
   sendStickyText: (text) => ipcRenderer.invoke('sticky-send-text', text),
   sendStickyImage: (dataUrl) => ipcRenderer.invoke('sticky-send-image', dataUrl),
+  sendStickyRich: (markdown) => ipcRenderer.invoke('sticky-send-rich', markdown),
   onChatIncoming: (cb) => ipcRenderer.on('chat-incoming', (_e, v) => cb(v)),
   onChatClear: (cb) => ipcRenderer.on('chat-clear', () => cb()),
   hide: () => ipcRenderer.invoke('hide'),
