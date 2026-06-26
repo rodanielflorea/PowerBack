@@ -86,13 +86,32 @@ function makeCustomSelect(sel, compact) {
   list.hidden = true;
   wrap.appendChild(list);
 
+  // Search box (shown only for long lists, e.g. timezones).
+  const search = document.createElement("input");
+  search.className = "csel-search";
+  search.type = "text";
+  search.placeholder = "Search…";
+  search.hidden = true;
+  list.appendChild(search);
+
+  const itemsBox = document.createElement("div");
+  itemsBox.className = "csel-items";
+  list.appendChild(itemsBox);
+
+  function applyFilter() {
+    const q = search.value.trim().toLowerCase();
+    itemsBox.querySelectorAll(".csel-opt").forEach((it) => {
+      it.style.display = (!q || it.textContent.toLowerCase().includes(q)) ? "" : "none";
+    });
+  }
+  search.addEventListener("input", applyFilter);
+  search.addEventListener("click", (e) => e.stopPropagation());
+  search.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+
   function refresh() {
     const cur = Array.from(sel.options).find((o) => o.value === sel.value);
-    btn.childNodes.forEach((n) => { if (n.nodeType === 3) n.remove(); });
-    btn.firstChild ? btn.firstChild.textContent = (cur ? cur.textContent : "") : (btn.textContent = (cur ? cur.textContent : ""));
-    // simpler:
     btn.textContent = cur ? cur.textContent : "";
-    list.innerHTML = "";
+    itemsBox.innerHTML = "";
     for (const o of Array.from(sel.options)) {
       const item = document.createElement("div");
       item.className = "csel-opt" + (o.value === sel.value ? " selected" : "");
@@ -107,8 +126,9 @@ function makeCustomSelect(sel, compact) {
         refresh();
         close();
       });
-      list.appendChild(item);
+      itemsBox.appendChild(item);
     }
+    search.hidden = sel.options.length <= 20; // search only helps for long lists
   }
 
   function open() {
@@ -119,6 +139,7 @@ function makeCustomSelect(sel, compact) {
     const btnRect = btn.getBoundingClientRect();
     const spaceBelow = window.innerHeight - btnRect.bottom;
     list.classList.toggle("up", spaceBelow < 200);
+    if (!search.hidden) { search.value = ""; applyFilter(); setTimeout(() => search.focus(), 0); }
   }
 
   function close() {
@@ -356,15 +377,26 @@ if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
   log(`Started: voice mode as ${chosenRole}`, "info");
 });
 
-// Populate the timezone <datalist> with the runtime's IANA zones (offline).
-function populateTimezones() {
-  const dl = document.getElementById("tzList");
-  if (!dl || dl.childElementCount) return;
-  let zones = [];
-  try { zones = (Intl.supportedValuesOf && Intl.supportedValuesOf("timeZone")) || []; } catch {}
-  zones.forEach((z) => { const o = document.createElement("option"); o.value = z; dl.appendChild(o); });
+// Runtime IANA timezones (offline). Used to fill the scrollable, searchable
+// timezone selects in both the new-session and continue pre-setup pages.
+function timezoneList() {
+  try { return (Intl.supportedValuesOf && Intl.supportedValuesOf("timeZone")) || []; } catch { return []; }
 }
-populateTimezones();
+function populateTimezoneSelect(selectEl, current) {
+  if (!selectEl) return;
+  selectEl.innerHTML = "";
+  const blank = document.createElement("option");
+  blank.value = ""; blank.textContent = "Timezone…";
+  selectEl.appendChild(blank);
+  timezoneList().forEach((z) => {
+    const o = document.createElement("option");
+    o.value = z; o.textContent = z;
+    selectEl.appendChild(o);
+  });
+  if (current) selectEl.value = current;
+  if (selectEl._cselRefresh) selectEl._cselRefresh();
+}
+populateTimezoneSelect(document.getElementById("profileTimezone"));
 
 // Open the info window for a profile that has at least a location or timezone.
 function maybeOpenInfoWindow(profile) {
@@ -464,7 +496,7 @@ function renderContinueDetail(meta) {
     '<input type="text" id="cProfileName" class="profile-input" placeholder="Name" spellcheck="false" value="' + esc(p.name) + '" />' +
     '<input type="text" id="cProfileCity" class="profile-input" placeholder="City" spellcheck="false" value="' + esc(p.city) + '" />' +
     '<input type="text" id="cProfileCountry" class="profile-input" placeholder="Country" spellcheck="false" value="' + esc(p.country) + '" />' +
-    '<input type="text" id="cProfileTimezone" class="profile-input" list="tzList" placeholder="Timezone (e.g. America/New_York)" spellcheck="false" value="' + esc(p.timezone) + '" />' +
+    '<select id="cProfileTimezone" class="profile-input profile-tz-select"></select>' +
     "</div></div>";
 
   html += '<div class="cd-section"><div class="cd-label">Materials</div><div class="upload-grid upload-grid--continue">';
@@ -479,6 +511,10 @@ function renderContinueDetail(meta) {
   html += "</div></div>";
   html += '<div class="cd-section"><div class="cd-meta">' + meta.turnCount + " message" + (meta.turnCount === 1 ? "" : "s") + "</div></div>";
   continueDetail.innerHTML = html;
+
+  // Turn the timezone <select> into the scrollable/searchable custom select.
+  const tzSel = document.getElementById("cProfileTimezone");
+  if (tzSel) { makeCustomSelect(tzSel); populateTimezoneSelect(tzSel, p.timezone); }
 
   wireContinueKbZones(id);
   renderContinueKb(id);

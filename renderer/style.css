@@ -1419,6 +1419,10 @@ body.in-interview .end-btn.live::before {
   outline: none;
 }
 .profile-input:focus { border-color: var(--accent); }
+/* Timezone custom-select should match the sibling text inputs */
+.profile-tz-select { display: none; }
+.profile-inputs .csel { display: block; width: 100%; }
+.profile-inputs .csel-btn { padding: 8px 26px 8px 10px; font-size: 13px; border-radius: var(--radius-sm); }
 
 /* ── Continue page (left list + right materials) ──────────────── */
 .continue-card { max-width: 720px; width: 92vw; }
@@ -2279,6 +2283,13 @@ body.in-interview .end-btn.live::before {
   margin-top: 3px;
 }
 .csel-list.up { bottom: calc(100% + 3px); top: auto; margin-top: 0; margin-bottom: 3px; }
+.csel-search {
+  position: sticky; top: 0; z-index: 1;
+  width: 100%; box-sizing: border-box;
+  padding: 7px 10px; border: none; border-bottom: 1px solid var(--border);
+  background: var(--surface); color: var(--text);
+  font-size: 12px; font-family: inherit; outline: none;
+}
 .csel-opt {
   padding: 7px 11px; font-size: 12px; font-family: inherit;
   color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

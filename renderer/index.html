@@ -633,10 +633,9 @@
           <input type="text" id="profileName" class="profile-input" placeholder="Name" spellcheck="false" />
           <input type="text" id="profileCity" class="profile-input" placeholder="City" spellcheck="false" />
           <input type="text" id="profileCountry" class="profile-input" placeholder="Country" spellcheck="false" />
-          <input type="text" id="profileTimezone" class="profile-input" list="tzList" placeholder="Timezone (e.g. America/New_York)" spellcheck="false" />
+          <select id="profileTimezone" class="profile-input profile-tz-select"></select>
         </div>
       </div>
-      <datalist id="tzList"></datalist>
 
       <div class="upload-grid">
         <div class="upload-zone" id="dropCv" data-kind="cv"><div class="upload-zone-title">Resume / CV</div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="filesCv"></div><input type="file" id="fileCv" hidden /></div>
