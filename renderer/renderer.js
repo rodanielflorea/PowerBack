@@ -1649,7 +1649,7 @@ function addAnswerTurn(question, imgs, mode, ts) {
   resendBtn.className = "answer-q-action";
   resendBtn.title = "Resend (regenerate)";
   resendBtn.textContent = "↻";
-  resendBtn.addEventListener("click", () => resendTurn(question, imgs, turnMode));
+  resendBtn.addEventListener("click", () => resendTurn(question, imgs));
   qActions.appendChild(editBtn);
   qActions.appendChild(resendBtn);
   q.appendChild(qActions);
@@ -1708,8 +1708,10 @@ function setManualMode(mode) {
     b.classList.toggle('mode-seg-btn--active', b.dataset.mode === manualMode));
 }
 
-// Resend (regenerate): re-submit the same question/images/mode as a new turn.
-function resendTurn(question, imgs, mode) {
+// Resend (regenerate): re-submit the same question/images as a new turn, in
+// whatever mode is CURRENTLY selected in the Text/Code/Diagram control (not the
+// original turn's mode) — so switching the selector then resending takes effect.
+function resendTurn(question, imgs) {
   const hasImgs = Array.isArray(imgs) && imgs.length > 0;
   if (!question && !hasImgs) return;
   // Cancel any in-flight speculation, then fire a fresh request.
@@ -1717,7 +1719,7 @@ function resendTurn(question, imgs, mode) {
   if (window.api.speculativeCancel) window.api.speculativeCancel();
   // onAnswerStart embeds these into the new question bubble.
   pendingBubbleImages = hasImgs ? imgs.slice() : [];
-  window.api.generateAnswer(question || "", hasImgs ? imgs : null, mode || 'ANSWER');
+  window.api.generateAnswer(question || "", hasImgs ? imgs : null, manualMode);
 }
 
 // Edit inline in the question bubble (ChatGPT-style): swap the text for a
@@ -1768,7 +1770,7 @@ function beginInlineEdit(q, question, imgs, mode) {
   sendBtn.addEventListener('click', () => {
     const newText = ta.value.trim();
     finish();
-    if (newText) resendTurn(newText, imgs, mode);
+    if (newText) resendTurn(newText, imgs);
   });
   ta.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); finish(); }
