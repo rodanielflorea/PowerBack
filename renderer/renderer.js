@@ -1402,6 +1402,11 @@ async function doScreenshot() {
 }
 if (window.api.onTriggerScreenshot) window.api.onTriggerScreenshot(doScreenshot);
 
+// Alt+S area-snip result — main captures the region and sends it here.
+if (window.api.onSnipImage) window.api.onSnipImage((img) => {
+  if (img && img.base64) addAttachedImage(img.base64, img.mime || 'image/png');
+});
+
 // ── Latency optimizations ──────────────────────────────────
 // Pre-warm the TLS connection on first keypress, so the API handshake is
 // already done before the user hits send.

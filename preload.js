@@ -91,6 +91,7 @@ contextBridge.exposeInMainWorld('api', {
   onAnswerError: (cb) => ipcRenderer.on('answer-error', (_e, v) => cb(v)),
   onTriggerGetAnswer: (cb) => ipcRenderer.on('trigger-get-answer', () => cb()),
   onTriggerScreenshot: (cb) => ipcRenderer.on('trigger-screenshot', () => cb()),
+  onSnipImage: (cb) => ipcRenderer.on('snip-image', (_e, v) => cb(v)),
   onInsertPromptText: (cb) => ipcRenderer.on('insert-prompt-text', (_e, v) => cb(v)),
   getPrompts: () => ipcRenderer.invoke('get-prompts'),
   savePrompt: (prompt) => ipcRenderer.invoke('save-prompt', prompt),

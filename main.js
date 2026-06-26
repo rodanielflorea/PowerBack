@@ -59,6 +59,7 @@ const HOTKEY_DEFAULTS = {
   helpRequest: 'Super+Shift+/',
   submitPrompt: 'CommandOrControl+Return',
   screenshotToAI: 'Alt+A',
+  areaSnip: 'Alt+S',
   toggleClickThrough: 'Alt+Q',
 };
 
@@ -931,7 +932,76 @@ function openAreaSelector() {
   }, 150);
 }
 
+// ── Alt+S area-snip: drag-select a screen region → attach it as an image ──────
+// Reuses the selector window. The selector is content-protected while stealth
+// is on, and the main window is hidden during selection + capture, so neither
+// appears in the captured region or in any screen recording.
+let snipMode = false;
+let snipPrevVisible = true;
+function openSnipSelector() {
+  if (selectorWin || snipMode) return;
+  if (!win) return;
+  snipMode = true;
+  snipPrevVisible = win.isVisible();
+  win.hide();
+  setTimeout(() => {
+    const cursor = screen.getCursorScreenPoint();
+    const display = screen.getDisplayNearestPoint(cursor);
+    selectorWin = new BrowserWindow({
+      x: display.bounds.x, y: display.bounds.y,
+      width: display.bounds.width, height: display.bounds.height,
+      frame: false, transparent: true, alwaysOnTop: true, skipTaskbar: true,
+      resizable: false, movable: false, hasShadow: false, fullscreenable: false,
+      webPreferences: { preload: path.join(__dirname, 'preload-selector.js'), contextIsolation: true, nodeIntegration: false },
+    });
+    selectorWin.setAlwaysOnTop(true, 'screen-saver');
+    try { selectorWin.setContentProtection(state.stealth); } catch {}
+    selectorWin.loadFile(path.join(__dirname, 'renderer', 'selector.html'));
+    selectorWin.once('ready-to-show', () => selectorWin.show());
+    selectorWin.on('closed', () => { selectorWin = null; });
+  }, 150);
+}
+
+function pickSourceForDisplay(sources, display) {
+  const byId = sources.find(s => s.display_id && String(s.display_id) === String(display.id));
+  if (byId) return byId;
+  const displays = screen.getAllDisplays();
+  const idx = displays.findIndex(d => d.id === display.id);
+  return sources[idx] || sources[0];
+}
+
+async function handleSnipDone(rect) {
+  const display = selectorWin
+    ? screen.getDisplayMatching(selectorWin.getBounds())
+    : screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const sf = display.scaleFactor || 1;
+  const x = Math.min(rect.x1, rect.x2), y = Math.min(rect.y1, rect.y2);
+  const w = Math.abs(rect.x2 - rect.x1), h = Math.abs(rect.y2 - rect.y1);
+  if (selectorWin) { try { selectorWin.close(); } catch {} selectorWin = null; }
+  // Let the selector vanish before grabbing pixels.
+  await new Promise(r => setTimeout(r, 180));
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: Math.round(display.size.width * sf), height: Math.round(display.size.height * sf) },
+    });
+    const src = pickSourceForDisplay(sources, display);
+    const cropped = src.thumbnail.crop({
+      x: Math.round(x * sf), y: Math.round(y * sf),
+      width: Math.max(1, Math.round(w * sf)), height: Math.max(1, Math.round(h * sf)),
+    });
+    const dataUrl = cropped.toDataURL();
+    const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+    if (win && !win.isDestroyed()) win.webContents.send('snip-image', { base64: b64, mime: 'image/png' });
+  } catch (e) {
+    appendLogLine('[snip] capture failed: ' + e.message);
+  }
+  snipMode = false;
+  if (snipPrevVisible && win) win.show();
+}
+
 ipcMain.on('selector-done', (_e, rect) => {
+  if (snipMode) { handleSnipDone(rect || {}); return; }
   if (rect && selectorWin) {
     const [winX, winY] = selectorWin.getPosition();
     const display = screen.getDisplayMatching(selectorWin.getBounds());
@@ -954,6 +1024,12 @@ ipcMain.on('selector-done', (_e, rect) => {
 });
 
 ipcMain.on('selector-cancel', () => {
+  if (snipMode) {
+    snipMode = false;
+    if (selectorWin) { try { selectorWin.close(); } catch {} selectorWin = null; }
+    if (snipPrevVisible && win) win.show();
+    return;
+  }
   if (selectorWin) selectorWin.close();
   if (pendingRestart) {
     pendingRestart = false;
@@ -983,6 +1059,7 @@ const HOTKEY_HANDLERS = {
   helpRequest: () => sendHelpRequest(),
   submitPrompt: () => { if (win && !win.isDestroyed()) win.webContents.send('trigger-get-answer'); },
   screenshotToAI: () => { if (win && !win.isDestroyed()) win.webContents.send('trigger-screenshot'); },
+  areaSnip: () => openSnipSelector(),
   toggleClickThrough: () => setClickThrough(!state.clickThrough),
 };
 
