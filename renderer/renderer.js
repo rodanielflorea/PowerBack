@@ -1680,6 +1680,9 @@ function addAnswerTurn(question, imgs, mode, ts) {
   aTime.className = "answer-time answer-time--a";
   a.appendChild(aTime);
   a._timeEl = aTime;
+  // Double-click an answer to push it (text, code, and any diagrams) to the sticky note.
+  a.title = "Double-click to send to sticky note";
+  a.addEventListener("dblclick", () => injectAnswerToSticky(a));
   turn.appendChild(q);
   turn.appendChild(a);
 
@@ -1866,6 +1869,40 @@ window.api.onAnswerDone(() => {
   }
   currentAnswerEl = null;
 });
+
+// Double-click handler: push an answer bubble to the sticky note. Diagrams are
+// sent as rendered images; the remaining prose/code is sent as text.
+function injectAnswerToSticky(answerEl) {
+  if (!answerEl) return;
+  // Clear the word-selection that a double-click leaves behind.
+  try { window.getSelection().removeAllRanges(); } catch {}
+  const streamEl = answerEl._streamEl || answerEl;
+
+  // 1. Each rendered diagram → standalone SVG image in the sticky.
+  let sentDiagram = false;
+  streamEl.querySelectorAll('svg').forEach((svg) => {
+    try {
+      const clone = svg.cloneNode(true);
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      // Give it a concrete size so it renders crisply as an <img>.
+      const vb = (clone.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
+      if (vb[2] && vb[3]) { clone.setAttribute('width', vb[2]); clone.setAttribute('height', vb[3]); }
+      clone.style.width = ''; clone.style.height = ''; clone.style.maxHeight = '';
+      const svgStr = new XMLSerializer().serializeToString(clone);
+      const dataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
+      if (window.api.sendStickyImage) { window.api.sendStickyImage(dataUrl); sentDiagram = true; }
+    } catch {}
+  });
+
+  // 2. Remaining text + code (diagrams removed) → text message in the sticky.
+  const clone = streamEl.cloneNode(true);
+  clone.querySelectorAll('.mermaid-block').forEach((n) => n.remove());
+  const text = (clone.textContent || '').trim();
+  if (text && window.api.sendStickyText) window.api.sendStickyText(text);
+
+  if (window.api.openSticky) window.api.openSticky();
+  if (text || sentDiagram) showStealthToast('Sent to sticky note');
+}
 
 // Subtle, auto-dismissing notice (kept low-key for stealth).
 let _stealthToastTimer = null;
