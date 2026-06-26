@@ -1906,16 +1906,19 @@ ipcMain.on('audio-chunk', (_e, buf) => {
 });
 ipcMain.on('session-log-add', (_e, entry) => { sessionLog.push(entry); });
 ipcMain.handle('clear-session-log', () => { sessionLog = []; });
-ipcMain.handle('save-session-log', async () => {
+ipcMain.handle('save-session-log', async (_e, suggestedName) => {
   if (sessionLog.length === 0) return null;
   const lines = sessionLog.map(e => {
     const d = new Date(e.ts);
     const t = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
     return `[${t}] [${e.kind.toUpperCase()}] ${e.text}`;
   }).join('\n');
+  // Sanitize the suggested filename (from the session title); fall back to a date.
+  const safe = String(suggestedName || '').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
+  const fileBase = safe || `session-${new Date().toISOString().slice(0, 10)}`;
   const r = await dialog.showSaveDialog(win, {
     title: 'Save session transcript',
-    defaultPath: path.join(app.getPath('desktop'), `session-${new Date().toISOString().slice(0,10)}.txt`),
+    defaultPath: path.join(app.getPath('desktop'), `${fileBase}.txt`),
     filters: [{ name: 'Text', extensions: ['txt'] }],
   });
   if (!r.canceled && r.filePath) {
@@ -1924,6 +1927,23 @@ ipcMain.handle('save-session-log', async () => {
     return r.filePath;
   }
   return null;
+});
+
+// Set the current session's title from company/position (+ today's date) at
+// end-of-session. Returns the composed title (also used for the .txt filename).
+ipcMain.handle('session-finalize', (_e, { company, position } = {}) => {
+  const s = currentSession();
+  const d = new Date();
+  const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const title = [String(company || '').trim(), String(position || '').trim(), dateStr].filter(Boolean).join(' · ');
+  if (s) {
+    s.company = String(company || '').trim();
+    s.position = String(position || '').trim();
+    s.name = title;
+    s.updatedAt = Date.now();
+    saveSessions();
+  }
+  return title;
 });
 
 ipcMain.handle('paste-text', (_e, text) => pasteToForeground(text));

@@ -1419,6 +1419,8 @@ body.in-interview .end-btn.live::before {
   outline: none;
 }
 .profile-input:focus { border-color: var(--accent); }
+/* Company/position fields in the end-session modal */
+.end-fields { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 14px; }
 /* Timezone custom-select should match the sibling text inputs */
 .profile-tz-select { display: none; }
 .profile-inputs .csel { display: block; width: 100%; }
@@ -1426,7 +1428,7 @@ body.in-interview .end-btn.live::before {
 
 /* ── Continue page (left list + right materials) ──────────────── */
 .continue-card { max-width: 720px; width: 92vw; }
-.continue-body { display: grid; grid-template-columns: 1fr 1.1fr; gap: 14px; margin-top: 12px; min-height: 0; }
+.continue-body { display: grid; grid-template-columns: 200px 1fr; gap: 14px; margin-top: 12px; min-height: 0; }
 .continue-left { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
 .session-search {
   -webkit-app-region: no-drag;

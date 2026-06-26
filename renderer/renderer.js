@@ -752,7 +752,17 @@ endBtn.addEventListener("click", showEndModal);
 endModalCancel.addEventListener("click", hideEndModal);
 endModalConfirm.addEventListener("click", async () => {
   endModal.hidden = true;
-  await window.api.saveSessionLog().catch(() => {});
+  // Compose the session title from company/position (+ date), then save the
+  // transcript using that title as the suggested filename.
+  const companyEl = document.getElementById("endCompany");
+  const positionEl = document.getElementById("endPosition");
+  const company = companyEl ? companyEl.value.trim() : "";
+  const position = positionEl ? positionEl.value.trim() : "";
+  let title = "";
+  if (window.api.sessionFinalize) title = await window.api.sessionFinalize(company, position).catch(() => "");
+  await window.api.saveSessionLog(title).catch(() => {});
+  if (companyEl) companyEl.value = "";
+  if (positionEl) positionEl.value = "";
   if (recState) await stopVoice().catch(() => {});
   if (captureRunning) await stopCaption().catch(() => {});
   await window.api.stopNetwork();
