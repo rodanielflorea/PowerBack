@@ -1482,6 +1482,8 @@ if (answerClearBtn) {
     if (answerEmpty) answerEmpty.hidden = false;
     // Reset spacer so first new turn starts flush
     if (answerSpacer) answerSpacer.style.height = "0px";
+    // Also wipe the remembered answers/code/diagrams used to ground follow-ups.
+    if (window.api.clearAnswerMemory) window.api.clearAnswerMemory();
   });
 }
 
@@ -1681,9 +1683,33 @@ window.api.onAnswerDone(() => {
     if (answerMode === 'CODE') {
       appendCodeActions(currentAnswerEl);
     }
+
+    // Once the main diagram is drawn, drop back to Text mode so follow-up
+    // questions are answered (grounded on the CV, support material, and the
+    // diagram just produced) rather than forced into another diagram.
+    if (answerMode === 'DIAGRAM' && manualMode === 'DIAGRAM') {
+      setManualMode('ANSWER');
+      showStealthToast('Switched to Text · follow-ups will build on this diagram');
+    }
   }
   currentAnswerEl = null;
 });
+
+// Subtle, auto-dismissing notice (kept low-key for stealth).
+let _stealthToastTimer = null;
+function showStealthToast(msg) {
+  let el = document.getElementById('stealthToast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'stealthToast';
+    el.className = 'stealth-toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add('stealth-toast--show');
+  if (_stealthToastTimer) clearTimeout(_stealthToastTimer);
+  _stealthToastTimer = setTimeout(() => el.classList.remove('stealth-toast--show'), 3200);
+}
 
 // ── Code action bar: Copy + Write to IDE ─────────────────────────────────────
 function extractCodeFromEl(el) {

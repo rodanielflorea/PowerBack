@@ -78,6 +78,7 @@ contextBridge.exposeInMainWorld('api', {
   setWelcomeSeen: (v) => ipcRenderer.invoke('set-welcome-seen', v),
   generateAnswer: (question, images, forcedMode) => ipcRenderer.invoke('generate-answer', { question, images, forcedMode }),
   stopAnswer: () => ipcRenderer.invoke('stop-answer'),
+  clearAnswerMemory: () => ipcRenderer.invoke('clear-answer-memory'),
   getAnswerConfig: () => ipcRenderer.invoke('get-answer-config'),
   listXaiModels: () => ipcRenderer.invoke('list-xai-models'),
   kbAdd: (kind, name, data) => ipcRenderer.invoke('kb-add', { kind, name, data }),

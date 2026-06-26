@@ -1746,6 +1746,38 @@ let speculativeQuestion = null;
 let speculativeActive = false;
 let speculativeCommitted = false; // true after commit — stream pipes directly to renderer
 
+// ── Conversation memory ───────────────────────────────────────────────────────
+// Everything the assistant has produced this session (answers, code, diagrams)
+// is remembered and fed back as context so follow-up questions build on the CV,
+// support material AND the diagrams/code already generated.
+let convoHistory = []; // [{ user, assistant, mode }]
+const CONVO_CHAR_BUDGET = 14000; // cap injected history; oldest pairs trimmed first
+
+// Record a completed, user-visible turn. Strips the <sticky> presenter block
+// (redundant with the diagram + explanation) to save context budget.
+function recordTurn(user, assistant, mode) {
+  const a = String(assistant || '').replace(/<sticky>[\s\S]*?<\/sticky>/gi, '').trim();
+  const u = String(user || '').trim();
+  if (!a) return;
+  convoHistory.push({ user: u, assistant: a, mode: mode || 'ANSWER' });
+}
+
+// Prior turns as chat messages (user/assistant pairs), newest kept, oldest
+// pairs dropped once the char budget is exceeded.
+function conversationContextMessages() {
+  const msgs = [];
+  let total = 0;
+  for (let i = convoHistory.length - 1; i >= 0; i--) {
+    const t = convoHistory[i];
+    const len = (t.user || '').length + (t.assistant || '').length;
+    if (total + len > CONVO_CHAR_BUDGET && msgs.length) break;
+    msgs.unshift({ role: 'assistant', content: t.assistant });
+    msgs.unshift({ role: 'user', content: t.user || '[image/screenshot question]' });
+    total += len;
+  }
+  return msgs;
+}
+
 const KB_KINDS = ['cv', 'jd', 'support', 'meetings'];
 
 // Extract plain text from an uploaded document buffer (any common format).
@@ -1983,6 +2015,9 @@ async function generateAnswer(question, images, forcedMode) {
     });
   }
 
+  // Prior turns (answers, code, diagrams this session) as grounding context.
+  for (const m of conversationContextMessages()) messages.push(m);
+
   // Build user message — text only, or text + one/many images for vision models.
   if (imgs) {
     const userContent = [];
@@ -2057,7 +2092,10 @@ async function generateAnswer(question, images, forcedMode) {
     return;
   }
   answerAbort = null;
-  if (full.trim()) sessionLog.push({ ts: Date.now(), kind: 'answer', text: full.trim() });
+  if (full.trim()) {
+    sessionLog.push({ ts: Date.now(), kind: 'answer', text: full.trim() });
+    recordTurn(q, full, mode);
+  }
   if (win && !win.isDestroyed()) win.webContents.send('answer-done', { text: full });
 }
 
@@ -2139,6 +2177,8 @@ async function startSpeculative(question, forcedMode) {
   } else if (specMode === 'CODE') {
     messages.push({ role: 'system', content: 'OUTPUT FORMAT — LIVE CODING MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above, INCLUDING the persona/content guidance. Write code that solves the USER MESSAGE below. Your VERY FIRST characters must be ``` opening a code block — no introduction, no greeting, no self-description, no preamble of any kind. Do NOT introduce yourself or talk about your experience. Write clean, complete, runnable code. After the closing ``` you may add a brief explanation only.' });
   }
+  // Prior turns (answers, code, diagrams this session) as grounding context.
+  for (const m of conversationContextMessages()) messages.push(m);
   messages.push({ role: 'user', content: q });
   // Do NOT send answer-start yet — we buffer silently and only show the UI
   // when the user actually commits (or the text matches on submit).
@@ -2198,7 +2238,10 @@ async function startSpeculative(question, forcedMode) {
     speculativeCommitted = false;
     speculativeActive = false;
     speculativeQuestion = null;
-    if (speculativeBuffer.trim()) sessionLog.push({ ts: Date.now(), kind: 'answer', text: speculativeBuffer.trim() });
+    if (speculativeBuffer.trim()) {
+      sessionLog.push({ ts: Date.now(), kind: 'answer', text: speculativeBuffer.trim() });
+      recordTurn(q, speculativeBuffer, specMode);
+    }
     if (win && !win.isDestroyed()) win.webContents.send('answer-done', { text: speculativeBuffer });
   } else {
     // Stream finished BEFORE the user committed. Stash the full buffer on `ac`
@@ -2229,7 +2272,10 @@ function commitSpeculative(question, images, forcedMode) {
       if (streamDone) {
         // Stream already finished — flush everything and close
         win.webContents.send('answer-done', { text: buffered });
-        if (buffered.trim()) sessionLog.push({ ts: Date.now(), kind: 'answer', text: buffered.trim() });
+        if (buffered.trim()) {
+          sessionLog.push({ ts: Date.now(), kind: 'answer', text: buffered.trim() });
+          recordTurn(q, buffered, specModeCommit);
+        }
         speculativeActive = false;
         speculativeQuestion = null;
         speculativeAbort = null;
@@ -2269,6 +2315,8 @@ ipcMain.handle('speculative-cancel', () => {
 ipcMain.handle('stop-answer', () => {
   if (answerAbort) { try { answerAbort.abort(); } catch {} answerAbort = null; }
 });
+// Clear the remembered answers/code/diagrams used to ground follow-ups.
+ipcMain.handle('clear-answer-memory', () => { convoHistory = []; return true; });
 ipcMain.handle('list-xai-models', async () => {
   const apiKey = (
     ((state.answer && state.answer.apiKey) || '').trim() ||
