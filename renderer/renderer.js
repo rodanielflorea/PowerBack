@@ -1534,7 +1534,10 @@ function addAnswerTurn(question, imgs, mode, ts) {
     });
     q.appendChild(strip);
   }
-  if (question) q.appendChild(document.createTextNode(question));
+  const qText = document.createElement("span");
+  qText.className = "answer-q-text";
+  if (question) qText.textContent = question;
+  q.appendChild(qText);
 
   // Edit / Resend controls (ChatGPT/Claude-style). Shown on hover.
   const turnMode = mode || 'ANSWER';
@@ -1544,7 +1547,7 @@ function addAnswerTurn(question, imgs, mode, ts) {
   editBtn.className = "answer-q-action";
   editBtn.title = "Edit & resend";
   editBtn.textContent = "✎";
-  editBtn.addEventListener("click", () => editTurn(question, imgs, turnMode));
+  editBtn.addEventListener("click", () => beginInlineEdit(q, question, imgs, turnMode));
   const resendBtn = document.createElement("button");
   resendBtn.className = "answer-q-action";
   resendBtn.title = "Resend (regenerate)";
@@ -1620,18 +1623,60 @@ function resendTurn(question, imgs, mode) {
   window.api.generateAnswer(question || "", hasImgs ? imgs : null, mode || 'ANSWER');
 }
 
-// Edit: load the question (text + images + mode) back into the composer so the
-// user can tweak it and submit normally — creating a new turn.
-function editTurn(question, imgs, mode) {
-  if (composerInput) {
-    composerInput.value = question || "";
-    composerInput.focus();
-    // Move caret to end
-    try { composerInput.setSelectionRange(composerInput.value.length, composerInput.value.length); } catch {}
-  }
-  attachedImages = (Array.isArray(imgs) ? imgs : []).map((i) => ({ base64: i.base64, mime: i.mime }));
-  renderImgStrip();
-  setManualMode(mode || 'ANSWER');
+// Edit inline in the question bubble (ChatGPT-style): swap the text for a
+// textarea with Send/Cancel. Sending fires a fresh turn with the edited text
+// (same images + mode); the original turn is left untouched.
+function beginInlineEdit(q, question, imgs, mode) {
+  if (!q || q._editing) return;
+  q._editing = true;
+  const qText    = q.querySelector('.answer-q-text');
+  const qActions = q.querySelector('.answer-q-actions');
+  const qTime    = q.querySelector('.answer-time--q');
+  [qText, qActions, qTime].forEach((el) => { if (el) el.style.display = 'none'; });
+
+  const editor = document.createElement('div');
+  editor.className = 'answer-q-editor';
+  const ta = document.createElement('textarea');
+  ta.className = 'answer-q-edit';
+  ta.value = question || '';
+  const row = document.createElement('div');
+  row.className = 'answer-q-edit-row';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'answer-q-action';
+  cancelBtn.textContent = '✕';
+  cancelBtn.title = 'Cancel (Esc)';
+  const sendBtn = document.createElement('button');
+  sendBtn.className = 'answer-q-action answer-q-action--send';
+  sendBtn.textContent = '↵ Send';
+  sendBtn.title = 'Send edited (Ctrl+Enter)';
+  row.appendChild(cancelBtn);
+  row.appendChild(sendBtn);
+  editor.appendChild(ta);
+  editor.appendChild(row);
+  q.appendChild(editor);
+
+  const grow = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+  ta.focus();
+  try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch {}
+  grow();
+  ta.addEventListener('input', grow);
+
+  const finish = () => {
+    if (!q._editing) return;
+    q._editing = false;
+    editor.remove();
+    [qText, qActions, qTime].forEach((el) => { if (el) el.style.display = ''; });
+  };
+  cancelBtn.addEventListener('click', finish);
+  sendBtn.addEventListener('click', () => {
+    const newText = ta.value.trim();
+    finish();
+    if (newText) resendTurn(newText, imgs, mode);
+  });
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); finish(); }
+    else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendBtn.click(); }
+  });
 }
 
 window.api.onAnswerStart((data) => {
