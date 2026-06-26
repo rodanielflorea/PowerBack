@@ -640,6 +640,89 @@ body.in-interview .end-btn.live::before {
   /* Never let it exceed the block height */
   max-height: calc(80vh - 32px);
 }
+/* Inline diagrams are clickable to open the full-window zoom/pan viewer */
+.mermaid-block.expandable { cursor: zoom-in; position: relative; }
+.mermaid-block.expandable::after {
+  content: "⤢";
+  position: absolute;
+  top: 8px; right: 10px;
+  font-size: 15px;
+  color: #64748b;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+.mermaid-block.expandable:hover::after { opacity: 1; }
+
+/* ── Full-window diagram zoom/pan viewer ─────────────────────── */
+.diagram-overlay {
+  -webkit-app-region: no-drag;
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: rgba(15, 23, 42, 0.86);
+  backdrop-filter: blur(2px);
+  display: flex;
+  overflow: hidden;
+}
+.diagram-overlay[hidden] { display: none; }
+.diagram-overlay-stage {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  cursor: grab;
+}
+.diagram-overlay-stage.dragging { cursor: grabbing; }
+.diagram-overlay-stage svg {
+  position: absolute;
+  top: 0; left: 0;
+  transform-origin: 0 0;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.45);
+  will-change: transform;
+}
+.diagram-overlay-toolbar {
+  position: absolute;
+  top: 14px; right: 14px;
+  z-index: 2;
+  display: flex;
+  gap: 6px;
+}
+.diagram-ov-btn {
+  -webkit-app-region: no-drag;
+  width: 34px; height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(30, 41, 59, 0.9);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 17px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 120ms ease;
+}
+.diagram-ov-btn:hover { background: rgba(51, 65, 85, 0.95); }
+.diagram-ov-btn#diagramZoomFit { width: auto; padding: 0 12px; font-size: 13px; }
+.diagram-ov-close { font-size: 22px; }
+.diagram-overlay-hint {
+  position: absolute;
+  bottom: 14px; left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(15, 23, 42, 0.6);
+  padding: 5px 12px;
+  border-radius: 99px;
+  user-select: none;
+  pointer-events: none;
+}
 /* Size only — color is set dynamically by applyDiagramContrast() */
 .mermaid-block svg text {
   font-size: 14px !important;

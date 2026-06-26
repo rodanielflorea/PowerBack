@@ -1943,6 +1943,10 @@ function renderMermaidInElement(el) {
             svgEl.style.width  = '100%';
             svgEl.style.height = 'auto';
             applyDiagramContrast(svgEl);
+            // Click the diagram to open the full-window zoom/pan viewer.
+            ph.classList.add('expandable');
+            ph.title = 'Click to expand';
+            ph.addEventListener('click', () => openDiagramOverlay(svgEl));
           }
         })
         .catch(function(err) {
@@ -1953,6 +1957,98 @@ function renderMermaidInElement(el) {
         });
     });
   }
+}
+
+// ── Full-window diagram zoom/pan viewer ──────────────────────────────────────
+const diagramOverlay      = document.getElementById('diagramOverlay');
+const diagramOverlayStage = document.getElementById('diagramOverlayStage');
+const _dov = { scale: 1, tx: 0, ty: 0, vbW: 0, vbH: 0, svg: null, dragging: false, lastX: 0, lastY: 0 };
+
+function _dovApply() {
+  if (!_dov.svg) return;
+  _dov.svg.style.transform = `translate(${_dov.tx}px, ${_dov.ty}px) scale(${_dov.scale})`;
+}
+function _dovFit() {
+  if (!_dov.svg || !diagramOverlayStage) return;
+  const r = diagramOverlayStage.getBoundingClientRect();
+  const s = Math.min(r.width / _dov.vbW, r.height / _dov.vbH) * 0.92;
+  _dov.scale = s > 0 ? s : 1;
+  _dov.tx = (r.width  - _dov.vbW * _dov.scale) / 2;
+  _dov.ty = (r.height - _dov.vbH * _dov.scale) / 2;
+  _dovApply();
+}
+function _dovZoomAt(cx, cy, factor) {
+  const next = Math.max(0.1, Math.min(12, _dov.scale * factor));
+  // Keep the point under the cursor fixed while zooming.
+  _dov.tx = cx - ((cx - _dov.tx) / _dov.scale) * next;
+  _dov.ty = cy - ((cy - _dov.ty) / _dov.scale) * next;
+  _dov.scale = next;
+  _dovApply();
+}
+function openDiagramOverlay(sourceSvg) {
+  if (!diagramOverlay || !diagramOverlayStage || !sourceSvg) return;
+  const vb = (sourceSvg.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
+  _dov.vbW = vb[2] || sourceSvg.getBoundingClientRect().width  || 800;
+  _dov.vbH = vb[3] || sourceSvg.getBoundingClientRect().height || 600;
+
+  const clone = sourceSvg.cloneNode(true);
+  clone.style.width  = _dov.vbW + 'px';
+  clone.style.height = _dov.vbH + 'px';
+  clone.style.maxHeight = 'none';
+  diagramOverlayStage.innerHTML = '';
+  diagramOverlayStage.appendChild(clone);
+  _dov.svg = clone;
+
+  diagramOverlay.hidden = false;
+  // Fit after layout settles so the stage has its real size.
+  requestAnimationFrame(_dovFit);
+}
+function closeDiagramOverlay() {
+  if (!diagramOverlay) return;
+  diagramOverlay.hidden = true;
+  diagramOverlayStage.innerHTML = '';
+  _dov.svg = null;
+}
+
+if (diagramOverlay) {
+  document.getElementById('diagramOverlayClose').addEventListener('click', closeDiagramOverlay);
+  document.getElementById('diagramZoomFit').addEventListener('click', _dovFit);
+  document.getElementById('diagramZoomIn').addEventListener('click', () => {
+    const r = diagramOverlayStage.getBoundingClientRect();
+    _dovZoomAt(r.width / 2, r.height / 2, 1.25);
+  });
+  document.getElementById('diagramZoomOut').addEventListener('click', () => {
+    const r = diagramOverlayStage.getBoundingClientRect();
+    _dovZoomAt(r.width / 2, r.height / 2, 0.8);
+  });
+  // Wheel zoom centred on the cursor
+  diagramOverlayStage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const r = diagramOverlayStage.getBoundingClientRect();
+    _dovZoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 0.89);
+  }, { passive: false });
+  // Drag to pan
+  diagramOverlayStage.addEventListener('mousedown', (e) => {
+    _dov.dragging = true; _dov.lastX = e.clientX; _dov.lastY = e.clientY;
+    diagramOverlayStage.classList.add('dragging');
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!_dov.dragging) return;
+    _dov.tx += e.clientX - _dov.lastX;
+    _dov.ty += e.clientY - _dov.lastY;
+    _dov.lastX = e.clientX; _dov.lastY = e.clientY;
+    _dovApply();
+  });
+  window.addEventListener('mouseup', () => {
+    _dov.dragging = false;
+    diagramOverlayStage.classList.remove('dragging');
+  });
+  // Double-click resets to fit; click on empty backdrop closes
+  diagramOverlayStage.addEventListener('dblclick', _dovFit);
+  diagramOverlay.addEventListener('mousedown', (e) => { if (e.target === diagramOverlay) closeDiagramOverlay(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && diagramOverlay && !diagramOverlay.hidden) closeDiagramOverlay();
+  });
 }
 
 // Fix common AI-generated Mermaid syntax errors before handing to the parser.

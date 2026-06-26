@@ -737,6 +737,18 @@
     </div>
   </div>
 
+  <!-- Full-window zoom/pan viewer for diagrams -->
+  <div class="diagram-overlay" id="diagramOverlay" hidden>
+    <div class="diagram-overlay-toolbar">
+      <button class="diagram-ov-btn" id="diagramZoomOut" title="Zoom out">&minus;</button>
+      <button class="diagram-ov-btn" id="diagramZoomFit" title="Fit to screen">Fit</button>
+      <button class="diagram-ov-btn" id="diagramZoomIn" title="Zoom in">+</button>
+      <button class="diagram-ov-btn diagram-ov-close" id="diagramOverlayClose" title="Close (Esc)">&times;</button>
+    </div>
+    <div class="diagram-overlay-stage" id="diagramOverlayStage"></div>
+    <div class="diagram-overlay-hint">Scroll to zoom &middot; drag to pan &middot; double-click to reset</div>
+  </div>
+
   <audio id="remoteAudio" autoplay playsinline style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none"></audio>
   <audio id="speakerInAudio" autoplay playsinline style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none"></audio>
   <audio id="cableOutAudio" autoplay playsinline style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none"></audio>
