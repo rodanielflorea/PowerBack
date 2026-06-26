@@ -2093,6 +2093,7 @@ async function generateAnswer(question, images, forcedMode) {
   }
   answerAbort = null;
   if (full.trim()) {
+    sessionLog.push({ ts: Date.now(), kind: 'question', text: q || `[${(imgs && imgs.length) || 0} image${imgs && imgs.length > 1 ? 's' : ''}]` });
     sessionLog.push({ ts: Date.now(), kind: 'answer', text: full.trim() });
     recordTurn(q, full, mode);
   }
@@ -2239,6 +2240,7 @@ async function startSpeculative(question, forcedMode) {
     speculativeActive = false;
     speculativeQuestion = null;
     if (speculativeBuffer.trim()) {
+      if (q) sessionLog.push({ ts: Date.now(), kind: 'question', text: q });
       sessionLog.push({ ts: Date.now(), kind: 'answer', text: speculativeBuffer.trim() });
       recordTurn(q, speculativeBuffer, specMode);
     }
@@ -2273,6 +2275,7 @@ function commitSpeculative(question, images, forcedMode) {
         // Stream already finished — flush everything and close
         win.webContents.send('answer-done', { text: buffered });
         if (buffered.trim()) {
+          if (q) sessionLog.push({ ts: Date.now(), kind: 'question', text: q });
           sessionLog.push({ ts: Date.now(), kind: 'answer', text: buffered.trim() });
           recordTurn(q, buffered, specModeCommit);
         }
