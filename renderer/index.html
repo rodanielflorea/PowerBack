@@ -595,17 +595,45 @@
     </div>
   </section>
 
-  <section class="setup-overlay" id="setupOverlay">
+  <!-- Stage 1: choose New vs Continue -->
+  <section class="setup-overlay mode-select-overlay" id="modeSelectOverlay" hidden>
+    <div class="setup-card mode-select-card">
+      <div class="setup-topbar">
+        <h2 class="setup-title">Start</h2>
+        <button class="setup-gear-btn" id="modeSelectSettingsBtn" title="Settings — API keys, prompts, hotkeys">&#9881;</button>
+      </div>
+      <p class="setup-intro hint">Begin a new interview session, or continue a saved one with its materials.</p>
+      <div class="mode-choice-cards">
+        <button class="mode-choice-card" id="modeNewBtn">
+          <span class="mode-choice-icon">✨</span>
+          <span class="mode-choice-name">New session</span>
+          <span class="mode-choice-desc">Attach materials, set your profile, and start fresh</span>
+        </button>
+        <button class="mode-choice-card" id="modeContinueBtn">
+          <span class="mode-choice-icon">📂</span>
+          <span class="mode-choice-name">Continue existing</span>
+          <span class="mode-choice-desc">Resume a saved session with its attached materials</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <section class="setup-overlay" id="setupOverlay" hidden>
     <div class="setup-card interview-setup">
       <div class="setup-topbar">
-        <h2 class="setup-title">Interview Setup</h2>
+        <button class="setup-back-btn" id="setupBackBtn" title="Back">&#8592;</button>
+        <h2 class="setup-title">New Session</h2>
         <button class="setup-gear-btn" id="setupSettingsBtn" title="Settings — API keys, prompts, hotkeys">&#9881;</button>
       </div>
       <p class="setup-intro hint">Upload your materials — the assistant uses them as base knowledge to ground its answers. Then press Start.</p>
 
-      <div class="setup-sessions" id="setupSessions" hidden>
-        <p class="setup-roles-label">Continue a previous session</p>
-        <div class="session-list" id="sessionList"></div>
+      <div class="setup-profile-row">
+        <p class="setup-roles-label">Your profile</p>
+        <div class="profile-inputs">
+          <input type="text" id="profileName" class="profile-input" placeholder="Name" spellcheck="false" />
+          <input type="text" id="profileCity" class="profile-input" placeholder="City" spellcheck="false" />
+          <input type="text" id="profileCountry" class="profile-input" placeholder="Country" spellcheck="false" />
+        </div>
       </div>
 
       <div class="upload-grid">
@@ -645,6 +673,28 @@
         <button class="action-btn setup-start-btn" id="setupStartBtnV">START</button>
       </div>
 
+    </div>
+  </section>
+
+  <!-- Stage 1b: continue an existing session -->
+  <section class="setup-overlay continue-overlay" id="continueOverlay" hidden>
+    <div class="setup-card continue-card">
+      <div class="setup-topbar">
+        <button class="setup-back-btn" id="continueBackBtn" title="Back">&#8592;</button>
+        <h2 class="setup-title">Continue a Session</h2>
+      </div>
+      <div class="continue-body">
+        <div class="continue-left">
+          <input type="text" id="sessionSearch" class="session-search" placeholder="Search sessions…" spellcheck="false" />
+          <div class="session-list" id="continueSessionList"></div>
+        </div>
+        <div class="continue-right">
+          <div class="continue-detail" id="continueDetail">
+            <p class="continue-empty">Select a session on the left to see its profile and attached materials.</p>
+          </div>
+          <button class="action-btn continue-ok-btn" id="continueOkBtn" disabled>Continue &rarr;</button>
+        </div>
+      </div>
     </div>
   </section>
 

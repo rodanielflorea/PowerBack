@@ -235,20 +235,53 @@ function applyRoleSettingsTabs() {
 
 const answerMain = document.getElementById("answerMain");
 
+const modeSelectOverlay = document.getElementById("modeSelectOverlay");
+const continueOverlay = document.getElementById("continueOverlay");
+
+function hideAllSetupOverlays() {
+  if (modeSelectOverlay) modeSelectOverlay.hidden = true;
+  if (setupOverlay) setupOverlay.hidden = true;
+  if (continueOverlay) continueOverlay.hidden = true;
+}
+
+// Stage 1 — the New/Continue chooser shown on launch and after ending a session.
+function showModeSelect() {
+  if (settingsOverlay) settingsOverlay.hidden = true;
+  hideAllSetupOverlays();
+  if (modeSelectOverlay) modeSelectOverlay.hidden = false;
+  document.body.classList.remove("in-interview");
+  endBtn.classList.remove("live");
+  applyRoleClass("");
+  if (answerMain) answerMain.hidden = true;
+}
+
+// New-session setup page (uploads, profile, role, prompt).
 function showSetup() {
   if (settingsOverlay) settingsOverlay.hidden = true;
+  hideAllSetupOverlays();
   setupOverlay.hidden = false;
   document.body.classList.remove("in-interview");
   endBtn.classList.remove("live");
   applyRoleClass("");
   if (answerMain) answerMain.hidden = true;
   if (typeof refreshKb === "function") refreshKb();
-  if (typeof refreshSessionList === "function") refreshSessionList();
+}
+
+// Continue page (session list + search on the left, materials on the right).
+function showContinue() {
+  if (settingsOverlay) settingsOverlay.hidden = true;
+  hideAllSetupOverlays();
+  if (continueOverlay) continueOverlay.hidden = false;
+  document.body.classList.remove("in-interview");
+  endBtn.classList.remove("live");
+  applyRoleClass("");
+  if (answerMain) answerMain.hidden = true;
+  if (typeof refreshContinueList === "function") refreshContinueList();
 }
 
 function hideSetup() {
   if (settingsOverlay) settingsOverlay.hidden = true;
-  setupOverlay.hidden = true;
+  hideAllSetupOverlays();
   document.body.classList.add("in-interview");
   endBtn.classList.add("live");
   const role = (setupRoleSupporterV && setupRoleSupporterV.checked) ? "supporter" : "speaker";
@@ -256,6 +289,18 @@ function hideSetup() {
   // The speaker sees the Grok answer panel; the supporter uses the chat panel.
   if (answerMain) answerMain.hidden = role === "supporter";
 }
+
+// Mode-chooser + back navigation.
+const modeNewBtn = document.getElementById("modeNewBtn");
+const modeContinueBtn = document.getElementById("modeContinueBtn");
+const setupBackBtn = document.getElementById("setupBackBtn");
+const continueBackBtn = document.getElementById("continueBackBtn");
+const modeSelectSettingsBtn = document.getElementById("modeSelectSettingsBtn");
+if (modeNewBtn) modeNewBtn.addEventListener("click", () => showSetup());
+if (modeContinueBtn) modeContinueBtn.addEventListener("click", () => showContinue());
+if (setupBackBtn) setupBackBtn.addEventListener("click", () => showModeSelect());
+if (continueBackBtn) continueBackBtn.addEventListener("click", () => showModeSelect());
+if (modeSelectSettingsBtn) modeSelectSettingsBtn.addEventListener("click", () => openSettings());
 
 // ===== New Interview-Setup page (Stage 2): gear, role toggle, Start, uploads =====
 const setupSettingsBtn = document.getElementById("setupSettingsBtn");
@@ -299,10 +344,12 @@ if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
   await window.api.setNetworkConfig(patch);
   netCfg = await window.api.getNetworkConfig();
   await window.api.startNetwork();
-  // Fresh session for the speaker's answer panel.
+  // Fresh session for the speaker's answer panel — snapshot profile + materials.
   if (!sup) {
     clearAnswerPanel();
-    if (window.api.sessionNew) await window.api.sessionNew();
+    const val = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ""; };
+    const profile = { name: val("profileName"), city: val("profileCity"), country: val("profileCountry") };
+    if (window.api.sessionNew) await window.api.sessionNew({ profile });
   }
   hideSetup();
   log(`Started: voice mode as ${chosenRole}`, "info");
@@ -315,17 +362,35 @@ function clearAnswerPanel() {
   if (answerSpacer) answerSpacer.style.height = "0px";
 }
 
-async function refreshSessionList() {
-  const wrap = document.getElementById("setupSessions");
-  const list = document.getElementById("sessionList");
-  if (!wrap || !list || !window.api.sessionList) return;
-  const sessions = await window.api.sessionList();
-  list.innerHTML = "";
-  if (!sessions || !sessions.length) { wrap.hidden = true; return; }
-  wrap.hidden = false;
-  sessions.forEach((s) => {
+// ── Continue overlay: searchable session list + materials preview ─────────────
+const sessionSearch = document.getElementById("sessionSearch");
+const continueSessionList = document.getElementById("continueSessionList");
+const continueDetail = document.getElementById("continueDetail");
+const continueOkBtn = document.getElementById("continueOkBtn");
+let _continueSessions = [];
+let _continueSelectedId = null;
+
+function esc(s) { return (typeof escapeHtml === "function") ? escapeHtml(s) : String(s == null ? "" : s); }
+
+async function refreshContinueList() {
+  if (!window.api.sessionList) return;
+  _continueSessions = await window.api.sessionList();
+  _continueSelectedId = null;
+  if (continueOkBtn) continueOkBtn.disabled = true;
+  if (continueDetail) continueDetail.innerHTML = '<p class="continue-empty">Select a session on the left to see its profile and attached materials.</p>';
+  renderContinueList(sessionSearch ? sessionSearch.value : "");
+}
+
+function renderContinueList(filter) {
+  if (!continueSessionList) return;
+  const f = (filter || "").toLowerCase();
+  const items = _continueSessions.filter((s) =>
+    !f || (s.name || "").toLowerCase().includes(f) || ((s.profile && s.profile.name) || "").toLowerCase().includes(f));
+  continueSessionList.innerHTML = "";
+  if (!items.length) { continueSessionList.innerHTML = '<div class="session-empty">No matching sessions.</div>'; return; }
+  items.forEach((s) => {
     const card = document.createElement("div");
-    card.className = "session-card";
+    card.className = "session-card" + (s.id === _continueSelectedId ? " session-card--active" : "");
     const info = document.createElement("div");
     info.className = "session-card-info";
     const name = document.createElement("div");
@@ -338,7 +403,7 @@ async function refreshSessionList() {
     meta.textContent = `${s.turnCount} message${s.turnCount === 1 ? "" : "s"} · ${dateStr}`;
     info.appendChild(name);
     info.appendChild(meta);
-    info.addEventListener("click", () => continueSession(s.id));
+    info.addEventListener("click", () => selectContinueSession(s.id));
     const del = document.createElement("button");
     del.className = "session-card-del";
     del.textContent = "🗑";
@@ -347,13 +412,46 @@ async function refreshSessionList() {
       e.stopPropagation();
       if (!window.confirm(`Erase session "${s.name || "(untitled)"}"? This cannot be undone.`)) return;
       await window.api.sessionDelete(s.id);
-      refreshSessionList();
+      refreshContinueList();
     });
     card.appendChild(info);
     card.appendChild(del);
-    list.appendChild(card);
+    continueSessionList.appendChild(card);
   });
 }
+
+async function selectContinueSession(id) {
+  _continueSelectedId = id;
+  renderContinueList(sessionSearch ? sessionSearch.value : "");
+  if (continueOkBtn) continueOkBtn.disabled = false;
+  if (!window.api.sessionMeta) return;
+  const meta = await window.api.sessionMeta(id);
+  renderContinueDetail(meta);
+}
+
+function renderContinueDetail(meta) {
+  if (!continueDetail) return;
+  if (!meta) { continueDetail.innerHTML = '<p class="continue-empty">Session not found.</p>'; return; }
+  const p = meta.profile || {};
+  const loc = [p.city, p.country].filter(Boolean).join(", ");
+  const km = meta.knowledgeMeta || {};
+  const kindLabel = { cv: "Resume / CV", jd: "Job Description", support: "Support material", meetings: "Meeting records" };
+  let html = '<div class="cd-section"><div class="cd-label">Profile</div><div class="cd-profile">' +
+    (p.name ? esc(p.name) : '<span class="cd-dim">No name</span>') + (loc ? " · " + esc(loc) : "") + "</div></div>";
+  ["cv", "jd", "support", "meetings"].forEach((kind) => {
+    const names = km[kind] || [];
+    html += '<div class="cd-section"><div class="cd-label">' + kindLabel[kind] + "</div>";
+    html += names.length
+      ? '<ul class="cd-files">' + names.map((n) => "<li>" + esc(n) + "</li>").join("") + "</ul>"
+      : '<div class="cd-dim">None attached</div>';
+    html += "</div>";
+  });
+  html += '<div class="cd-section"><div class="cd-meta">' + meta.turnCount + " message" + (meta.turnCount === 1 ? "" : "s") + "</div></div>";
+  continueDetail.innerHTML = html;
+}
+
+if (sessionSearch) sessionSearch.addEventListener("input", () => renderContinueList(sessionSearch.value));
+if (continueOkBtn) continueOkBtn.addEventListener("click", () => { if (_continueSelectedId) continueSession(_continueSelectedId); });
 
 async function continueSession(id) {
   if (!window.api.sessionLoad) return;
@@ -518,14 +616,14 @@ endModalConfirm.addEventListener("click", async () => {
   teardownPeers();
   delete netActionBtn.dataset.connecting;
   log("Session ended — back to setup", "info");
-  showSetup();
+  showModeSelect();
 });
 
 document.addEventListener("keydown", (e) => {
   if (!endModal.hidden && e.key === "Escape") hideEndModal();
 });
 
-showSetup();
+showModeSelect();
 
 window.api.onOpacityChanged((v) => updateFill(v));
 window.api.onStealthChanged((v) => updateStealth(v));

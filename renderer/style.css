@@ -1368,6 +1368,88 @@ body.in-interview .end-btn.live::before {
 }
 .setup-gear-btn:hover { background: var(--surface); }
 
+.setup-back-btn {
+  -webkit-app-region: no-drag;
+  width: 32px; height: 32px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background var(--t) var(--ease);
+}
+.setup-back-btn:hover { background: var(--surface); }
+
+/* ── Mode-select (New / Continue) ─────────────────────────────── */
+.mode-select-card { max-width: 540px; }
+.mode-choice-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px; }
+.mode-choice-card {
+  -webkit-app-region: no-drag;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  text-align: left;
+  padding: 18px 16px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, transform 80ms ease;
+}
+.mode-choice-card:hover { border-color: var(--accent); background: var(--accent-dim); }
+.mode-choice-card:active { transform: scale(0.99); }
+.mode-choice-icon { font-size: 26px; }
+.mode-choice-name { font-size: 15px; font-weight: 700; }
+.mode-choice-desc { font-size: 12px; color: var(--muted); line-height: 1.4; }
+
+/* ── Profile inputs on the new-session page ───────────────────── */
+.setup-profile-row { margin: 4px 0 12px; }
+.profile-inputs { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 8px; margin-top: 8px; }
+.profile-input {
+  -webkit-app-region: no-drag;
+  font-size: 13px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+.profile-input:focus { border-color: var(--accent); }
+
+/* ── Continue page (left list + right materials) ──────────────── */
+.continue-card { max-width: 720px; width: 92vw; }
+.continue-body { display: grid; grid-template-columns: 1fr 1.1fr; gap: 14px; margin-top: 12px; min-height: 0; }
+.continue-left { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.session-search {
+  -webkit-app-region: no-drag;
+  font-size: 13px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg); color: var(--text); outline: none;
+}
+.session-search:focus { border-color: var(--accent); }
+.continue-left .session-list { max-height: 320px; overflow-y: auto; }
+.session-card--active { border-color: var(--accent); background: var(--accent-dim); }
+.session-empty { font-size: 12px; color: var(--muted); padding: 12px; text-align: center; }
+.continue-right { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.continue-detail {
+  flex: 1; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg); padding: 12px; max-height: 320px;
+}
+.continue-empty { font-size: 12.5px; color: var(--muted); margin: 0; }
+.cd-section { margin-bottom: 12px; }
+.cd-label { font-size: 10px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.cd-profile { font-size: 13.5px; font-weight: 600; }
+.cd-files { margin: 0; padding-left: 16px; font-size: 12.5px; }
+.cd-files li { margin-bottom: 2px; }
+.cd-dim { font-size: 12.5px; color: var(--muted); font-style: italic; }
+.cd-meta { font-size: 11.5px; color: var(--muted); }
+.continue-ok-btn { flex-shrink: 0; }
+.continue-ok-btn:disabled { opacity: 0.5; cursor: default; }
+
 .upload-grid {
   display: flex;
   flex-direction: column;

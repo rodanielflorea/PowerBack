@@ -1897,17 +1897,51 @@ function currentSession() { return sessions.find(s => s.id === currentSessionId)
 function genSessionId() { return 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 loadSessions();
 
-// Lightweight list for the setup picker (no turn bodies/images).
+// Profile (name/location) of the active session — folded into the answer context.
+let activeProfile = {};
+const KB_KIND_LIST = ['cv', 'jd', 'support', 'meetings'];
+// Deep snapshot of the current knowledge base so a session keeps its own copy.
+function snapshotKnowledge() {
+  const k = state.knowledge || {};
+  const out = {};
+  for (const kind of KB_KIND_LIST) out[kind] = (k[kind] || []).map(i => ({ name: i.name, text: i.text, chars: i.chars }));
+  return out;
+}
+// Just the file names per kind, for the continue-session preview.
+function knowledgeMeta(k) {
+  k = k || {};
+  const out = {};
+  for (const kind of KB_KIND_LIST) out[kind] = (k[kind] || []).map(i => i.name);
+  return out;
+}
+
+// Lightweight list for the picker (no turn bodies/images/knowledge text).
 ipcMain.handle('session-list', () =>
   sessions
-    .map(s => ({ id: s.id, name: s.name || '(untitled)', createdAt: s.createdAt, updatedAt: s.updatedAt, turnCount: (s.turns || []).length }))
+    .map(s => ({ id: s.id, name: s.name || '(untitled)', createdAt: s.createdAt, updatedAt: s.updatedAt, turnCount: (s.turns || []).length, profile: s.profile || {} }))
     .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 );
-ipcMain.handle('session-new', () => {
-  const s = { id: genSessionId(), name: '', createdAt: Date.now(), updatedAt: Date.now(), turns: [] };
+// Preview metadata for one session — no side effects (doesn't switch current).
+ipcMain.handle('session-meta', (_e, id) => {
+  const s = sessions.find(x => x.id === id);
+  if (!s) return null;
+  return {
+    id: s.id, name: s.name, turnCount: (s.turns || []).length,
+    createdAt: s.createdAt, updatedAt: s.updatedAt,
+    profile: s.profile || {}, knowledgeMeta: knowledgeMeta(s.knowledge),
+  };
+});
+ipcMain.handle('session-new', (_e, meta) => {
+  const p = (meta && meta.profile) || {};
+  const s = {
+    id: genSessionId(), name: '', createdAt: Date.now(), updatedAt: Date.now(), turns: [],
+    profile: { name: p.name || '', city: p.city || '', country: p.country || '' },
+    knowledge: snapshotKnowledge(), // freeze the materials attached for this session
+  };
   sessions.push(s);
   currentSessionId = s.id;
   convoHistory = [];
+  activeProfile = s.profile;
   saveSessions();
   return s.id;
 });
@@ -1917,7 +1951,10 @@ ipcMain.handle('session-load', (_e, id) => {
   currentSessionId = id;
   // Rebuild grounding context from the saved turns.
   convoHistory = (s.turns || []).map(t => ({ user: t.q || '', assistant: t.a || '', mode: t.mode || 'ANSWER' }));
-  return { id: s.id, name: s.name, turns: s.turns || [] };
+  // Restore the session's own materials + profile (in-memory; global save untouched).
+  if (s.knowledge) state.knowledge = JSON.parse(JSON.stringify(s.knowledge));
+  activeProfile = s.profile || {};
+  return { id: s.id, name: s.name, turns: s.turns || [], profile: s.profile || {}, knowledgeMeta: knowledgeMeta(s.knowledge) };
 });
 ipcMain.handle('session-delete', (_e, id) => {
   sessions = sessions.filter(s => s.id !== id);
@@ -1955,7 +1992,14 @@ async function extractDocText(arrayBuffer, name) {
 function buildKnowledgeContext() {
   const k = state.knowledge || {};
   const join = (arr) => (arr || []).map((i) => i.text).filter(Boolean).join('\n\n');
+  // Candidate profile (name / location) from the active session.
+  const p = activeProfile || {};
+  const loc = [p.city, p.country].filter(Boolean).join(', ');
+  const profileParts = [];
+  if (p.name) profileParts.push(`Name: ${p.name}`);
+  if (loc) profileParts.push(`Location: ${loc}`);
   const sections = [
+    ['CANDIDATE PROFILE', profileParts.join('\n')],
     ['CANDIDATE RESUME / CV', join(k.cv)],
     ['JOB DESCRIPTION', join(k.jd)],
     ['SUPPORTING MATERIAL', join(k.support)],
