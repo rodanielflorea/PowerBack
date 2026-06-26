@@ -2268,7 +2268,7 @@ if (diagramOverlay) {
 
 // Fix common AI-generated Mermaid syntax errors before handing to the parser.
 function sanitizeMermaid(code) {
-  return code
+  code = code
     // Strip HTML tags (e.g. <br/>) from node labels
     .replace(/<br\s*\/?>/gi, ' ')
     .replace(/<[^>]+>/g, '')
@@ -2280,6 +2280,27 @@ function sanitizeMermaid(code) {
     .replace(/(style\s+\w+\s+[^;\n]*),\s*color:[^,;\n]*/gi, '$1')
     // Trim trailing whitespace on each line
     .split('\n').map(function(l) { return l.trimEnd(); }).join('\n');
+
+  // Fix "Setting X as parent of X would create a cycle": this happens when a
+  // subgraph shares its id with a node (the node becomes its own parent). Give
+  // any such subgraph a unique synthetic id while preserving its displayed title.
+  var lines = code.split('\n');
+  var sgCounter = 0;
+  // Count id usages on a copy with bracket/paren/brace label contents removed,
+  // so text inside labels (e.g. "Auth Service") doesn't count as a node usage.
+  var codeNoLabels = code.replace(/\[[^\]]*\]/g, '').replace(/\([^)]*\)/g, '').replace(/\{[^}]*\}/g, '');
+  for (var i = 0; i < lines.length; i++) {
+    var m = lines[i].match(/^(\s*)subgraph\s+([A-Za-z0-9_]+)(\s*\[[^\]]*\])?\s*$/);
+    if (!m) continue;
+    var indent = m[1], id = m[2], label = m[3] || ('[' + id + ']');
+    // If this id appears elsewhere as a node token (not just its own subgraph
+    // header), renaming the subgraph id breaks the self-parent cycle. Title kept.
+    var occurrences = (codeNoLabels.match(new RegExp('\\b' + id + '\\b', 'g')) || []).length;
+    if (occurrences > 1) {
+      lines[i] = indent + 'subgraph __sg' + (sgCounter++) + label;
+    }
+  }
+  return lines.join('\n');
 }
 
 function escapeHtml(str) {
