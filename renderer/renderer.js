@@ -1684,12 +1684,15 @@ window.api.onAnswerDone(() => {
       appendCodeActions(currentAnswerEl);
     }
 
-    // Once the main diagram is drawn, drop back to Text mode so follow-up
-    // questions are answered (grounded on the CV, support material, and the
-    // diagram just produced) rather than forced into another diagram.
-    if (answerMode === 'DIAGRAM' && manualMode === 'DIAGRAM') {
+    // Once the main diagram/program is produced, drop back to Text mode so
+    // follow-up questions are answered (grounded on the CV, support material,
+    // and the diagram/code just produced) rather than forced into another
+    // diagram/code block.
+    if ((answerMode === 'DIAGRAM' || answerMode === 'CODE') && manualMode === answerMode) {
       setManualMode('ANSWER');
-      showStealthToast('Switched to Text · follow-ups will build on this diagram');
+      showStealthToast(answerMode === 'DIAGRAM'
+        ? 'Switched to Text · follow-ups will build on this diagram'
+        : 'Switched to Text · follow-ups will build on this code');
     }
   }
   currentAnswerEl = null;
