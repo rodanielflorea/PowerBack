@@ -1502,7 +1502,12 @@ function ensureSpacer() {
   answerSpacer.style.height = answerHistory.clientHeight + "px";
 }
 
-function addAnswerTurn(question, imgs, mode) {
+function fmtTime(ts) {
+  const d = ts ? new Date(ts) : new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function addAnswerTurn(question, imgs, mode, ts) {
   if (!answerHistory) return null;
   if (answerEmpty) answerEmpty.hidden = true;
 
@@ -1518,6 +1523,8 @@ function addAnswerTurn(question, imgs, mode) {
       img.src = `data:${imgData.mime || "image/png"};base64,${imgData.base64}`;
       img.className = "answer-q-img";
       img.alt = "screenshot";
+      img.title = "Click to enlarge";
+      img.addEventListener("click", () => openImageOverlay(img.src));
       strip.appendChild(img);
     });
     q.appendChild(strip);
@@ -1542,6 +1549,13 @@ function addAnswerTurn(question, imgs, mode) {
   qActions.appendChild(resendBtn);
   q.appendChild(qActions);
 
+  // Timestamp on the question bubble (when the turn was asked).
+  const turnTs = ts || Date.now();
+  const qTime = document.createElement("div");
+  qTime.className = "answer-time answer-time--q";
+  qTime.textContent = fmtTime(turnTs);
+  q.appendChild(qTime);
+
   const a = document.createElement("div");
   a.className = "answer-a streaming";
   a.dataset.mode = turnMode;
@@ -1556,6 +1570,11 @@ function addAnswerTurn(question, imgs, mode) {
   streamDiv.className = "answer-stream";
   a.appendChild(streamDiv);
   a._streamEl = streamDiv;
+  // Answer timestamp — filled in when streaming completes.
+  const aTime = document.createElement("div");
+  aTime.className = "answer-time answer-time--a";
+  a.appendChild(aTime);
+  a._timeEl = aTime;
   turn.appendChild(q);
   turn.appendChild(a);
 
@@ -1652,6 +1671,7 @@ function stripLeadingIntro(text, mode) {
 window.api.onAnswerDone(() => {
   if (currentAnswerEl) {
     currentAnswerEl.classList.remove("streaming");
+    if (currentAnswerEl._timeEl) currentAnswerEl._timeEl.textContent = fmtTime();
     const answerMode = currentAnswerEl.dataset.mode || 'ANSWER';
     // Read raw streamed text from the child stream div (keeps badge untouched)
     const streamEl = currentAnswerEl._streamEl || currentAnswerEl;
@@ -2031,6 +2051,23 @@ function openDiagramOverlay(sourceSvg) {
   diagramOverlay.hidden = false;
   // Fit after layout settles so the stage has its real size.
   requestAnimationFrame(_dovFit);
+}
+// Open an uploaded/captured screenshot in the same zoom/pan viewer.
+function openImageOverlay(src) {
+  if (!diagramOverlay || !diagramOverlayStage || !src) return;
+  const img = new Image();
+  img.onload = () => {
+    _dov.vbW = img.naturalWidth  || 800;
+    _dov.vbH = img.naturalHeight || 600;
+    img.style.width  = _dov.vbW + 'px';
+    img.style.height = _dov.vbH + 'px';
+    diagramOverlayStage.innerHTML = '';
+    diagramOverlayStage.appendChild(img);
+    _dov.svg = img; // viewer transform applies to any element
+    diagramOverlay.hidden = false;
+    requestAnimationFrame(_dovFit);
+  };
+  img.src = src;
 }
 function closeDiagramOverlay() {
   if (!diagramOverlay) return;

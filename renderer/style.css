@@ -698,7 +698,8 @@ body.in-interview .end-btn.live::before {
   cursor: grab;
 }
 .diagram-overlay-stage.dragging { cursor: grabbing; }
-.diagram-overlay-stage svg {
+.diagram-overlay-stage svg,
+.diagram-overlay-stage img {
   position: absolute;
   top: 0; left: 0;
   transform-origin: 0 0;
@@ -1105,7 +1106,21 @@ body.in-interview .end-btn.live::before {
   border-radius: var(--radius-sm);
   border: 1px solid rgba(255,255,255,.2);
   display: block;
+  cursor: zoom-in;
+  transition: transform 100ms ease;
 }
+.answer-q-img:hover { transform: scale(1.04); }
+
+/* Timestamps on message bubbles */
+.answer-time {
+  font-size: 9.5px;
+  opacity: 0.6;
+  margin-top: 4px;
+  user-select: none;
+}
+.answer-time--q { text-align: right; color: rgba(255, 255, 255, 0.85); }
+.answer-time--a { text-align: left; color: var(--muted); }
+.answer-time--a:empty { display: none; }
 .answer-q-img-tag { opacity: 0.7; }
 .answer-main.composer-dragover { outline: 2px dashed var(--accent); outline-offset: -4px; }
 
