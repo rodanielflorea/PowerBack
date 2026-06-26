@@ -86,13 +86,30 @@ function isPublicHoliday(h) {
   return t.length === 0 || t.includes('Public') || t.includes('Bank');
 }
 
-function renderHolidays(list) {
+// Wikimedia "on this day" events: { date, text }. Free-text, upcoming-only.
+function eventLine(e, today) {
+  const d = new Date(e.date + 'T00:00:00');
+  const dateStr = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(d);
+  const days = Math.round((d - today) / 86400000);
+  const soon = days >= 0 && days <= 14;
+  return '<div class="info-holiday' + (soon ? ' info-holiday--soon' : '') + '">' +
+    '<span class="info-holiday-date">' + dateStr + '</span>' +
+    '<span class="info-holiday-name">' + (e.text || '') + '</span></div>';
+}
+
+function renderHolidaysAndEvents(data) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const all = list || [];
-  const holidays = all.filter(isPublicHoliday);
-  const events = all.filter(h => !isPublicHoliday(h)); // Observance / Optional / School / etc.
-  renderInto(elHolidays, holidays, today, 2, 5);
-  renderInto(elEvents, events, today, 2, 5);
+  const all = (data && data.holidays) || [];
+  renderInto(elHolidays, all.filter(isPublicHoliday), today, 2, 5);
+
+  // Special events: prefer the richer Wikimedia events; fall back to Nager's
+  // non-public observances if the scrape found nothing for this country.
+  const wiki = (data && data.events) || [];
+  if (wiki.length) {
+    elEvents.innerHTML = wiki.slice(0, 8).map(e => eventLine(e, today)).join('');
+  } else {
+    renderInto(elEvents, all.filter(h => !isPublicHoliday(h)), today, 2, 5);
+  }
 }
 
 if (window.info && window.info.onData) {
@@ -104,7 +121,7 @@ if (window.info && window.info.onData) {
     elTz.textContent = _tz || '';
     tickClock();
     renderWeather(data && data.weather);
-    renderHolidays(data && data.holidays);
+    renderHolidaysAndEvents(data);
   });
 }
 
@@ -114,5 +131,6 @@ if (closeBtn) closeBtn.addEventListener('click', () => window.info && window.inf
 if (refreshBtn) refreshBtn.addEventListener('click', () => {
   elWeather.innerHTML = '<span class="info-dim">Loading…</span>';
   elHolidays.innerHTML = '<span class="info-dim">Loading…</span>';
+  if (elEvents) elEvents.innerHTML = '<span class="info-dim">Loading…</span>';
   window.info && window.info.refresh && window.info.refresh();
 });

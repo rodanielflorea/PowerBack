@@ -708,13 +708,21 @@ function closeInfoWindow() {
 }
 
 // Map a free-text country name to an ISO-2 code via date.nager.at's country list.
+// fetch with an abort timeout so a slow/keyless endpoint can't hang the widget.
+async function tfetch(url, opts, ms) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms || 6000);
+  try { return await fetch(url, Object.assign({ signal: ac.signal }, opts || {})); }
+  finally { clearTimeout(t); }
+}
+
 async function countryNameToCode(name) {
   const n = String(name || '').trim();
   if (!n) return null;
   if (/^[A-Za-z]{2}$/.test(n)) return n.toUpperCase(); // already a code
   try {
     if (!_nagerCountries) {
-      const r = await fetch('https://date.nager.at/api/v3/AvailableCountries');
+      const r = await tfetch('https://date.nager.at/api/v3/AvailableCountries');
       if (r.ok) _nagerCountries = await r.json();
     }
     if (_nagerCountries) {
@@ -727,9 +735,41 @@ async function countryNameToCode(name) {
   return null;
 }
 
-// Keyless weather (wttr.in JSON) + holidays (date.nager.at). No API key/signup.
+// Deeper special events via Wikimedia's keyless "on this day → holidays &
+// observances" feed. Scans the next `days` calendar days and keeps entries whose
+// text mentions any of the country name variants. English, no API key.
+async function fetchSpecialEvents(nameVariants, days) {
+  const names = (nameVariants || []).map(s => String(s || '').toLowerCase()).filter(Boolean);
+  if (!names.length) return [];
+  const today = new Date();
+  const dates = [];
+  for (let i = 0; i < (days || 10); i++) { const d = new Date(today); d.setDate(today.getDate() + i); dates.push(d); }
+  const results = [];
+  await Promise.all(dates.map(async (d) => {
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    try {
+      const r = await tfetch('https://en.wikipedia.org/api/rest_v1/feed/onthisday/holidays/' + mm + '/' + dd,
+        { headers: { 'User-Agent': 'AceInterview/1.0 (interview assistant)', 'Accept': 'application/json' } }, 5000);
+      if (!r.ok) return;
+      const j = await r.json();
+      const iso = d.getFullYear() + '-' + mm + '-' + dd;
+      (j.holidays || []).forEach((h) => {
+        const text = (h.text || '').trim();
+        if (text && names.some(n => text.toLowerCase().includes(n))) results.push({ date: iso, text });
+      });
+    } catch {}
+  }));
+  const seen = new Set();
+  return results
+    .filter(e => { const k = e.date + '|' + e.text; if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// Keyless weather (wttr.in), holidays (date.nager.at), and richer special events
+// (Wikimedia on-this-day). No API key/signup.
 async function fetchInfoData(profile) {
-  const out = { weather: null, holidays: null, errors: [] };
+  const out = { weather: null, holidays: null, events: null, errors: [] };
   const city = (profile && profile.city || '').trim();
   const country = (profile && profile.country || '').trim();
 
@@ -737,7 +777,7 @@ async function fetchInfoData(profile) {
   const q = [city, country].filter(Boolean).join(',');
   if (q) {
     try {
-      const r = await fetch('https://wttr.in/' + encodeURIComponent(q) + '?format=j1', {
+      const r = await tfetch('https://wttr.in/' + encodeURIComponent(q) + '?format=j1', {
         headers: { 'User-Agent': 'curl/8' }, // wttr serves JSON cleanly to curl-like UAs
       });
       if (r.ok) {
@@ -755,15 +795,17 @@ async function fetchInfoData(profile) {
     } catch (e) { out.errors.push('weather: ' + e.message); }
   }
 
-  // Holidays + special events — full year list for the country (both past and
-  // upcoming); the widget splits recent-past vs upcoming and public vs events.
-  // Carries `types` so observances/optional days show as "special events".
+  // Holidays — full year list for the country (both past and upcoming); the
+  // widget splits recent-past vs upcoming. Carries `types` for classification.
   if (country) {
+    const nameVariants = [country];
     try {
       const code = await countryNameToCode(country);
       if (code) {
+        const canonical = (_nagerCountries || []).find(c => c.countryCode === code);
+        if (canonical && canonical.name) nameVariants.push(canonical.name);
         const year = new Date().getFullYear();
-        const r = await fetch('https://date.nager.at/api/v3/PublicHolidays/' + year + '/' + code);
+        const r = await tfetch('https://date.nager.at/api/v3/PublicHolidays/' + year + '/' + code);
         if (r.ok) {
           const all = await r.json();
           out.holidays = all
@@ -772,6 +814,10 @@ async function fetchInfoData(profile) {
         } else out.errors.push('holidays ' + r.status);
       } else out.errors.push('country code not found');
     } catch (e) { out.errors.push('holidays: ' + e.message); }
+
+    // Deeper special events for the country (next ~10 days), from Wikimedia.
+    try { out.events = await fetchSpecialEvents(nameVariants, 10); }
+    catch (e) { out.errors.push('events: ' + e.message); }
   }
   return out;
 }
