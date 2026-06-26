@@ -119,6 +119,9 @@ function renderHolidaysAndEvents(data) {
 }
 
 if (window.info && window.info.onData) {
+  // Tell main we're listening so it (re)sends data + fetches — avoids any race
+  // where main pushed before this listener was attached.
+  if (window.info.ready) window.info.ready();
   window.info.onData((data) => {
     const p = (data && data.profile) || {};
     _tz = p.timezone || null;

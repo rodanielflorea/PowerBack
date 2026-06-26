@@ -684,22 +684,16 @@ function createInfoWindow() {
   infoWin.setMenuBarVisibility(false);
   infoWin.loadFile(path.join(__dirname, 'renderer', 'info.html'));
   infoWin.on('closed', () => { infoWin = null; });
-  infoWin.webContents.once('did-finish-load', () => {
-    // Push whatever we have immediately (clock works offline), then fetch.
-    if (infoWin && !infoWin.isDestroyed()) infoWin.webContents.send('info-data', { profile: infoProfile || {} });
-    refreshInfoData();
-  });
+  infoWin.once('ready-to-show', () => { if (infoWin && !infoWin.isDestroyed()) infoWin.showInactive(); });
+  // Note: the actual data fetch is kicked off by the renderer's 'info-ready'
+  // handshake (below), so it can never race ahead of the renderer's listener.
 }
 
 function openInfoWindow(profile) {
   infoProfile = profile || infoProfile || {};
-  if (!infoWin || infoWin.isDestroyed()) createInfoWindow();
-  else {
-    infoWin.showInactive();
-    infoWin.webContents.send('info-data', { profile: infoProfile });
-    refreshInfoData();
-  }
-  if (infoWin && !infoWin.isDestroyed()) infoWin.once('ready-to-show', () => infoWin.showInactive());
+  if (!infoWin || infoWin.isDestroyed()) { createInfoWindow(); return; }
+  infoWin.showInactive();
+  refreshInfoData();
 }
 
 function closeInfoWindow() {
@@ -808,35 +802,55 @@ async function fetchHolidays(country) {
 // Fetch weather / holidays / events CONCURRENTLY and push each to the widget the
 // moment it resolves, so one slow endpoint never blocks the others.
 // Field convention: undefined = still loading, null = done-but-empty, value = data.
+let infoAcc = null;        // latest accumulator (also (re)sent on the ready handshake)
+let infoWatchdog = null;
+function sendInfoData() {
+  if (infoWin && !infoWin.isDestroyed() && infoAcc) infoWin.webContents.send('info-data', infoAcc);
+}
 async function refreshInfoData() {
   if (!infoWin || infoWin.isDestroyed()) return;
   const profile = infoProfile || {};
   const city = (profile.city || '').trim();
   const country = (profile.country || '').trim();
   const acc = { profile, weather: undefined, holidays: undefined, events: undefined };
-  const push = () => { if (infoWin && !infoWin.isDestroyed()) infoWin.webContents.send('info-data', acc); };
-  push(); // clock + "Loading…" immediately
+  infoAcc = acc;
+  sendInfoData(); // clock + "Loading…" immediately
+
+  // Watchdog: never sit on "Loading…" forever — after 12s, mark unresolved
+  // sections as empty so they read "Unavailable / None".
+  if (infoWatchdog) clearTimeout(infoWatchdog);
+  infoWatchdog = setTimeout(() => {
+    if (infoAcc !== acc) return;
+    if (acc.weather === undefined) acc.weather = null;
+    if (acc.holidays === undefined) acc.holidays = null;
+    if (acc.events === undefined) acc.events = null;
+    sendInfoData();
+  }, 12000);
 
   const jobs = [];
-  if (city || country) jobs.push(fetchWeather(city, country).then(w => { acc.weather = w || null; push(); }));
-  else acc.weather = null;
+  if (city || country) {
+    jobs.push(fetchWeather(city, country).then(w => { if (infoAcc === acc) { acc.weather = w || null; sendInfoData(); } }));
+  } else acc.weather = null;
 
   if (country) {
     jobs.push(fetchHolidays(country).then(async ({ holidays, nameVariants }) => {
-      acc.holidays = holidays || null; push();
-      try { acc.events = (await fetchSpecialEvents(nameVariants, 10)) || null; }
-      catch { acc.events = null; }
-      push();
+      if (infoAcc !== acc) return;
+      acc.holidays = holidays || null; sendInfoData();
+      let ev = null;
+      try { ev = await fetchSpecialEvents(nameVariants, 10); } catch {}
+      if (infoAcc === acc) { acc.events = ev || null; sendInfoData(); }
     }));
   } else { acc.holidays = null; acc.events = null; }
 
   await Promise.allSettled(jobs);
-  push();
+  if (infoAcc === acc) sendInfoData();
 }
 
 ipcMain.handle('info-open', (_e, profile) => { openInfoWindow(profile); return true; });
 ipcMain.handle('info-close', () => { closeInfoWindow(); return true; });
 ipcMain.handle('info-refresh', () => { refreshInfoData(); return true; });
+// Renderer handshake: it's listening now — (re)send current data and fetch fresh.
+ipcMain.handle('info-ready', () => { sendInfoData(); refreshInfoData(); return true; });
 
 function openStickyWindow(beside = false) {
   stickyWantOpen = true;
