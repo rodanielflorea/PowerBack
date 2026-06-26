@@ -348,12 +348,29 @@ if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
   if (!sup) {
     clearAnswerPanel();
     const val = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ""; };
-    const profile = { name: val("profileName"), city: val("profileCity"), country: val("profileCountry") };
+    const profile = { name: val("profileName"), city: val("profileCity"), country: val("profileCountry"), timezone: val("profileTimezone") };
     if (window.api.sessionNew) await window.api.sessionNew({ profile });
+    maybeOpenInfoWindow(profile);
   }
   hideSetup();
   log(`Started: voice mode as ${chosenRole}`, "info");
 });
+
+// Populate the timezone <datalist> with the runtime's IANA zones (offline).
+function populateTimezones() {
+  const dl = document.getElementById("tzList");
+  if (!dl || dl.childElementCount) return;
+  let zones = [];
+  try { zones = (Intl.supportedValuesOf && Intl.supportedValuesOf("timeZone")) || []; } catch {}
+  zones.forEach((z) => { const o = document.createElement("option"); o.value = z; dl.appendChild(o); });
+}
+populateTimezones();
+
+// Open the info window for a profile that has at least a location or timezone.
+function maybeOpenInfoWindow(profile) {
+  if (!profile || !window.api.infoOpen) return;
+  if (profile.city || profile.country || profile.timezone) window.api.infoOpen(profile);
+}
 
 // ── Saved sessions: list / continue / delete in the setup screen ──────────────
 function clearAnswerPanel() {
@@ -429,15 +446,22 @@ async function selectContinueSession(id) {
   renderContinueDetail(meta);
 }
 
+// Right panel = the session's pre-setup page (editable profile + its materials).
 function renderContinueDetail(meta) {
   if (!continueDetail) return;
   if (!meta) { continueDetail.innerHTML = '<p class="continue-empty">Session not found.</p>'; return; }
   const p = meta.profile || {};
-  const loc = [p.city, p.country].filter(Boolean).join(", ");
   const km = meta.knowledgeMeta || {};
   const kindLabel = { cv: "Resume / CV", jd: "Job Description", support: "Support material", meetings: "Meeting records" };
-  let html = '<div class="cd-section"><div class="cd-label">Profile</div><div class="cd-profile">' +
-    (p.name ? esc(p.name) : '<span class="cd-dim">No name</span>') + (loc ? " · " + esc(loc) : "") + "</div></div>";
+
+  let html = '<div class="cd-section"><div class="cd-label">Your profile</div>' +
+    '<div class="profile-inputs profile-inputs--vertical">' +
+    '<input type="text" id="cProfileName" class="profile-input" placeholder="Name" spellcheck="false" value="' + esc(p.name) + '" />' +
+    '<input type="text" id="cProfileCity" class="profile-input" placeholder="City" spellcheck="false" value="' + esc(p.city) + '" />' +
+    '<input type="text" id="cProfileCountry" class="profile-input" placeholder="Country" spellcheck="false" value="' + esc(p.country) + '" />' +
+    '<input type="text" id="cProfileTimezone" class="profile-input" list="tzList" placeholder="Timezone (e.g. America/New_York)" spellcheck="false" value="' + esc(p.timezone) + '" />' +
+    "</div></div>";
+
   ["cv", "jd", "support", "meetings"].forEach((kind) => {
     const names = km[kind] || [];
     html += '<div class="cd-section"><div class="cd-label">' + kindLabel[kind] + "</div>";
@@ -455,6 +479,14 @@ if (continueOkBtn) continueOkBtn.addEventListener("click", () => { if (_continue
 
 async function continueSession(id) {
   if (!window.api.sessionLoad) return;
+  // Persist any profile edits made in the right panel before loading.
+  const cval = (cid) => { const el = document.getElementById(cid); return el ? el.value.trim() : ""; };
+  const editedProfile = {
+    name: cval("cProfileName"), city: cval("cProfileCity"),
+    country: cval("cProfileCountry"), timezone: cval("cProfileTimezone"),
+  };
+  if (window.api.sessionUpdateProfile) await window.api.sessionUpdateProfile(id, editedProfile);
+
   const data = await window.api.sessionLoad(id);
   if (!data) return;
   // Sessions are speaker-side (answer panel). Start in voice mode as speaker.
@@ -468,6 +500,7 @@ async function continueSession(id) {
   clearAnswerPanel();
   renderLoadedTurns(data.turns || []);
   hideSetup();
+  maybeOpenInfoWindow(data.profile || editedProfile);
   log(`Continued session: ${data.name || id}`, "info");
 }
 
@@ -615,6 +648,7 @@ endModalConfirm.addEventListener("click", async () => {
   await window.api.stopNetwork();
   teardownPeers();
   delete netActionBtn.dataset.connecting;
+  if (window.api.infoClose) window.api.infoClose();
   log("Session ended — back to setup", "info");
   showModeSelect();
 });

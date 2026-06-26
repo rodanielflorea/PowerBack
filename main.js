@@ -117,6 +117,9 @@ let selectorWin = null;
 let stickyWin = null;
 let stickyWantOpen = false;
 let stickyReady = false;
+let infoWin = null;
+let infoProfile = null;          // profile currently shown in the info window
+let _nagerCountries = null;      // cached [{countryCode, name}] from date.nager.at
 let chatHistory = [];
 const CHAT_HISTORY_MAX = 200;
 let captureOverlayWin = null;
@@ -489,6 +492,7 @@ function setStealth(value) {
   state.stealth = !!value;
   win.setContentProtection(state.stealth);
   if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.setContentProtection(state.stealth); } catch {} }
+  if (infoWin && !infoWin.isDestroyed()) { try { infoWin.setContentProtection(state.stealth); } catch {} }
   saveState();
   win.webContents.send('stealth-changed', state.stealth);
 }
@@ -659,6 +663,129 @@ function createStickyWindow() {
     }
   });
 }
+
+// ── Info window (local time / weather / holidays) ─────────────────────────────
+function createInfoWindow() {
+  if (infoWin && !infoWin.isDestroyed()) return;
+  if (!win) return;
+  const disp = screen.getPrimaryDisplay().workArea;
+  infoWin = new BrowserWindow({
+    width: 250, height: 360,
+    x: disp.x + disp.width - 270, y: disp.y + 20,
+    minWidth: 200, minHeight: 240,
+    frame: false, backgroundColor: '#0f172a',
+    skipTaskbar: true, alwaysOnTop: true, resizable: true, show: false,
+    icon: path.join(__dirname, 'build', 'icon.png'),
+    webPreferences: { preload: path.join(__dirname, 'preload-info.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  infoWin.setContentProtection(state.stealth);
+  infoWin.setAlwaysOnTop(true, 'screen-saver');
+  infoWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  infoWin.setMenuBarVisibility(false);
+  infoWin.loadFile(path.join(__dirname, 'renderer', 'info.html'));
+  infoWin.on('closed', () => { infoWin = null; });
+  infoWin.webContents.once('did-finish-load', () => {
+    // Push whatever we have immediately (clock works offline), then fetch.
+    if (infoWin && !infoWin.isDestroyed()) infoWin.webContents.send('info-data', { profile: infoProfile || {} });
+    refreshInfoData();
+  });
+}
+
+function openInfoWindow(profile) {
+  infoProfile = profile || infoProfile || {};
+  if (!infoWin || infoWin.isDestroyed()) createInfoWindow();
+  else {
+    infoWin.showInactive();
+    infoWin.webContents.send('info-data', { profile: infoProfile });
+    refreshInfoData();
+  }
+  if (infoWin && !infoWin.isDestroyed()) infoWin.once('ready-to-show', () => infoWin.showInactive());
+}
+
+function closeInfoWindow() {
+  if (infoWin && !infoWin.isDestroyed()) { try { infoWin.close(); } catch {} }
+  infoWin = null;
+}
+
+// Map a free-text country name to an ISO-2 code via date.nager.at's country list.
+async function countryNameToCode(name) {
+  const n = String(name || '').trim();
+  if (!n) return null;
+  if (/^[A-Za-z]{2}$/.test(n)) return n.toUpperCase(); // already a code
+  try {
+    if (!_nagerCountries) {
+      const r = await fetch('https://date.nager.at/api/v3/AvailableCountries');
+      if (r.ok) _nagerCountries = await r.json();
+    }
+    if (_nagerCountries) {
+      const low = n.toLowerCase();
+      let hit = _nagerCountries.find(c => c.name.toLowerCase() === low);
+      if (!hit) hit = _nagerCountries.find(c => c.name.toLowerCase().startsWith(low) || low.startsWith(c.name.toLowerCase()));
+      if (hit) return hit.countryCode;
+    }
+  } catch {}
+  return null;
+}
+
+// Keyless weather (wttr.in JSON) + holidays (date.nager.at). No API key/signup.
+async function fetchInfoData(profile) {
+  const out = { weather: null, holidays: null, errors: [] };
+  const city = (profile && profile.city || '').trim();
+  const country = (profile && profile.country || '').trim();
+
+  // Weather — wttr.in/<query>?format=j1
+  const q = [city, country].filter(Boolean).join(',');
+  if (q) {
+    try {
+      const r = await fetch('https://wttr.in/' + encodeURIComponent(q) + '?format=j1', {
+        headers: { 'User-Agent': 'curl/8' }, // wttr serves JSON cleanly to curl-like UAs
+      });
+      if (r.ok) {
+        const j = await r.json();
+        const cur = j.current_condition && j.current_condition[0];
+        if (cur) {
+          out.weather = {
+            tempC: Number(cur.temp_C),
+            feelsC: Number(cur.FeelsLikeC),
+            humidity: Number(cur.humidity),
+            desc: (cur.weatherDesc && cur.weatherDesc[0] && cur.weatherDesc[0].value) || '',
+          };
+        }
+      } else out.errors.push('weather ' + r.status);
+    } catch (e) { out.errors.push('weather: ' + e.message); }
+  }
+
+  // Holidays — current year's public holidays for the country, future-first.
+  if (country) {
+    try {
+      const code = await countryNameToCode(country);
+      if (code) {
+        const year = new Date().getFullYear();
+        const r = await fetch('https://date.nager.at/api/v3/PublicHolidays/' + year + '/' + code);
+        if (r.ok) {
+          const all = await r.json();
+          const today = new Date(); today.setHours(0, 0, 0, 0);
+          // Upcoming first; if none left this year, show the most recent past ones.
+          const upcoming = all.filter(h => new Date(h.date + 'T00:00:00') >= today);
+          out.holidays = (upcoming.length ? upcoming : all.slice(-6))
+            .sort((a, b) => a.date.localeCompare(b.date));
+        } else out.errors.push('holidays ' + r.status);
+      } else out.errors.push('country code not found');
+    } catch (e) { out.errors.push('holidays: ' + e.message); }
+  }
+  return out;
+}
+
+async function refreshInfoData() {
+  if (!infoWin || infoWin.isDestroyed()) return;
+  const data = await fetchInfoData(infoProfile || {});
+  if (infoWin && !infoWin.isDestroyed())
+    infoWin.webContents.send('info-data', Object.assign({ profile: infoProfile || {} }, data));
+}
+
+ipcMain.handle('info-open', (_e, profile) => { openInfoWindow(profile); return true; });
+ipcMain.handle('info-close', () => { closeInfoWindow(); return true; });
+ipcMain.handle('info-refresh', () => { refreshInfoData(); return true; });
 
 function openStickyWindow(beside = false) {
   stickyWantOpen = true;
@@ -1935,7 +2062,7 @@ ipcMain.handle('session-new', (_e, meta) => {
   const p = (meta && meta.profile) || {};
   const s = {
     id: genSessionId(), name: '', createdAt: Date.now(), updatedAt: Date.now(), turns: [],
-    profile: { name: p.name || '', city: p.city || '', country: p.country || '' },
+    profile: { name: p.name || '', city: p.city || '', country: p.country || '', timezone: p.timezone || '' },
     knowledge: snapshotKnowledge(), // freeze the materials attached for this session
   };
   sessions.push(s);
@@ -1944,6 +2071,19 @@ ipcMain.handle('session-new', (_e, meta) => {
   activeProfile = s.profile;
   saveSessions();
   return s.id;
+});
+// Update the active/continued session's profile (from the continue page edits).
+ipcMain.handle('session-update-profile', (_e, { id, profile } = {}) => {
+  const s = sessions.find(x => x.id === id) || currentSession();
+  if (!s) return false;
+  s.profile = {
+    name: (profile && profile.name) || '', city: (profile && profile.city) || '',
+    country: (profile && profile.country) || '', timezone: (profile && profile.timezone) || '',
+  };
+  s.updatedAt = Date.now();
+  if (s.id === currentSessionId) activeProfile = s.profile;
+  saveSessions();
+  return true;
 });
 ipcMain.handle('session-load', (_e, id) => {
   const s = sessions.find(x => x.id === id);
@@ -1992,12 +2132,22 @@ async function extractDocText(arrayBuffer, name) {
 function buildKnowledgeContext() {
   const k = state.knowledge || {};
   const join = (arr) => (arr || []).map((i) => i.text).filter(Boolean).join('\n\n');
-  // Candidate profile (name / location) from the active session.
+  // Candidate profile (name / location / timezone + derived local time) from
+  // the active session — used as supporting context for answers.
   const p = activeProfile || {};
   const loc = [p.city, p.country].filter(Boolean).join(', ');
   const profileParts = [];
   if (p.name) profileParts.push(`Name: ${p.name}`);
   if (loc) profileParts.push(`Location: ${loc}`);
+  if (p.timezone) {
+    profileParts.push(`Timezone: ${p.timezone}`);
+    try {
+      const localNow = new Intl.DateTimeFormat('en-US', {
+        timeZone: p.timezone, dateStyle: 'full', timeStyle: 'short',
+      }).format(new Date());
+      profileParts.push(`Local time: ${localNow}`);
+    } catch {}
+  }
   const sections = [
     ['CANDIDATE PROFILE', profileParts.join('\n')],
     ['CANDIDATE RESUME / CV', join(k.cv)],

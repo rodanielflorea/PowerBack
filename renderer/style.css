@@ -1407,6 +1407,7 @@ body.in-interview .end-btn.live::before {
 /* ── Profile inputs on the new-session page ───────────────────── */
 .setup-profile-row { margin: 4px 0 12px; }
 .profile-inputs { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 8px; margin-top: 8px; }
+.profile-inputs--vertical { display: flex; flex-direction: column; gap: 8px; }
 .profile-input {
   -webkit-app-region: no-drag;
   font-size: 13px;
