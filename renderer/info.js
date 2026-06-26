@@ -7,6 +7,7 @@ const elDate     = document.getElementById('infoDate');
 const elTz       = document.getElementById('infoTz');
 const elWeather  = document.getElementById('infoWeather');
 const elHolidays = document.getElementById('infoHolidays');
+const elEvents   = document.getElementById('infoEvents');
 
 let _tz = null; // IANA timezone for the clock
 
@@ -51,18 +52,47 @@ function renderWeather(w) {
     (w.humidity != null ? ' · ' + w.humidity + '% RH' : '') + '</div></div>';
 }
 
+// Render one line per entry, with date, English name, and past/soon styling.
+function holidayLine(h, today) {
+  const d = new Date(h.date + 'T00:00:00');
+  const dateStr = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(d);
+  const days = Math.round((d - today) / 86400000);
+  const past = days < 0;
+  const soon = days >= 0 && days <= 14;
+  const cls = past ? ' info-holiday--past' : (soon ? ' info-holiday--soon' : '');
+  return '<div class="info-holiday' + cls + '">' +
+    '<span class="info-holiday-date">' + dateStr + '</span>' +
+    '<span class="info-holiday-name">' + (h.name || h.localName || '') + '</span></div>';
+}
+
+// Pick a few recent-past + upcoming entries from a date-sorted list.
+function recentAndUpcoming(list, today, pastN, upN) {
+  const past = list.filter(h => new Date(h.date + 'T00:00:00') < today);
+  const up = list.filter(h => new Date(h.date + 'T00:00:00') >= today);
+  return past.slice(-pastN).concat(up.slice(0, upN));
+}
+
+function renderInto(el, list, today, pastN, upN) {
+  if (!el) return;
+  if (!list || !list.length) { el.innerHTML = '<span class="info-dim">None found</span>'; return; }
+  const picks = recentAndUpcoming(list, today, pastN, upN);
+  el.innerHTML = picks.length
+    ? picks.map(h => holidayLine(h, today)).join('')
+    : '<span class="info-dim">None found</span>';
+}
+
+function isPublicHoliday(h) {
+  const t = h.types || [];
+  return t.length === 0 || t.includes('Public') || t.includes('Bank');
+}
+
 function renderHolidays(list) {
-  if (!list || !list.length) { elHolidays.innerHTML = '<span class="info-dim">None found</span>'; return; }
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  elHolidays.innerHTML = list.slice(0, 6).map((h) => {
-    const d = new Date(h.date + 'T00:00:00');
-    const dateStr = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(d);
-    const days = Math.round((d - today) / 86400000);
-    const soon = days >= 0 && days <= 14;
-    return '<div class="info-holiday' + (soon ? ' info-holiday--soon' : '') + '">' +
-      '<span class="info-holiday-date">' + dateStr + '</span>' +
-      '<span class="info-holiday-name">' + (h.name || h.localName || '') + '</span></div>';
-  }).join('');
+  const all = list || [];
+  const holidays = all.filter(isPublicHoliday);
+  const events = all.filter(h => !isPublicHoliday(h)); // Observance / Optional / School / etc.
+  renderInto(elHolidays, holidays, today, 2, 5);
+  renderInto(elEvents, events, today, 2, 5);
 }
 
 if (window.info && window.info.onData) {

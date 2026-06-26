@@ -755,7 +755,9 @@ async function fetchInfoData(profile) {
     } catch (e) { out.errors.push('weather: ' + e.message); }
   }
 
-  // Holidays — current year's public holidays for the country, future-first.
+  // Holidays + special events — full year list for the country (both past and
+  // upcoming); the widget splits recent-past vs upcoming and public vs events.
+  // Carries `types` so observances/optional days show as "special events".
   if (country) {
     try {
       const code = await countryNameToCode(country);
@@ -764,10 +766,8 @@ async function fetchInfoData(profile) {
         const r = await fetch('https://date.nager.at/api/v3/PublicHolidays/' + year + '/' + code);
         if (r.ok) {
           const all = await r.json();
-          const today = new Date(); today.setHours(0, 0, 0, 0);
-          // Upcoming first; if none left this year, show the most recent past ones.
-          const upcoming = all.filter(h => new Date(h.date + 'T00:00:00') >= today);
-          out.holidays = (upcoming.length ? upcoming : all.slice(-6))
+          out.holidays = all
+            .map(h => ({ date: h.date, name: h.name, localName: h.localName, types: h.types || [], global: h.global }))
             .sort((a, b) => a.date.localeCompare(b.date));
         } else out.errors.push('holidays ' + r.status);
       } else out.errors.push('country code not found');

@@ -47,5 +47,6 @@ body { display: flex; flex-direction: column; }
 .info-holiday-date { color: #94a3b8; flex-shrink: 0; min-width: 52px; font-variant-numeric: tabular-nums; }
 .info-holiday-name { color: #e2e8f0; }
 .info-holiday--soon .info-holiday-name { color: #fde047; font-weight: 600; }
+.info-holiday--past { opacity: 0.5; }
 
 .info-dim { color: #64748b; font-style: italic; font-size: 12px; }
