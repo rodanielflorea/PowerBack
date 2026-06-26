@@ -1832,11 +1832,24 @@ const CONVO_CHAR_BUDGET = 14000; // cap injected history; oldest pairs trimmed f
 
 // Record a completed, user-visible turn. Strips the <sticky> presenter block
 // (redundant with the diagram + explanation) to save context budget.
-function recordTurn(user, assistant, mode) {
+function recordTurn(user, assistant, mode, images) {
   const a = String(assistant || '').replace(/<sticky>[\s\S]*?<\/sticky>/gi, '').trim();
   const u = String(user || '').trim();
   if (!a) return;
   convoHistory.push({ user: u, assistant: a, mode: mode || 'ANSWER' });
+
+  // Persist into the current saved session (creating one if none is active).
+  let s = currentSession();
+  if (!s) {
+    s = { id: genSessionId(), name: '', createdAt: Date.now(), updatedAt: Date.now(), turns: [] };
+    sessions.push(s);
+    currentSessionId = s.id;
+  }
+  const imgs = Array.isArray(images) ? images.map(i => ({ base64: i.base64, mime: i.mime || 'image/png' })) : [];
+  s.turns.push({ ts: Date.now(), q: u, a, mode: mode || 'ANSWER', images: imgs });
+  if (!s.name) s.name = (u || '[image question]').slice(0, 48);
+  s.updatedAt = Date.now();
+  saveSessions();
 }
 
 // Prior turns as chat messages (user/assistant pairs), newest kept, oldest
@@ -1854,6 +1867,59 @@ function conversationContextMessages() {
   }
   return msgs;
 }
+
+// ── Saved sessions ────────────────────────────────────────────────────────────
+// Persisted to userData/sessions.json. Each session keeps its full turn list
+// (question, answer, mode, screenshots) so the user can continue it later and
+// see it rendered live, with the conversation re-grounding follow-up answers.
+const SESSIONS_FILE = path.join(app.getPath('userData'), 'sessions.json');
+let sessions = [];
+let currentSessionId = null;
+let _sessionsSaveQueue = Promise.resolve();
+
+function loadSessions() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    sessions = Array.isArray(raw && raw.sessions) ? raw.sessions : [];
+  } catch { sessions = []; }
+}
+function saveSessions() {
+  _sessionsSaveQueue = _sessionsSaveQueue.then(() =>
+    fs.promises.writeFile(SESSIONS_FILE, JSON.stringify({ sessions }), 'utf8').catch(() => {}));
+  return _sessionsSaveQueue;
+}
+function currentSession() { return sessions.find(s => s.id === currentSessionId) || null; }
+function genSessionId() { return 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+loadSessions();
+
+// Lightweight list for the setup picker (no turn bodies/images).
+ipcMain.handle('session-list', () =>
+  sessions
+    .map(s => ({ id: s.id, name: s.name || '(untitled)', createdAt: s.createdAt, updatedAt: s.updatedAt, turnCount: (s.turns || []).length }))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+);
+ipcMain.handle('session-new', () => {
+  const s = { id: genSessionId(), name: '', createdAt: Date.now(), updatedAt: Date.now(), turns: [] };
+  sessions.push(s);
+  currentSessionId = s.id;
+  convoHistory = [];
+  saveSessions();
+  return s.id;
+});
+ipcMain.handle('session-load', (_e, id) => {
+  const s = sessions.find(x => x.id === id);
+  if (!s) return null;
+  currentSessionId = id;
+  // Rebuild grounding context from the saved turns.
+  convoHistory = (s.turns || []).map(t => ({ user: t.q || '', assistant: t.a || '', mode: t.mode || 'ANSWER' }));
+  return { id: s.id, name: s.name, turns: s.turns || [] };
+});
+ipcMain.handle('session-delete', (_e, id) => {
+  sessions = sessions.filter(s => s.id !== id);
+  if (currentSessionId === id) { currentSessionId = null; convoHistory = []; }
+  saveSessions();
+  return true;
+});
 
 const KB_KINDS = ['cv', 'jd', 'support', 'meetings'];
 
@@ -2172,7 +2238,7 @@ async function generateAnswer(question, images, forcedMode) {
   if (full.trim()) {
     sessionLog.push({ ts: Date.now(), kind: 'question', text: q || `[${(imgs && imgs.length) || 0} image${imgs && imgs.length > 1 ? 's' : ''}]` });
     sessionLog.push({ ts: Date.now(), kind: 'answer', text: full.trim() });
-    recordTurn(q, full, mode);
+    recordTurn(q, full, mode, imgs);
   }
   if (win && !win.isDestroyed()) win.webContents.send('answer-done', { text: full });
 }
@@ -2396,7 +2462,12 @@ ipcMain.handle('stop-answer', () => {
   if (answerAbort) { try { answerAbort.abort(); } catch {} answerAbort = null; }
 });
 // Clear the remembered answers/code/diagrams used to ground follow-ups.
-ipcMain.handle('clear-answer-memory', () => { convoHistory = []; return true; });
+ipcMain.handle('clear-answer-memory', () => {
+  convoHistory = [];
+  const s = currentSession();
+  if (s) { s.turns = []; s.updatedAt = Date.now(); saveSessions(); }
+  return true;
+});
 ipcMain.handle('list-xai-models', async () => {
   const apiKey = (
     ((state.answer && state.answer.apiKey) || '').trim() ||

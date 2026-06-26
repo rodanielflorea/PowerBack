@@ -243,6 +243,7 @@ function showSetup() {
   applyRoleClass("");
   if (answerMain) answerMain.hidden = true;
   if (typeof refreshKb === "function") refreshKb();
+  if (typeof refreshSessionList === "function") refreshSessionList();
 }
 
 function hideSetup() {
@@ -298,9 +299,105 @@ if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
   await window.api.setNetworkConfig(patch);
   netCfg = await window.api.getNetworkConfig();
   await window.api.startNetwork();
+  // Fresh session for the speaker's answer panel.
+  if (!sup) {
+    clearAnswerPanel();
+    if (window.api.sessionNew) await window.api.sessionNew();
+  }
   hideSetup();
   log(`Started: voice mode as ${chosenRole}`, "info");
 });
+
+// ── Saved sessions: list / continue / delete in the setup screen ──────────────
+function clearAnswerPanel() {
+  if (answerHistory) answerHistory.querySelectorAll(".answer-turn").forEach((n) => n.remove());
+  if (answerEmpty) answerEmpty.hidden = false;
+  if (answerSpacer) answerSpacer.style.height = "0px";
+}
+
+async function refreshSessionList() {
+  const wrap = document.getElementById("setupSessions");
+  const list = document.getElementById("sessionList");
+  if (!wrap || !list || !window.api.sessionList) return;
+  const sessions = await window.api.sessionList();
+  list.innerHTML = "";
+  if (!sessions || !sessions.length) { wrap.hidden = true; return; }
+  wrap.hidden = false;
+  sessions.forEach((s) => {
+    const card = document.createElement("div");
+    card.className = "session-card";
+    const info = document.createElement("div");
+    info.className = "session-card-info";
+    const name = document.createElement("div");
+    name.className = "session-card-name";
+    name.textContent = s.name || "(untitled)";
+    const meta = document.createElement("div");
+    meta.className = "session-card-meta";
+    const d = new Date(s.updatedAt || s.createdAt || Date.now());
+    const dateStr = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    meta.textContent = `${s.turnCount} message${s.turnCount === 1 ? "" : "s"} · ${dateStr}`;
+    info.appendChild(name);
+    info.appendChild(meta);
+    info.addEventListener("click", () => continueSession(s.id));
+    const del = document.createElement("button");
+    del.className = "session-card-del";
+    del.textContent = "🗑";
+    del.title = "Erase this session";
+    del.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!window.confirm(`Erase session "${s.name || "(untitled)"}"? This cannot be undone.`)) return;
+      await window.api.sessionDelete(s.id);
+      refreshSessionList();
+    });
+    card.appendChild(info);
+    card.appendChild(del);
+    list.appendChild(card);
+  });
+}
+
+async function continueSession(id) {
+  if (!window.api.sessionLoad) return;
+  const data = await window.api.sessionLoad(id);
+  if (!data) return;
+  // Sessions are speaker-side (answer panel). Start in voice mode as speaker.
+  await window.api.setMode("voice");
+  mode = "voice";
+  updateModeToggleBtn();
+  await window.api.setNetworkConfig({ role: "speaker", speakerPort: 2000 });
+  netCfg = await window.api.getNetworkConfig();
+  await window.api.startNetwork();
+  if (setupRoleSpeakerV) { setupRoleSpeakerV.checked = true; syncSetupRoleV(); }
+  clearAnswerPanel();
+  renderLoadedTurns(data.turns || []);
+  hideSetup();
+  log(`Continued session: ${data.name || id}`, "info");
+}
+
+// Rebuild saved turns in the answer panel (rendered, not streaming).
+function renderLoadedTurns(turns) {
+  (turns || []).forEach((t) => {
+    const imgs = Array.isArray(t.images) && t.images.length ? t.images : null;
+    const el = addAnswerTurn(t.q || "", imgs, t.mode || "ANSWER", t.ts);
+    if (!el) return;
+    el.classList.remove("streaming");
+    if (el._timeEl) el._timeEl.textContent = fmtTime(t.ts);
+    const mode2 = el.dataset.mode || "ANSWER";
+    const streamEl = el._streamEl || el;
+    let txt = t.a || "";
+    if (mode2 === "CODE" || mode2 === "DIAGRAM") txt = stripLeadingIntro(txt, mode2);
+    const m = txt.match(/<sticky>([\s\S]*?)<\/sticky>/i);
+    if (m) {
+      streamEl.textContent = txt.replace(/<sticky>[\s\S]*?<\/sticky>/i, "").trimEnd();
+      renderMermaidInElement(streamEl);
+      appendScriptToAnswer(el, m[1].trim());
+    } else {
+      streamEl.textContent = txt;
+      renderMermaidInElement(streamEl);
+    }
+    if (streamEl.classList.contains("has-diagram")) el.classList.add("has-diagram");
+    if (mode2 === "CODE") appendCodeActions(el);
+  });
+}
 
 // Upload zones — read each file's bytes, send to main for text extraction, and
 // render chips from the stored (persisted) knowledge.
