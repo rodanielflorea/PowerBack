@@ -1847,7 +1847,12 @@ function recordTurn(user, assistant, mode, images) {
   }
   const imgs = Array.isArray(images) ? images.map(i => ({ base64: i.base64, mime: i.mime || 'image/png' })) : [];
   s.turns.push({ ts: Date.now(), q: u, a, mode: mode || 'ANSWER', images: imgs });
-  if (!s.name) s.name = (u || '[image question]').slice(0, 48);
+  if (!s.name) {
+    const d = new Date(s.createdAt || Date.now());
+    const p = (n) => String(n).padStart(2, '0');
+    const stamp = `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    s.name = `${stamp} · ${(u || '[image question]').slice(0, 40)}`;
+  }
   s.updatedAt = Date.now();
   saveSessions();
 }
@@ -2831,10 +2836,18 @@ ipcMain.handle('sticky-send-text', (_e, text) => {
   if (!t) return false;
   const msg = { type: 'chat-text', text: t, ts: Date.now(), fromMe: true };
   pushChatToSticky(msg);
-  // Auto-resize sticky to fit the script content.
+  // Auto-resize sticky to fit ALL accumulated content (scripts append, they do
+  // not replace) — sized to the whole history, capped, then the body scrolls.
   // Estimate: header(24) + input(42) + padding(32) + ~18px per line, ~45 chars/line.
   if (stickyWin && !stickyWin.isDestroyed()) {
-    const lines = Math.ceil(t.length / 45) + t.split('\n').length;
+    let lines = 0;
+    for (const m of chatHistory) {
+      if (m.type === 'chat-text' && m.text) {
+        lines += Math.ceil(m.text.length / 45) + m.text.split('\n').length + 1; // +1 for time/spacing
+      } else if (m.type === 'chat-image') {
+        lines += 8;
+      }
+    }
     const needed = 24 + 42 + 32 + Math.max(lines * 18, 80);
     const maxH = (screen.getPrimaryDisplay().workArea.height * 0.80) | 0;
     const newH = Math.min(needed, maxH);
