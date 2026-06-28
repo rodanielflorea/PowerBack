@@ -670,9 +670,9 @@ function createInfoWindow() {
   if (!win) return;
   const disp = screen.getPrimaryDisplay().workArea;
   infoWin = new BrowserWindow({
-    width: 250, height: 360,
-    x: disp.x + disp.width - 270, y: disp.y + 20,
-    minWidth: 200, minHeight: 240,
+    width: 280, height: 600,
+    x: disp.x + disp.width - 300, y: disp.y + 20,
+    minWidth: 220, minHeight: 280,
     frame: false, backgroundColor: '#0f172a',
     skipTaskbar: true, alwaysOnTop: true, resizable: true, show: false,
     icon: path.join(__dirname, 'build', 'icon.png'),
