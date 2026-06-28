@@ -297,6 +297,28 @@ function showSetup() {
   applyRoleClass("");
   if (answerMain) answerMain.hidden = true;
   if (typeof refreshKb === "function") refreshKb();
+  if (typeof prefillProfile === "function") prefillProfile();
+}
+
+// Pre-fill the profile fields from the last-used profile, so fixed personal
+// details (name/city/country/timezone) don't have to be retyped each session.
+// Only fills empty fields, so it never clobbers something you're editing.
+async function prefillProfile() {
+  if (!window.api.getDefaultProfile) return;
+  const p = await window.api.getDefaultProfile().catch(() => null);
+  if (!p) return;
+  const setIfEmpty = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && !el.value && val) el.value = val;
+  };
+  setIfEmpty("profileName", p.name);
+  setIfEmpty("profileCity", p.city);
+  setIfEmpty("profileCountry", p.country);
+  const tz = document.getElementById("profileTimezone");
+  if (tz && !tz.value && p.timezone) {
+    tz.value = p.timezone;
+    if (tz._cselRefresh) tz._cselRefresh();
+  }
 }
 
 // Continue page (session list + search on the left, materials on the right).

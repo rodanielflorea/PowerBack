@@ -102,6 +102,8 @@ const DEFAULT_STATE = {
   // model, and which saved prompt (preset) is active.
   answer: { apiKey: '', model: 'grok-4.3', activePromptId: null },
   avoidPhrases: '',   // newline-separated list of banned phrases/patterns
+  // Remembered personal profile, pre-filled into the New-session form.
+  profile: { name: '', city: '', country: '', timezone: '' },
   stickyAnchor: null,
   stickySize: null,
   hotkeys: { ...HOTKEY_DEFAULTS },
@@ -2169,9 +2171,13 @@ ipcMain.handle('session-new', (_e, meta) => {
   currentSessionId = s.id;
   convoHistory = [];
   activeProfile = s.profile;
+  state.profile = { ...s.profile }; // remember as the default for next time
+  saveState();
   saveSessions();
   return s.id;
 });
+// Remembered personal profile, pre-filled into the New-session form.
+ipcMain.handle('get-default-profile', () => ({ ...(state.profile || {}) }));
 // Update the active/continued session's profile (from the continue page edits).
 ipcMain.handle('session-update-profile', (_e, { id, profile } = {}) => {
   const s = sessions.find(x => x.id === id) || currentSession();
@@ -2182,6 +2188,8 @@ ipcMain.handle('session-update-profile', (_e, { id, profile } = {}) => {
   };
   s.updatedAt = Date.now();
   if (s.id === currentSessionId) activeProfile = s.profile;
+  state.profile = { ...s.profile }; // remember as the default for next time
+  saveState();
   saveSessions();
   return true;
 });
