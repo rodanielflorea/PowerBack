@@ -104,9 +104,23 @@ function makeCustomSelect(sel, compact) {
       it.style.display = (!q || it.textContent.toLowerCase().includes(q)) ? "" : "none";
     });
   }
+  function selectValue(value) {
+    sel.value = value;
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    refresh();
+    close();
+  }
   search.addEventListener("input", applyFilter);
   search.addEventListener("click", (e) => e.stopPropagation());
-  search.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  search.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { close(); return; }
+    if (e.key === "Enter") {
+      // Pick the first currently-visible option.
+      e.preventDefault();
+      const first = Array.from(itemsBox.querySelectorAll(".csel-opt")).find((it) => it.style.display !== "none");
+      if (first) selectValue(first.dataset.value);
+    }
+  });
 
   function refresh() {
     const cur = Array.from(sel.options).find((o) => o.value === sel.value);
@@ -121,10 +135,7 @@ function makeCustomSelect(sel, compact) {
       item.addEventListener("mousedown", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        sel.value = o.value;
-        sel.dispatchEvent(new Event("change", { bubbles: true }));
-        refresh();
-        close();
+        selectValue(o.value);
       });
       itemsBox.appendChild(item);
     }
