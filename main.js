@@ -104,6 +104,9 @@ const DEFAULT_STATE = {
   avoidPhrases: '',   // newline-separated list of banned phrases/patterns
   // Remembered personal profile, pre-filled into the New-session form.
   profile: { name: '', city: '', country: '', timezone: '' },
+  // Named, switchable profiles for the New-session form.
+  profiles: [],            // [{ id, label, name, city, country, timezone }]
+  activeProfileId: null,
   stickyAnchor: null,
   stickySize: null,
   hotkeys: { ...HOTKEY_DEFAULTS },
@@ -358,6 +361,20 @@ function loadState() {
     };
   }
   seedDefaultPromptsIfNeeded();
+  migrateProfilesIfNeeded();
+}
+
+// One-time migration: fold the single remembered profile into the named list.
+function migrateProfilesIfNeeded() {
+  if (!Array.isArray(state.profiles)) state.profiles = [];
+  if (state.profiles.length === 0) {
+    const p = state.profile || {};
+    if (p.name || p.city || p.country || p.timezone) {
+      const id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+      state.profiles.push({ id, label: p.name || 'Default', name: p.name || '', city: p.city || '', country: p.country || '', timezone: p.timezone || '' });
+      state.activeProfileId = id;
+    }
+  }
 }
 
 // Seed starter answer presets (one per meeting type) on first run so the user has
@@ -2178,6 +2195,44 @@ ipcMain.handle('session-new', (_e, meta) => {
 });
 // Remembered personal profile, pre-filled into the New-session form.
 ipcMain.handle('get-default-profile', () => ({ ...(state.profile || {}) }));
+
+// ── Named profiles (switchable presets for the New-session form) ──────────────
+function genProfileId() { return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+function cleanProfile(p) {
+  p = p || {};
+  return { name: String(p.name || '').trim(), city: String(p.city || '').trim(), country: String(p.country || '').trim(), timezone: String(p.timezone || '').trim() };
+}
+ipcMain.handle('profiles-list', () => ({
+  profiles: (state.profiles || []).map(p => ({ ...p })),
+  activeProfileId: state.activeProfileId || null,
+}));
+ipcMain.handle('profile-save-new', (_e, { label, profile } = {}) => {
+  const id = genProfileId();
+  const entry = { id, label: String(label || '').trim() || 'Profile', ...cleanProfile(profile) };
+  if (!Array.isArray(state.profiles)) state.profiles = [];
+  state.profiles.push(entry);
+  state.activeProfileId = id;
+  saveState();
+  return id;
+});
+ipcMain.handle('profile-update', (_e, { id, label, profile } = {}) => {
+  const p = (state.profiles || []).find(x => x.id === id);
+  if (!p) return false;
+  if (label != null) p.label = String(label).trim() || p.label;
+  Object.assign(p, cleanProfile(profile));
+  saveState();
+  return true;
+});
+ipcMain.handle('profile-delete', (_e, id) => {
+  state.profiles = (state.profiles || []).filter(p => p.id !== id);
+  if (state.activeProfileId === id) state.activeProfileId = (state.profiles[0] && state.profiles[0].id) || null;
+  saveState();
+  return true;
+});
+ipcMain.handle('profile-set-active', (_e, id) => {
+  if ((state.profiles || []).some(p => p.id === id)) { state.activeProfileId = id; saveState(); return true; }
+  return false;
+});
 // Update the active/continued session's profile (from the continue page edits).
 ipcMain.handle('session-update-profile', (_e, { id, profile } = {}) => {
   const s = sessions.find(x => x.id === id) || currentSession();

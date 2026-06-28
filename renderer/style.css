@@ -1406,6 +1406,22 @@ body.in-interview .end-btn.live::before {
 
 /* ── Profile inputs on the new-session page ───────────────────── */
 .setup-profile-row { margin: 4px 0 12px; }
+.profile-picker { display: flex; gap: 6px; align-items: stretch; margin: 8px 0; }
+.profile-picker .csel { flex: 1; min-width: 0; }
+.profile-mini-btn {
+  -webkit-app-region: no-drag;
+  flex-shrink: 0;
+  width: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.profile-mini-btn:hover { background: var(--accent-dim); border-color: var(--accent); }
+.profile-mini-btn--danger:hover { background: var(--danger, #ef4444); border-color: var(--danger, #ef4444); color: #fff; }
 .profile-inputs { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 8px; margin-top: 8px; }
 .profile-inputs--vertical { display: flex; flex-direction: column; gap: 8px; }
 .profile-input {

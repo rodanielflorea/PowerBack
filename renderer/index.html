@@ -629,6 +629,12 @@
 
       <div class="setup-profile-row">
         <p class="setup-roles-label">Your profile</p>
+        <div class="profile-picker">
+          <select id="profileSelect" class="profile-input"></select>
+          <button id="profileSaveNewBtn" class="profile-mini-btn" title="Save current fields as a new profile">＋</button>
+          <button id="profileUpdateBtn" class="profile-mini-btn" title="Update the selected profile with current fields">⟳</button>
+          <button id="profileDeleteBtn" class="profile-mini-btn profile-mini-btn--danger" title="Delete the selected profile">🗑</button>
+        </div>
         <div class="profile-inputs profile-inputs--vertical">
           <input type="text" id="profileName" class="profile-input" placeholder="Name" spellcheck="false" />
           <input type="text" id="profileCity" class="profile-input" placeholder="City" spellcheck="false" />

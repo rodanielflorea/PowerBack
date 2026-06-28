@@ -297,29 +297,79 @@ function showSetup() {
   applyRoleClass("");
   if (answerMain) answerMain.hidden = true;
   if (typeof refreshKb === "function") refreshKb();
-  if (typeof prefillProfile === "function") prefillProfile();
+  if (typeof refreshProfiles === "function") refreshProfiles();
 }
 
-// Pre-fill the profile fields from the last-used profile, so fixed personal
-// details (name/city/country/timezone) don't have to be retyped each session.
-// Only fills empty fields, so it never clobbers something you're editing.
-async function prefillProfile() {
-  if (!window.api.getDefaultProfile) return;
-  const p = await window.api.getDefaultProfile().catch(() => null);
-  if (!p) return;
-  const setIfEmpty = (id, val) => {
-    const el = document.getElementById(id);
-    if (el && !el.value && val) el.value = val;
-  };
-  setIfEmpty("profileName", p.name);
-  setIfEmpty("profileCity", p.city);
-  setIfEmpty("profileCountry", p.country);
-  const tz = document.getElementById("profileTimezone");
-  if (tz && !tz.value && p.timezone) {
-    tz.value = p.timezone;
-    if (tz._cselRefresh) tz._cselRefresh();
-  }
+// ── Named profiles: picker + save/update/delete on the New-session form ───────
+const profileSelect = document.getElementById("profileSelect");
+const profileSaveNewBtn = document.getElementById("profileSaveNewBtn");
+const profileUpdateBtn = document.getElementById("profileUpdateBtn");
+const profileDeleteBtn = document.getElementById("profileDeleteBtn");
+let _profiles = [];
+
+function readProfileFields() {
+  const v = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ""; };
+  return { name: v("profileName"), city: v("profileCity"), country: v("profileCountry"), timezone: v("profileTimezone") };
 }
+function fillProfileFields(p) {
+  p = p || {};
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ""; };
+  set("profileName", p.name);
+  set("profileCity", p.city);
+  set("profileCountry", p.country);
+  const tz = document.getElementById("profileTimezone");
+  if (tz) { tz.value = p.timezone || ""; if (tz._cselRefresh) tz._cselRefresh(); }
+}
+
+async function refreshProfiles(selectId) {
+  if (!profileSelect || !window.api.profilesList) return;
+  const data = await window.api.profilesList().catch(() => null);
+  _profiles = (data && data.profiles) || [];
+  const wantId = selectId || (data && data.activeProfileId) || (_profiles[0] && _profiles[0].id) || "";
+  profileSelect.innerHTML = "";
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = _profiles.length ? "— Select profile —" : "— No saved profiles —";
+  profileSelect.appendChild(blank);
+  _profiles.forEach((p) => {
+    const o = document.createElement("option");
+    o.value = p.id; o.textContent = p.label || "(unnamed)";
+    profileSelect.appendChild(o);
+  });
+  profileSelect.value = _profiles.some((p) => p.id === wantId) ? wantId : "";
+  if (profileSelect._cselRefresh) profileSelect._cselRefresh();
+  const active = _profiles.find((p) => p.id === profileSelect.value);
+  if (active) fillProfileFields(active);
+}
+
+if (profileSelect) {
+  profileSelect.addEventListener("change", () => {
+    const p = _profiles.find((x) => x.id === profileSelect.value);
+    if (p) { fillProfileFields(p); if (window.api.profileSetActive) window.api.profileSetActive(p.id); }
+  });
+}
+if (profileSaveNewBtn) profileSaveNewBtn.addEventListener("click", async () => {
+  const fields = readProfileFields();
+  const label = (window.prompt("Name this profile:", fields.name || "Profile") || "").trim();
+  if (!label) return;
+  const id = await window.api.profileSaveNew(label, fields);
+  await refreshProfiles(id);
+});
+if (profileUpdateBtn) profileUpdateBtn.addEventListener("click", async () => {
+  const id = profileSelect ? profileSelect.value : "";
+  if (!id) { window.alert("Select a profile to update, or press ＋ to save a new one."); return; }
+  const cur = _profiles.find((p) => p.id === id);
+  await window.api.profileUpdate(id, cur ? cur.label : null, readProfileFields());
+  await refreshProfiles(id);
+});
+if (profileDeleteBtn) profileDeleteBtn.addEventListener("click", async () => {
+  const id = profileSelect ? profileSelect.value : "";
+  if (!id) return;
+  const cur = _profiles.find((p) => p.id === id);
+  if (!window.confirm(`Delete profile "${cur ? cur.label : ""}"?`)) return;
+  await window.api.profileDelete(id);
+  await refreshProfiles();
+});
 
 // Continue page (session list + search on the left, materials on the right).
 function showContinue() {
