@@ -365,9 +365,15 @@ function closeSaveRow() { if (profileSaveRow) profileSaveRow.hidden = true; }
 async function confirmSaveRow() {
   const label = (profileLabelInput ? profileLabelInput.value : "").trim();
   if (!label) { if (profileLabelInput) profileLabelInput.focus(); return; }
-  const id = await window.api.profileSaveNew(label, readProfileFields());
-  closeSaveRow();
-  await refreshProfiles(id);
+  if (!window.api.profileSaveNew) { window.alert("Profiles need the latest app version — fully close and reopen the app."); return; }
+  try {
+    const id = await window.api.profileSaveNew(label, readProfileFields());
+    closeSaveRow();
+    await refreshProfiles(id);
+    if (!id) window.alert("Could not save the profile.");
+  } catch (e) {
+    window.alert("Could not save the profile — please fully close and reopen the app to load the update.\n\n" + (e && e.message ? e.message : e));
+  }
 }
 if (profileSaveNewBtn) profileSaveNewBtn.addEventListener("click", openSaveRow);
 if (profileSaveConfirm) profileSaveConfirm.addEventListener("click", confirmSaveRow);
