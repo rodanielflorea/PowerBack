@@ -816,7 +816,7 @@ async function refreshInfoData() {
   infoAcc = acc;
   sendInfoData(); // clock + "Loading…" immediately
 
-  // Watchdog: never sit on "Loading…" forever — after 12s, mark unresolved
+  // Watchdog: never sit on "Loading…" forever — after 18s, mark unresolved
   // sections as empty so they read "Unavailable / None".
   if (infoWatchdog) clearTimeout(infoWatchdog);
   infoWatchdog = setTimeout(() => {
@@ -825,25 +825,32 @@ async function refreshInfoData() {
     if (acc.holidays === undefined) acc.holidays = null;
     if (acc.events === undefined) acc.events = null;
     sendInfoData();
-  }, 12000);
+  }, 18000);
 
-  const jobs = [];
+  // ── Phase 1: weather + holidays (the important data) — concurrently ──
+  let nameVariants = country ? [country] : [];
+  const phase1 = [];
   if (city || country) {
-    jobs.push(fetchWeather(city, country).then(w => { if (infoAcc === acc) { acc.weather = w || null; sendInfoData(); } }));
+    phase1.push(fetchWeather(city, country).then(w => { if (infoAcc === acc) { acc.weather = w || null; sendInfoData(); } }));
   } else acc.weather = null;
-
   if (country) {
-    jobs.push(fetchHolidays(country).then(async ({ holidays, nameVariants }) => {
+    phase1.push(fetchHolidays(country).then(res => {
       if (infoAcc !== acc) return;
-      acc.holidays = holidays || null; sendInfoData();
-      let ev = null;
-      try { ev = await fetchSpecialEvents(nameVariants, 10); } catch {}
-      if (infoAcc === acc) { acc.events = ev || null; sendInfoData(); }
+      acc.holidays = res.holidays || null;
+      nameVariants = res.nameVariants && res.nameVariants.length ? res.nameVariants : nameVariants;
+      sendInfoData();
     }));
   } else { acc.holidays = null; acc.events = null; }
+  await Promise.allSettled(phase1);
+  if (infoAcc !== acc) return;
 
-  await Promise.allSettled(jobs);
-  if (infoAcc === acc) sendInfoData();
+  // ── Phase 2: special events — only AFTER weather + holidays are shown, so the
+  // 10-request Wikimedia scan never competes with the data above. ──
+  if (country) {
+    let ev = null;
+    try { ev = await fetchSpecialEvents(nameVariants, 10); } catch {}
+    if (infoAcc === acc) { acc.events = ev || null; sendInfoData(); }
+  }
 }
 
 ipcMain.handle('info-open', (_e, profile) => { openInfoWindow(profile); return true; });
