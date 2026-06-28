@@ -350,7 +350,11 @@ const modeContinueBtn = document.getElementById("modeContinueBtn");
 const setupBackBtn = document.getElementById("setupBackBtn");
 const continueBackBtn = document.getElementById("continueBackBtn");
 const modeSelectSettingsBtn = document.getElementById("modeSelectSettingsBtn");
-if (modeNewBtn) modeNewBtn.addEventListener("click", () => showSetup());
+if (modeNewBtn) modeNewBtn.addEventListener("click", async () => {
+  // Start fresh: clear any carried-over materials (profile is still pre-filled).
+  if (window.api.kbClear) await window.api.kbClear();
+  showSetup();
+});
 if (modeContinueBtn) modeContinueBtn.addEventListener("click", () => showContinue());
 if (setupBackBtn) setupBackBtn.addEventListener("click", () => showModeSelect());
 if (continueBackBtn) continueBackBtn.addEventListener("click", () => showModeSelect());

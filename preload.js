@@ -87,6 +87,7 @@ contextBridge.exposeInMainWorld('api', {
   sessionDelete: (id) => ipcRenderer.invoke('session-delete', id),
   sessionUpdateProfile: (id, profile) => ipcRenderer.invoke('session-update-profile', { id, profile }),
   getDefaultProfile: () => ipcRenderer.invoke('get-default-profile'),
+  kbClear: () => ipcRenderer.invoke('kb-clear'),
   sessionKbGet: (id) => ipcRenderer.invoke('session-kb-get', id),
   sessionKbAdd: (id, kind, name, data) => ipcRenderer.invoke('session-kb-add', { id, kind, name, data }),
   sessionKbRemove: (id, kind, index) => ipcRenderer.invoke('session-kb-remove', { id, kind, index }),

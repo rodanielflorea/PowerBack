@@ -2326,6 +2326,14 @@ ipcMain.handle('kb-remove', (_e, { kind, index }) => {
   return { ok: true };
 });
 
+// Empty the global knowledge base — used when starting a New session so its
+// upload zones start fresh (materials don't carry over from a prior session).
+ipcMain.handle('kb-clear', () => {
+  state.knowledge = { cv: [], jd: [], support: [], meetings: [] };
+  saveState();
+  return { ok: true };
+});
+
 ipcMain.handle('kb-get', () => {
   const out = {};
   for (const k of KB_KINDS) {
