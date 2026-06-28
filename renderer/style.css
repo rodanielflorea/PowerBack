@@ -1407,6 +1407,8 @@ body.in-interview .end-btn.live::before {
 /* ── Profile inputs on the new-session page ───────────────────── */
 .setup-profile-row { margin: 4px 0 12px; }
 .profile-picker { display: flex; gap: 6px; align-items: stretch; margin: 8px 0; }
+.profile-saverow { display: flex; gap: 6px; align-items: stretch; margin: -2px 0 8px; }
+.profile-saverow .profile-input { flex: 1; min-width: 0; }
 .profile-picker .csel { flex: 1; min-width: 0; }
 .profile-mini-btn {
   -webkit-app-region: no-drag;

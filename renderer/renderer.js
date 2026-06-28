@@ -322,6 +322,7 @@ function fillProfileFields(p) {
 }
 
 async function refreshProfiles(selectId) {
+  if (typeof closeSaveRow === "function") closeSaveRow();
   if (!profileSelect || !window.api.profilesList) return;
   const data = await window.api.profilesList().catch(() => null);
   _profiles = (data && data.profiles) || [];
@@ -348,12 +349,32 @@ if (profileSelect) {
     if (p) { fillProfileFields(p); if (window.api.profileSetActive) window.api.profileSetActive(p.id); }
   });
 }
-if (profileSaveNewBtn) profileSaveNewBtn.addEventListener("click", async () => {
-  const fields = readProfileFields();
-  const label = (window.prompt("Name this profile:", fields.name || "Profile") || "").trim();
-  if (!label) return;
-  const id = await window.api.profileSaveNew(label, fields);
+// Inline "save as new" row (Electron has no window.prompt).
+const profileSaveRow = document.getElementById("profileSaveRow");
+const profileLabelInput = document.getElementById("profileLabelInput");
+const profileSaveConfirm = document.getElementById("profileSaveConfirm");
+const profileSaveCancel = document.getElementById("profileSaveCancel");
+
+function openSaveRow() {
+  if (!profileSaveRow) return;
+  if (profileLabelInput) profileLabelInput.value = readProfileFields().name || "";
+  profileSaveRow.hidden = false;
+  if (profileLabelInput) { profileLabelInput.focus(); profileLabelInput.select(); }
+}
+function closeSaveRow() { if (profileSaveRow) profileSaveRow.hidden = true; }
+async function confirmSaveRow() {
+  const label = (profileLabelInput ? profileLabelInput.value : "").trim();
+  if (!label) { if (profileLabelInput) profileLabelInput.focus(); return; }
+  const id = await window.api.profileSaveNew(label, readProfileFields());
+  closeSaveRow();
   await refreshProfiles(id);
+}
+if (profileSaveNewBtn) profileSaveNewBtn.addEventListener("click", openSaveRow);
+if (profileSaveConfirm) profileSaveConfirm.addEventListener("click", confirmSaveRow);
+if (profileSaveCancel) profileSaveCancel.addEventListener("click", closeSaveRow);
+if (profileLabelInput) profileLabelInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); confirmSaveRow(); }
+  else if (e.key === "Escape") { e.preventDefault(); closeSaveRow(); }
 });
 if (profileUpdateBtn) profileUpdateBtn.addEventListener("click", async () => {
   const id = profileSelect ? profileSelect.value : "";
