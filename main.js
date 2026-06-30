@@ -3217,20 +3217,37 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor } = {}) => {
     await nd(lo, hi);
   };
   const sendBS = async () => { await psWrite(`$wsh.SendKeys('{BACKSPACE}')`); await nd(55, 105); };
+  const sendArrow = async (dir, n) => {                  // dir: 'LEFT' | 'RIGHT'
+    for (let i = 0; i < n; i++) { await psWrite(`$wsh.SendKeys('{${dir}}')`); await nd(40, 85); }
+  };
 
   // ── Typing loop ───────────────────────────────────────────────────────────
   let pendingFix = null;   // { correct: char, suffix: char[] }
   let tokenCount = 0, inWord = false;
   let burstTarget = Math.random() < 0.5 ? 2 : 4;
 
+  // Fix a typo the way a developer does: arrow-key back to the wrong character,
+  // correct it in place, then arrow back to the end — instead of deleting and
+  // retyping everything after it.
+  //
+  // Layout when a fix is pending (cursor '|' at the end):
+  //   …[correct prefix][WRONG][s0 s1 … s(n-1)]|
+  // Steps:
+  //   1. LEFT × n  → cursor sits right after WRONG, before s0
+  //   2. BACKSPACE → delete WRONG; type the correct char in its place
+  //   3. RIGHT × n → return the cursor to the end (suffix untouched)
   const flushFix = async () => {
     if (!pendingFix) return;
     const { correct, suffix } = pendingFix;
     pendingFix = null;
-    await nd(80, 160);                                    // hesitate before reaching for backspace
-    for (let i = 0; i < suffix.length + 1; i++) await sendBS(); // erase suffix + wrong char
-    await sendKey(correct, 55, 95);
-    for (const sc of suffix) await sendKey(sc, 55, 95);  // retype everything after the typo
+    const n = suffix.length;
+    await nd(120, 240);            // notice the mistake
+    await sendArrow('LEFT', n);    // navigate back to the typo
+    await nd(60, 140);             // small pause before correcting
+    await sendBS();                // delete the wrong char
+    await sendKey(correct, 55, 95);// type the right one in place
+    await nd(40, 90);
+    await sendArrow('RIGHT', n);   // return to where typing left off
   };
 
   const doPause = async () => {
