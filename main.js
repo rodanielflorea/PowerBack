@@ -3141,9 +3141,10 @@ ipcMain.handle('stop-ide-typing',   () => { stopIdeTyping(); });
 // Delays live in Node.js (not PS Sleep), so we can pause/resume without
 // killing the process:  pause = stop advancing the loop;  resume = continue.
 // Focus events: our app gaining focus → auto-pause; losing focus → auto-resume.
-ipcMain.handle('write-to-ide', async (_e, { code, speedFactor } = {}) => {
+ipcMain.handle('write-to-ide', async (_e, { code, speedFactor, stripIndent } = {}) => {
   const text = String(code || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   if (!text) return { ok: false, error: 'No code provided' };
+  const doStripIndent = stripIndent !== false; // default ON
 
   // Cancel any still-running session
   ideTypingCancelled = true;
@@ -3220,6 +3221,16 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor } = {}) => {
   const sendArrow = async (dir, n) => {                  // dir: 'LEFT' | 'RIGHT'
     for (let i = 0; i < n; i++) { await psWrite(`$wsh.SendKeys('{${dir}}')`); await nd(40, 85); }
   };
+  // Neutralize editor auto-indent (VS Code etc.): after a newline the editor may
+  // insert leading whitespace. We select the whole new line back to column 0
+  // (Home, then Shift+End) so the FIRST character we type overtypes/replaces it.
+  // This is correct whether the editor auto-indented or not (empty selection if
+  // not), so our literal indentation is always authoritative — no double-indent.
+  const clearAutoIndent = async () => {
+    if (!doStripIndent) return;
+    await psWrite(`$wsh.SendKeys('{HOME}')`); await nd(25, 55);
+    await psWrite(`$wsh.SendKeys('+{END}')`); await nd(25, 55); // +{END} = Shift+End (select to line end)
+  };
 
   // ── Typing loop ───────────────────────────────────────────────────────────
   let pendingFix = null;   // { correct: char, suffix: char[] }
@@ -3268,10 +3279,12 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor } = {}) => {
     if (ideTypingCancelled) break;
 
     if (ch === '\n') {
-      await flushFix();        // must fix BEFORE Enter — backspace can't cross lines
+      await flushFix();        // must fix BEFORE Enter — arrow nav can't cross lines
       await sendKey(ch, 10, 30);
       await nd(800, 1000);
       await waitPause();
+      // Select any auto-inserted indent so the next char/Enter overtypes it.
+      await clearAutoIndent();
       tokenCount = 0; burstTarget = Math.random() < 0.5 ? 2 : 4;
       continue;
     }
