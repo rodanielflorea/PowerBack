@@ -1,6 +1,6 @@
 {
   "name": "ACE",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Answer Coaching Engine(what it literally is), Ace the interview(what the user achieves), Ace up your sleeve(what it secretly is)",
   "main": "main.js",
   "scripts": {
@@ -15,8 +15,7 @@
     "productName": "ACE",
     "files": [
       "main.js",
-      "preload.js",
-      "preload-selector.js",
+      "preload*.js",
       "renderer/**/*",
       "build/icon.png",
       "build/icon.ico",
