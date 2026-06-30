@@ -1353,8 +1353,6 @@ const HOTKEY_LABELS = {
   stickyScrollDown: "Scroll sticky note down",
   helpRequest: "Send help request (speaker → supporter)",
   submitPrompt: "Get answer (send to Grok)",
-  typingPauseToggle: "Pause/resume auto-typing",
-  typingStop: "Stop auto-typing",
   toggleClickThrough: "Toggle click-through (mouse passes through)",
 };
 

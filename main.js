@@ -60,8 +60,6 @@ const HOTKEY_DEFAULTS = {
   submitPrompt: 'CommandOrControl+Return',
   screenshotToAI: 'Alt+A',
   areaSnip: 'Alt+S',
-  typingPauseToggle: 'Alt+P',   // pause/resume auto-typing (works while IDE focused)
-  typingStop: 'Alt+X',          // hard-stop auto-typing
   toggleClickThrough: 'Alt+Q',
 };
 
@@ -514,6 +512,7 @@ function setStealth(value) {
   win.setContentProtection(state.stealth);
   if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.setContentProtection(state.stealth); } catch {} }
   if (infoWin && !infoWin.isDestroyed()) { try { infoWin.setContentProtection(state.stealth); } catch {} }
+  if (typingCtlWin && !typingCtlWin.isDestroyed()) { try { typingCtlWin.setContentProtection(state.stealth); } catch {} }
   saveState();
   win.webContents.send('stealth-changed', state.stealth);
 }
@@ -1287,8 +1286,6 @@ const HOTKEY_HANDLERS = {
   submitPrompt: () => { if (win && !win.isDestroyed()) win.webContents.send('trigger-get-answer'); },
   screenshotToAI: () => { if (win && !win.isDestroyed()) win.webContents.send('trigger-screenshot'); },
   areaSnip: () => openSnipSelector(),
-  typingPauseToggle: () => toggleIdeTypingPause(),
-  typingStop: () => stopIdeTyping(),
   toggleClickThrough: () => setClickThrough(!state.clickThrough),
 };
 
@@ -2065,11 +2062,13 @@ let ideTypingPaused = false;   // manual pause
 let ideFocusPaused = false;    // auto-pause when our window gains focus
 let ideTypingProc = null;
 let ideTypingCancelled = false;
+let typingCtlWin = null;
 function notifyTypingState() {
-  if (win && !win.isDestroyed())
-    win.webContents.send('ide-typing-state', { paused: ideTypingPaused || ideFocusPaused, active: ideTypingActive });
+  const payload = { paused: ideTypingPaused || ideFocusPaused, active: ideTypingActive };
+  if (win && !win.isDestroyed()) win.webContents.send('ide-typing-state', payload);
+  if (typingCtlWin && !typingCtlWin.isDestroyed()) typingCtlWin.webContents.send('ide-typing-state', payload);
 }
-// Manual pause toggle (global hotkey + UI). No-op when not typing.
+// Manual pause toggle (from the floating control bar). No-op when not typing.
 function toggleIdeTypingPause() {
   if (!ideTypingActive) return;
   ideTypingPaused = !ideTypingPaused;
@@ -2083,6 +2082,36 @@ function stopIdeTyping() {
   if (ideTypingProc) { try { ideTypingProc.kill(); } catch {} ideTypingProc = null; }
   notifyTypingState();
 }
+
+// ── Floating typing-control bar (Pause/Resume + Stop by mouse) ────────────────
+// focusable:false so clicking its buttons does NOT steal foreground focus from
+// the IDE — the SendKeys target stays the IDE and pause/resume work cleanly.
+function showTypingControl() {
+  if (typingCtlWin && !typingCtlWin.isDestroyed()) { typingCtlWin.showInactive(); return; }
+  if (!win) return;
+  const disp = screen.getPrimaryDisplay().workArea;
+  typingCtlWin = new BrowserWindow({
+    width: 230, height: 40,
+    x: disp.x + Math.round((disp.width - 230) / 2), y: disp.y + 12,
+    frame: false, transparent: false, backgroundColor: '#0f172a',
+    skipTaskbar: true, alwaysOnTop: true, resizable: false, movable: true,
+    focusable: false, hasShadow: false, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload-typing.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  typingCtlWin.setContentProtection(state.stealth);
+  typingCtlWin.setAlwaysOnTop(true, 'screen-saver');
+  typingCtlWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  typingCtlWin.setMenuBarVisibility(false);
+  typingCtlWin.loadFile(path.join(__dirname, 'renderer', 'typing-control.html'));
+  typingCtlWin.on('closed', () => { typingCtlWin = null; });
+  typingCtlWin.once('ready-to-show', () => { if (typingCtlWin && !typingCtlWin.isDestroyed()) { typingCtlWin.showInactive(); notifyTypingState(); } });
+}
+function hideTypingControl() {
+  if (typingCtlWin && !typingCtlWin.isDestroyed()) { try { typingCtlWin.close(); } catch {} }
+  typingCtlWin = null;
+}
+ipcMain.handle('typing-ctl-toggle', () => { toggleIdeTypingPause(); });
+ipcMain.handle('typing-ctl-stop', () => { stopIdeTyping(); });
 let speculativeQuestion = null;
 let speculativeActive = false;
 let speculativeCommitted = false; // true after commit — stream pipes directly to renderer
@@ -3139,6 +3168,9 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor } = {}) => {
   const onWinBlur  = () => { if (!ideTypingActive) return; if (ideFocusPaused) { ideFocusPaused = false; notifyTypingState(); } };
   if (win) { win.on('focus', onWinFocus); win.on('blur', onWinBlur); }
 
+  // Show the floating mouse control (Pause/Resume + Stop) for this session.
+  showTypingControl();
+
   // Persistent PS session — reads stdin line-by-line, executes immediately
   const proc = spawn('powershell.exe',
     ['-NonInteractive', '-ExecutionPolicy', 'Bypass', '-NoProfile', '-Command', '-'],
@@ -3252,6 +3284,7 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor } = {}) => {
   if (win) { win.off('focus', onWinFocus); win.off('blur', onWinBlur); }
   ideTypingActive = false; ideTypingPaused = false; ideFocusPaused = false;
   notifyTypingState();
+  hideTypingControl();
   try { proc.stdin.end(); } catch {}
   ideTypingProc = null;
   return { ok: !ideTypingCancelled, cancelled: ideTypingCancelled };

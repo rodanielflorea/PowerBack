@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline';" />
+  <title>Typing</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; font-family: system-ui, "Segoe UI", sans-serif; overflow: hidden; }
+    body {
+      display: flex; align-items: center; gap: 6px;
+      height: 100vh; padding: 0 8px;
+      background: #0f172a; color: #e2e8f0;
+      border: 1px solid #334155; border-radius: 8px;
+      user-select: none;
+    }
+    .tc-label { font-size: 11px; font-weight: 600; color: #94a3b8; margin-right: 2px; white-space: nowrap; }
+    .tc-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; flex-shrink: 0; }
+    .tc-dot.paused { background: #f59e0b; }
+    .tc-btn {
+      border: 1px solid #334155; background: #1e293b; color: #f1f5f9;
+      border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;
+      padding: 5px 10px; white-space: nowrap;
+      transition: background 100ms ease, border-color 100ms ease;
+    }
+    .tc-btn:hover { background: #334155; }
+    .tc-stop { background: #7f1d1d; border-color: #991b1b; }
+    .tc-stop:hover { background: #ef4444; border-color: #ef4444; }
+  </style>
+</head>
+<body>
+  <span class="tc-dot" id="tcDot"></span>
+  <span class="tc-label" id="tcLabel">Typing…</span>
+  <button class="tc-btn" id="tcPause">⏸ Pause</button>
+  <button class="tc-btn tc-stop" id="tcStop">■ Stop</button>
+  <script src="typing-control.js"></script>
+</body>
+</html>
