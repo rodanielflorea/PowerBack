@@ -687,6 +687,7 @@ function createStickyWindow() {
 function createInfoWindow() {
   if (infoWin && !infoWin.isDestroyed()) return;
   if (!win) return;
+  infoAcc = null; // fresh window — let the fallback-fetch guard work
   const disp = screen.getPrimaryDisplay().workArea;
   infoWin = new BrowserWindow({
     width: 280, height: 600,
@@ -704,8 +705,13 @@ function createInfoWindow() {
   infoWin.loadFile(path.join(__dirname, 'renderer', 'info.html'));
   infoWin.on('closed', () => { infoWin = null; });
   infoWin.once('ready-to-show', () => { if (infoWin && !infoWin.isDestroyed()) infoWin.showInactive(); });
-  // Note: the actual data fetch is kicked off by the renderer's 'info-ready'
-  // handshake (below), so it can never race ahead of the renderer's listener.
+  // The fetch is normally kicked off by the renderer's 'info-ready' handshake.
+  // Fallback: also start it shortly after load in case the handshake is missed
+  // (e.g. preload issue) — refreshInfoData no-ops if a fetch is already running
+  // for this profile, so a duplicate is harmless.
+  infoWin.webContents.once('did-finish-load', () => {
+    setTimeout(() => { if (infoWin && !infoWin.isDestroyed() && infoAcc === null) refreshInfoData(); }, 800);
+  });
 }
 
 function openInfoWindow(profile) {
@@ -718,6 +724,7 @@ function openInfoWindow(profile) {
 function closeInfoWindow() {
   if (infoWin && !infoWin.isDestroyed()) { try { infoWin.close(); } catch {} }
   infoWin = null;
+  infoAcc = null; // so the next window's fallback-fetch guard works
 }
 
 // Map a free-text country name to an ISO-2 code via date.nager.at's country list.
