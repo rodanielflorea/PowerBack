@@ -807,6 +807,14 @@ body.in-interview .end-btn.live::before {
   border-color: #fde047;
   color: #713f12;
 }
+.code-action-btn--stop {
+  font-size: 12px;
+  font-weight: 600;
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
+.code-action-btn--stop:hover { background: #ef4444; border-color: #ef4444; color: #fff; }
 .code-action-btn--counting {
   background: #fef9c3;
   border-color: #fde047;

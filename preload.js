@@ -120,6 +120,7 @@ contextBridge.exposeInMainWorld('api', {
   writeToIde: (code, speedFactor) => ipcRenderer.invoke('write-to-ide', { code, speedFactor }),
   pauseIdeTyping:  () => ipcRenderer.invoke('pause-ide-typing'),
   resumeIdeTyping: () => ipcRenderer.invoke('resume-ide-typing'),
+  stopIdeTyping:   () => ipcRenderer.invoke('stop-ide-typing'),
   onIdeTypingState: (cb) => ipcRenderer.on('ide-typing-state', (_e, s) => cb(s)),
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
   showPromptMenu: () => ipcRenderer.invoke('show-prompt-menu'),

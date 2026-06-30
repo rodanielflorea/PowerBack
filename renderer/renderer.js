@@ -1353,6 +1353,8 @@ const HOTKEY_LABELS = {
   stickyScrollDown: "Scroll sticky note down",
   helpRequest: "Send help request (speaker → supporter)",
   submitPrompt: "Get answer (send to Grok)",
+  typingPauseToggle: "Pause/resume auto-typing",
+  typingStop: "Stop auto-typing",
   toggleClickThrough: "Toggle click-through (mouse passes through)",
 };
 
@@ -2303,7 +2305,7 @@ function appendCodeActions(el) {
   const ideBtn = document.createElement('button');
   ideBtn.className = 'code-action-btn code-action-btn--ide';
   ideBtn.textContent = 'Write to IDE';
-  ideBtn.addEventListener('click', () => startWriteToIde(el, ideBtn, pauseBtn));
+  ideBtn.addEventListener('click', () => startWriteToIde(el, ideBtn, pauseBtn, stopBtn));
 
   // Pause/resume button — hidden until typing is active for this bubble
   const pauseBtn = document.createElement('button');
@@ -2334,13 +2336,22 @@ function appendCodeActions(el) {
     pauseBtn.classList.toggle('code-action-btn--paused', paused);
   };
 
+  // Stop (hard cancel) — hidden until typing is active for this bubble
+  const stopBtn = document.createElement('button');
+  stopBtn.className = 'code-action-btn code-action-btn--stop';
+  stopBtn.textContent = '■ Stop';
+  stopBtn.title = 'Stop typing (Alt+X)';
+  stopBtn.hidden = true;
+  stopBtn.addEventListener('click', () => { if (window.api.stopIdeTyping) window.api.stopIdeTyping(); });
+
   bar.appendChild(copyBtn);
   bar.appendChild(ideBtn);
   bar.appendChild(pauseBtn);
+  bar.appendChild(stopBtn);
   el.appendChild(bar);
 }
 
-function startWriteToIde(el, btn, pauseBtn) {
+function startWriteToIde(el, btn, pauseBtn, stopBtn) {
   const code = extractCodeFromEl(el);
   if (!code) return;
 
@@ -2353,19 +2364,22 @@ function startWriteToIde(el, btn, pauseBtn) {
   btn.disabled = true;
   btn.classList.add('code-action-btn--counting');
   if (pauseBtn) { pauseBtn.hidden = true; pauseBtn._setExternalPause && pauseBtn._setExternalPause(false); }
+  if (stopBtn) stopBtn.hidden = true;
 
   const tick = () => {
     btn.textContent = `Switch to IDE… ${count}`;
     if (count === 0) {
       btn.textContent = 'Typing…';
-      // Show pause button and register it as the active one
+      // Show pause + stop buttons; register the pause btn as the active one
       if (pauseBtn) { pauseBtn.hidden = false; currentIdePauseBtn = pauseBtn; }
+      if (stopBtn) stopBtn.hidden = false;
       window.api.writeToIde(code, speedFactor).then(res => {
         btn.disabled = false;
         btn.classList.remove('code-action-btn--counting');
-        btn.textContent = res && res.ok ? 'Done ✓' : 'Error — try again';
+        btn.textContent = res && res.ok ? 'Done ✓' : (res && res.cancelled ? 'Stopped' : 'Error — try again');
         setTimeout(() => { btn.textContent = 'Write to IDE'; }, 2500);
         if (pauseBtn) { pauseBtn.hidden = true; }
+        if (stopBtn) stopBtn.hidden = true;
         if (currentIdePauseBtn === pauseBtn) currentIdePauseBtn = null;
       });
     } else {

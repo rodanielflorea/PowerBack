@@ -60,6 +60,8 @@ const HOTKEY_DEFAULTS = {
   submitPrompt: 'CommandOrControl+Return',
   screenshotToAI: 'Alt+A',
   areaSnip: 'Alt+S',
+  typingPauseToggle: 'Alt+P',   // pause/resume auto-typing (works while IDE focused)
+  typingStop: 'Alt+X',          // hard-stop auto-typing
   toggleClickThrough: 'Alt+Q',
 };
 
@@ -1285,6 +1287,8 @@ const HOTKEY_HANDLERS = {
   submitPrompt: () => { if (win && !win.isDestroyed()) win.webContents.send('trigger-get-answer'); },
   screenshotToAI: () => { if (win && !win.isDestroyed()) win.webContents.send('trigger-screenshot'); },
   areaSnip: () => openSnipSelector(),
+  typingPauseToggle: () => toggleIdeTypingPause(),
+  typingStop: () => stopIdeTyping(),
   toggleClickThrough: () => setClickThrough(!state.clickThrough),
 };
 
@@ -2064,6 +2068,20 @@ let ideTypingCancelled = false;
 function notifyTypingState() {
   if (win && !win.isDestroyed())
     win.webContents.send('ide-typing-state', { paused: ideTypingPaused || ideFocusPaused, active: ideTypingActive });
+}
+// Manual pause toggle (global hotkey + UI). No-op when not typing.
+function toggleIdeTypingPause() {
+  if (!ideTypingActive) return;
+  ideTypingPaused = !ideTypingPaused;
+  notifyTypingState();
+}
+// Hard stop: cancel the loop and kill the PowerShell session immediately.
+function stopIdeTyping() {
+  if (!ideTypingActive && !ideTypingProc) return;
+  ideTypingCancelled = true;
+  ideTypingPaused = false;
+  if (ideTypingProc) { try { ideTypingProc.kill(); } catch {} ideTypingProc = null; }
+  notifyTypingState();
 }
 let speculativeQuestion = null;
 let speculativeActive = false;
@@ -3091,6 +3109,7 @@ ipcMain.handle('sticky-clear', () => {
 
 ipcMain.handle('pause-ide-typing',  () => { ideTypingPaused = true;  notifyTypingState(); });
 ipcMain.handle('resume-ide-typing', () => { ideTypingPaused = false; notifyTypingState(); });
+ipcMain.handle('stop-ide-typing',   () => { stopIdeTyping(); });
 
 // ── Write-to-IDE ──────────────────────────────────────────────────────────────
 // Drives a persistent PowerShell stdin session from a Node.js async loop.
@@ -3196,6 +3215,8 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor } = {}) => {
 
   for (const ch of [...text]) {
     if (ideTypingCancelled) break;
+    await waitPause();           // honor pause on every keystroke (responsive)
+    if (ideTypingCancelled) break;
     const wasInWord = inWord;
     inWord = isWordChar(ch);
     if (inWord && !wasInWord) { tokenCount++; if (tokenCount > burstTarget) await doPause(); }
@@ -3233,7 +3254,7 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor } = {}) => {
   notifyTypingState();
   try { proc.stdin.end(); } catch {}
   ideTypingProc = null;
-  return { ok: !ideTypingCancelled };
+  return { ok: !ideTypingCancelled, cancelled: ideTypingCancelled };
 });
 
 // Resize the sticky to fit ALL accumulated messages (they append, never
