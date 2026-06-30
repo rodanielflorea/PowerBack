@@ -3221,32 +3221,40 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor, stripIndent } = {
   const sendArrow = async (dir, n) => {                  // dir: 'LEFT' | 'RIGHT'
     for (let i = 0; i < n; i++) { await psWrite(`$wsh.SendKeys('{${dir}}')`); await nd(40, 85); }
   };
-  // Neutralize editor auto-indent (VS Code etc.): after a newline the editor may
-  // insert leading whitespace. We select the whole new line back to column 0
-  // (Home, then Shift+End) so the FIRST character we type overtypes/replaces it.
-  // This is correct whether the editor auto-indented or not (empty selection if
-  // not), so our literal indentation is always authoritative — no double-indent.
-  const clearAutoIndent = async () => {
-    if (!doStripIndent) return;
-    await psWrite(`$wsh.SendKeys('{HOME}')`); await nd(25, 55);
-    await psWrite(`$wsh.SendKeys('+{END}')`); await nd(25, 55); // +{END} = Shift+End (select to line end)
-  };
+  const sendTab    = async () => { await psWrite(`$wsh.SendKeys('{TAB}')`);  await nd(60, 130); };
+  const sendUntab  = async () => { await psWrite(`$wsh.SendKeys('+{TAB}')`); await nd(60, 130); }; // Shift+Tab = dedent
 
-  // ── Typing loop ───────────────────────────────────────────────────────────
+  // ── Indentation model (human-style, no select/erase) ──────────────────────
+  // A developer doesn't re-type leading whitespace into an auto-indenting editor
+  // and doesn't select-and-overtype it. They rely on the editor's auto-indent
+  // and just press Tab (deeper) or Shift+Tab (shallower) for the indent CHANGE
+  // between lines. We mirror that: type each line's content WITHOUT its leading
+  // whitespace, and emit the indent delta with Tab/Shift+Tab. Same-level lines
+  // need zero correction (pure typing). Tab/Shift+Tab can't corrupt — Shift+Tab
+  // is a no-op at column 0. (Set doStripIndent=false to type verbatim instead.)
+  const srcLines = text.split('\n');
+  let useTabs = false, spaceUnit = 4;
+  for (const l of srcLines) {
+    const m = l.match(/^([ \t]+)\S/);
+    if (m) { if (m[1].includes('\t')) useTabs = true; else spaceUnit = m[1].length || 4; break; }
+  }
+  const indentInfo = (line) => {
+    const ws = (line.match(/^[ \t]*/) || [''])[0];
+    const content = line.slice(ws.length);
+    const level = useTabs
+      ? (ws.match(/\t/g) || []).length
+      : Math.round(ws.replace(/\t/g, ' '.repeat(spaceUnit)).length / spaceUnit);
+    return { level, content };
+  };
+  const endsOpener = (content) => /[{(\[:]$/.test(content.replace(/\s+$/, ''));
+
+  // ── Per-char typist (typo + burst-pause rhythm) for one line's content ─────
   let pendingFix = null;   // { correct: char, suffix: char[] }
   let tokenCount = 0, inWord = false;
   let burstTarget = Math.random() < 0.5 ? 2 : 4;
 
   // Fix a typo the way a developer does: arrow-key back to the wrong character,
-  // correct it in place, then arrow back to the end — instead of deleting and
-  // retyping everything after it.
-  //
-  // Layout when a fix is pending (cursor '|' at the end):
-  //   …[correct prefix][WRONG][s0 s1 … s(n-1)]|
-  // Steps:
-  //   1. LEFT × n  → cursor sits right after WRONG, before s0
-  //   2. BACKSPACE → delete WRONG; type the correct char in its place
-  //   3. RIGHT × n → return the cursor to the end (suffix untouched)
+  // correct it in place, then arrow back to the end (suffix untouched).
   const flushFix = async () => {
     if (!pendingFix) return;
     const { correct, suffix } = pendingFix;
@@ -3254,7 +3262,7 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor, stripIndent } = {
     const n = suffix.length;
     await nd(120, 240);            // notice the mistake
     await sendArrow('LEFT', n);    // navigate back to the typo
-    await nd(60, 140);             // small pause before correcting
+    await nd(60, 140);
     await sendBS();                // delete the wrong char
     await sendKey(correct, 55, 95);// type the right one in place
     await nd(40, 90);
@@ -3269,38 +3277,59 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor, stripIndent } = {
     burstTarget = Math.random() < 0.5 ? 2 : 4;
   };
 
-  for (const ch of [...text]) {
-    if (ideTypingCancelled) break;
-    await waitPause();           // honor pause on every keystroke (responsive)
-    if (ideTypingCancelled) break;
-    const wasInWord = inWord;
-    inWord = isWordChar(ch);
-    if (inWord && !wasInWord) { tokenCount++; if (tokenCount > burstTarget) await doPause(); }
-    if (ideTypingCancelled) break;
+  const typeContent = async (str) => {
+    inWord = false;
+    for (const ch of [...str]) {
+      if (ideTypingCancelled) break;
+      await waitPause();           // responsive pause (cursor take-over) per keystroke
+      if (ideTypingCancelled) break;
+      const wasInWord = inWord;
+      inWord = isWordChar(ch);
+      if (inWord && !wasInWord) { tokenCount++; if (tokenCount > burstTarget) await doPause(); }
+      if (ideTypingCancelled) break;
+      if (!isWordChar(ch)) {
+        await sendKey(ch, ch === ' ' ? 60 : 50, ch === ' ' ? 130 : 110);
+        if (pendingFix) pendingFix.suffix.push(ch);
+        continue;
+      }
+      const wrong = (!pendingFix && Math.random() < 0.015) ? nearbyKey(ch) : null;
+      if (wrong) { await sendKey(wrong, 65, 105); pendingFix = { correct: ch, suffix: [] }; }
+      else { await sendKey(ch, 65, 105); if (pendingFix) pendingFix.suffix.push(ch); }
+    }
+  };
 
-    if (ch === '\n') {
-      await flushFix();        // must fix BEFORE Enter — arrow nav can't cross lines
-      await sendKey(ch, 10, 30);
+  // ── Line loop ──────────────────────────────────────────────────────────────
+  let prevLevel = 0, prevOpener = false;
+  for (let li = 0; li < srcLines.length; li++) {
+    if (ideTypingCancelled) break;
+    const { level, content } = indentInfo(srcLines[li]);
+
+    if (!doStripIndent || li === 0) {
+      // Verbatim mode, or the first line (cursor is user-placed, no auto-indent):
+      // type the line exactly, including its own leading whitespace.
+      await typeContent(srcLines[li]);
+    } else {
+      // Adjust indent relative to the editor's auto-indent (≈ previous line's
+      // level, +1 after a block opener), then type the content without its
+      // leading whitespace.
+      const editorLevel = prevLevel + (prevOpener ? 1 : 0);
+      let delta = level - editorLevel;
+      while (delta > 0 && !ideTypingCancelled) { await sendTab(); delta--; }
+      while (delta < 0 && !ideTypingCancelled) { await sendUntab(); delta++; }
+      await typeContent(content);
+    }
+
+    prevLevel = level;
+    prevOpener = endsOpener(content);
+
+    // Newline between lines (auto-indent kicks in on the editor side).
+    if (li < srcLines.length - 1) {
+      if (ideTypingCancelled) break;
+      await flushFix();            // fix any pending typo BEFORE Enter (arrow nav can't cross lines)
+      await sendKey('\n', 10, 30);
       await nd(800, 1000);
       await waitPause();
-      // Select any auto-inserted indent so the next char/Enter overtypes it.
-      await clearAutoIndent();
       tokenCount = 0; burstTarget = Math.random() < 0.5 ? 2 : 4;
-      continue;
-    }
-    if (!isWordChar(ch)) {
-      await sendKey(ch, ch === ' ' ? 60 : 50, ch === ' ' ? 130 : 110);
-      if (pendingFix) pendingFix.suffix.push(ch);
-      continue;
-    }
-    // Word char — 1.5 % typo, one per burst
-    const wrong = (!pendingFix && Math.random() < 0.015) ? nearbyKey(ch) : null;
-    if (wrong) {
-      await sendKey(wrong, 65, 105);
-      pendingFix = { correct: ch, suffix: [] };
-    } else {
-      await sendKey(ch, 65, 105);
-      if (pendingFix) pendingFix.suffix.push(ch);
     }
   }
 
