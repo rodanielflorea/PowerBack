@@ -512,7 +512,6 @@ function setStealth(value) {
   win.setContentProtection(state.stealth);
   if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.setContentProtection(state.stealth); } catch {} }
   if (infoWin && !infoWin.isDestroyed()) { try { infoWin.setContentProtection(state.stealth); } catch {} }
-  if (typingCtlWin && !typingCtlWin.isDestroyed()) { try { typingCtlWin.setContentProtection(state.stealth); } catch {} }
   saveState();
   win.webContents.send('stealth-changed', state.stealth);
 }
@@ -2060,19 +2059,12 @@ let speculativeAbort = null;
 let ideTypingActive = false;
 let ideTypingPaused = false;   // manual pause
 let ideFocusPaused = false;    // auto-pause when our window gains focus
+let ideUserPaused = false;     // take-over auto-pause when the user moves the mouse
 let ideTypingProc = null;
 let ideTypingCancelled = false;
-let typingCtlWin = null;
 function notifyTypingState() {
-  const payload = { paused: ideTypingPaused || ideFocusPaused, active: ideTypingActive };
+  const payload = { paused: ideTypingPaused || ideFocusPaused || ideUserPaused, active: ideTypingActive };
   if (win && !win.isDestroyed()) win.webContents.send('ide-typing-state', payload);
-  if (typingCtlWin && !typingCtlWin.isDestroyed()) typingCtlWin.webContents.send('ide-typing-state', payload);
-}
-// Manual pause toggle (from the floating control bar). No-op when not typing.
-function toggleIdeTypingPause() {
-  if (!ideTypingActive) return;
-  ideTypingPaused = !ideTypingPaused;
-  notifyTypingState();
 }
 // Hard stop: cancel the loop and kill the PowerShell session immediately.
 function stopIdeTyping() {
@@ -2083,35 +2075,41 @@ function stopIdeTyping() {
   notifyTypingState();
 }
 
-// ── Floating typing-control bar (Pause/Resume + Stop by mouse) ────────────────
-// focusable:false so clicking its buttons does NOT steal foreground focus from
-// the IDE — the SendKeys target stays the IDE and pause/resume work cleanly.
-function showTypingControl() {
-  if (typingCtlWin && !typingCtlWin.isDestroyed()) { typingCtlWin.showInactive(); return; }
-  if (!win) return;
-  const disp = screen.getPrimaryDisplay().workArea;
-  typingCtlWin = new BrowserWindow({
-    width: 230, height: 40,
-    x: disp.x + Math.round((disp.width - 230) / 2), y: disp.y + 12,
-    frame: false, transparent: false, backgroundColor: '#0f172a',
-    skipTaskbar: true, alwaysOnTop: true, resizable: false, movable: true,
-    focusable: false, hasShadow: false, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload-typing.js'), contextIsolation: true, nodeIntegration: false },
-  });
-  typingCtlWin.setContentProtection(state.stealth);
-  typingCtlWin.setAlwaysOnTop(true, 'screen-saver');
-  typingCtlWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  typingCtlWin.setMenuBarVisibility(false);
-  typingCtlWin.loadFile(path.join(__dirname, 'renderer', 'typing-control.html'));
-  typingCtlWin.on('closed', () => { typingCtlWin = null; });
-  typingCtlWin.once('ready-to-show', () => { if (typingCtlWin && !typingCtlWin.isDestroyed()) { typingCtlWin.showInactive(); notifyTypingState(); } });
+// ── Cursor take-over auto-pause ───────────────────────────────────────────────
+// The bot types with SendKeys (keyboard only) and never moves the mouse, so ANY
+// mouse movement is unambiguously the user "taking over". We only OBSERVE the
+// cursor (no input injected, no focus change), so this can't disturb typing.
+//   • mouse moves      → pause
+//   • mouse idle ~1.5s → auto-resume
+let cursorPollTimer = null;
+let _lastCursorPt = null;
+let _lastMoveAt = 0;
+const CURSOR_MOVE_THRESHOLD = 6;   // px per poll to count as "moving"
+const CURSOR_IDLE_RESUME_MS = 1500;
+function startCursorTakeover() {
+  stopCursorTakeover();
+  ideUserPaused = false;
+  try { _lastCursorPt = screen.getCursorScreenPoint(); } catch { _lastCursorPt = null; }
+  _lastMoveAt = 0;
+  cursorPollTimer = setInterval(() => {
+    if (!ideTypingActive) return;
+    let pt; try { pt = screen.getCursorScreenPoint(); } catch { return; }
+    if (_lastCursorPt) {
+      const moved = Math.abs(pt.x - _lastCursorPt.x) + Math.abs(pt.y - _lastCursorPt.y) > CURSOR_MOVE_THRESHOLD;
+      if (moved) {
+        _lastMoveAt = Date.now();
+        if (!ideUserPaused) { ideUserPaused = true; notifyTypingState(); }
+      } else if (ideUserPaused && Date.now() - _lastMoveAt > CURSOR_IDLE_RESUME_MS) {
+        ideUserPaused = false; notifyTypingState();
+      }
+    }
+    _lastCursorPt = pt;
+  }, 120);
 }
-function hideTypingControl() {
-  if (typingCtlWin && !typingCtlWin.isDestroyed()) { try { typingCtlWin.close(); } catch {} }
-  typingCtlWin = null;
+function stopCursorTakeover() {
+  if (cursorPollTimer) { clearInterval(cursorPollTimer); cursorPollTimer = null; }
+  ideUserPaused = false;
 }
-ipcMain.handle('typing-ctl-toggle', () => { toggleIdeTypingPause(); });
-ipcMain.handle('typing-ctl-stop', () => { stopIdeTyping(); });
 let speculativeQuestion = null;
 let speculativeActive = false;
 let speculativeCommitted = false; // true after commit — stream pipes directly to renderer
@@ -3136,8 +3134,6 @@ ipcMain.handle('sticky-clear', () => {
   return true;
 });
 
-ipcMain.handle('pause-ide-typing',  () => { ideTypingPaused = true;  notifyTypingState(); });
-ipcMain.handle('resume-ide-typing', () => { ideTypingPaused = false; notifyTypingState(); });
 ipcMain.handle('stop-ide-typing',   () => { stopIdeTyping(); });
 
 // ── Write-to-IDE ──────────────────────────────────────────────────────────────
@@ -3168,8 +3164,8 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor } = {}) => {
   const onWinBlur  = () => { if (!ideTypingActive) return; if (ideFocusPaused) { ideFocusPaused = false; notifyTypingState(); } };
   if (win) { win.on('focus', onWinFocus); win.on('blur', onWinBlur); }
 
-  // Show the floating mouse control (Pause/Resume + Stop) for this session.
-  showTypingControl();
+  // Pause automatically whenever the user moves the mouse (take-over).
+  startCursorTakeover();
 
   // Persistent PS session — reads stdin line-by-line, executes immediately
   const proc = spawn('powershell.exe',
@@ -3188,7 +3184,7 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor } = {}) => {
   );
   // Spin while paused (manual or focus-based), 80 ms poll
   const waitPause = async () => {
-    while ((ideTypingPaused || ideFocusPaused) && !ideTypingCancelled)
+    while ((ideTypingPaused || ideFocusPaused || ideUserPaused) && !ideTypingCancelled)
       await new Promise(r => setTimeout(r, 80));
   };
 
@@ -3283,8 +3279,8 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor } = {}) => {
   // ── Teardown ──────────────────────────────────────────────────────────────
   if (win) { win.off('focus', onWinFocus); win.off('blur', onWinBlur); }
   ideTypingActive = false; ideTypingPaused = false; ideFocusPaused = false;
+  stopCursorTakeover();
   notifyTypingState();
-  hideTypingControl();
   try { proc.stdin.end(); } catch {}
   ideTypingProc = null;
   return { ok: !ideTypingCancelled, cancelled: ideTypingCancelled };

@@ -793,19 +793,11 @@ body.in-interview .end-btn.live::before {
   border-color: var(--accent);
 }
 .code-action-btn--ide:hover { opacity: 0.88; }
-.code-action-btn--pause {
-  min-width: 30px;
-  font-size: 13px;
-  padding: 6px 10px;
-  background: var(--surface);
-  color: var(--text);
-  border-color: var(--border);
-}
-.code-action-btn--pause:hover { background: var(--accent-dim); border-color: var(--accent); }
-.code-action-btn--paused {
-  background: #fef9c3;
-  border-color: #fde047;
-  color: #713f12;
+.code-action-status {
+  font-size: 11.5px;
+  color: var(--muted);
+  align-self: center;
+  margin-left: 2px;
 }
 .code-action-btn--stop {
   font-size: 12px;

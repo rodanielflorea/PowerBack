@@ -2282,8 +2282,8 @@ function extractCodeFromEl(el) {
   return (pre ? pre.textContent : root.textContent).trim();
 }
 
-// Tracks the pause button of the active write-to-IDE session
-let currentIdePauseBtn = null;
+// Tracks the status element of the active write-to-IDE session
+let currentIdeStatusEl = null;
 
 function appendCodeActions(el) {
   const bar = document.createElement('div');
@@ -2303,53 +2303,29 @@ function appendCodeActions(el) {
   const ideBtn = document.createElement('button');
   ideBtn.className = 'code-action-btn code-action-btn--ide';
   ideBtn.textContent = 'Write to IDE';
-  ideBtn.addEventListener('click', () => startWriteToIde(el, ideBtn, pauseBtn, stopBtn));
+  ideBtn.addEventListener('click', () => startWriteToIde(el, ideBtn, stopBtn, statusEl));
 
-  // Pause/resume button — hidden until typing is active for this bubble
-  const pauseBtn = document.createElement('button');
-  pauseBtn.className = 'code-action-btn code-action-btn--pause';
-  pauseBtn.textContent = '⏸';
-  pauseBtn.title = 'Pause typing';
-  pauseBtn.hidden = true;
-  let isPaused = false;
-  pauseBtn.addEventListener('click', () => {
-    isPaused = !isPaused;
-    if (isPaused) {
-      window.api.pauseIdeTyping();
-      pauseBtn.textContent = '▶';
-      pauseBtn.title = 'Resume typing';
-      pauseBtn.classList.add('code-action-btn--paused');
-    } else {
-      window.api.resumeIdeTyping();
-      pauseBtn.textContent = '⏸';
-      pauseBtn.title = 'Pause typing';
-      pauseBtn.classList.remove('code-action-btn--paused');
-    }
-  });
-  // Expose a reset helper for external state updates (e.g. focus-pause)
-  pauseBtn._setExternalPause = (paused) => {
-    isPaused = paused;
-    pauseBtn.textContent = paused ? '▶' : '⏸';
-    pauseBtn.title = paused ? 'Resume typing' : 'Pause typing';
-    pauseBtn.classList.toggle('code-action-btn--paused', paused);
-  };
+  // Live status — shows "Typing…" / "Paused (move mouse)" during a session.
+  const statusEl = document.createElement('span');
+  statusEl.className = 'code-action-status';
+  statusEl.hidden = true;
 
   // Stop (hard cancel) — hidden until typing is active for this bubble
   const stopBtn = document.createElement('button');
   stopBtn.className = 'code-action-btn code-action-btn--stop';
   stopBtn.textContent = '■ Stop';
-  stopBtn.title = 'Stop typing (Alt+X)';
+  stopBtn.title = 'Stop typing';
   stopBtn.hidden = true;
   stopBtn.addEventListener('click', () => { if (window.api.stopIdeTyping) window.api.stopIdeTyping(); });
 
   bar.appendChild(copyBtn);
   bar.appendChild(ideBtn);
-  bar.appendChild(pauseBtn);
   bar.appendChild(stopBtn);
+  bar.appendChild(statusEl);
   el.appendChild(bar);
 }
 
-function startWriteToIde(el, btn, pauseBtn, stopBtn) {
+function startWriteToIde(el, btn, stopBtn, statusEl) {
   const code = extractCodeFromEl(el);
   if (!code) return;
 
@@ -2361,24 +2337,23 @@ function startWriteToIde(el, btn, pauseBtn, stopBtn) {
   let count = 3;
   btn.disabled = true;
   btn.classList.add('code-action-btn--counting');
-  if (pauseBtn) { pauseBtn.hidden = true; pauseBtn._setExternalPause && pauseBtn._setExternalPause(false); }
   if (stopBtn) stopBtn.hidden = true;
+  if (statusEl) { statusEl.hidden = true; currentIdeStatusEl = statusEl; }
 
   const tick = () => {
     btn.textContent = `Switch to IDE… ${count}`;
     if (count === 0) {
       btn.textContent = 'Typing…';
-      // Show pause + stop buttons; register the pause btn as the active one
-      if (pauseBtn) { pauseBtn.hidden = false; currentIdePauseBtn = pauseBtn; }
       if (stopBtn) stopBtn.hidden = false;
+      if (statusEl) { statusEl.hidden = false; statusEl.textContent = 'Typing…'; }
       window.api.writeToIde(code, speedFactor).then(res => {
         btn.disabled = false;
         btn.classList.remove('code-action-btn--counting');
         btn.textContent = res && res.ok ? 'Done ✓' : (res && res.cancelled ? 'Stopped' : 'Error — try again');
         setTimeout(() => { btn.textContent = 'Write to IDE'; }, 2500);
-        if (pauseBtn) { pauseBtn.hidden = true; }
         if (stopBtn) stopBtn.hidden = true;
-        if (currentIdePauseBtn === pauseBtn) currentIdePauseBtn = null;
+        if (statusEl) { statusEl.hidden = true; }
+        if (currentIdeStatusEl === statusEl) currentIdeStatusEl = null;
       });
     } else {
       count--;
@@ -2388,12 +2363,13 @@ function startWriteToIde(el, btn, pauseBtn, stopBtn) {
   tick();
 }
 
-// Sync pause button UI when main process reports a state change
-// (e.g. auto-paused because our app window got focused)
+// Reflect take-over pause state in the active bubble's status text. Pausing is
+// driven by mouse movement in the main process — move the mouse to pause, hold
+// still ~1.5s to resume.
 if (window.api && window.api.onIdeTypingState) {
-  window.api.onIdeTypingState(({ paused }) => {
-    if (currentIdePauseBtn && currentIdePauseBtn._setExternalPause)
-      currentIdePauseBtn._setExternalPause(paused);
+  window.api.onIdeTypingState(({ paused, active }) => {
+    if (!currentIdeStatusEl) return;
+    if (active) currentIdeStatusEl.textContent = paused ? 'Paused — move mouse stopped to resume' : 'Typing…';
   });
 }
 
