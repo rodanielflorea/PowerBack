@@ -1,7 +1,7 @@
 {
-  "name": "ACE",
-  "version": "2.1.1",
-  "description": "Answer Coaching Engine(what it literally is), Ace the interview(what the user achieves), Ace up your sleeve(what it secretly is)",
+  "name": "RemoteDevJobAce",
+  "version": "2.1.2",
+  "description": "Answer Coaching Engine",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -12,9 +12,10 @@
   },
   "build": {
     "appId": "com.stealthsupport.app",
-    "productName": "ACE",
+    "productName": "RemoteDevJobAce",
     "files": [
       "main.js",
+      "llm-providers.js",
       "preload*.js",
       "renderer/**/*",
       "build/icon.png",

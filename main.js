@@ -7,6 +7,11 @@ const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
+const {
+  PROVIDERS, getProvider, providerList,
+  streamChat, completeChat, listModels,
+  friendlyAnswerError, modelAbbr,
+} = require('./llm-providers');
 let autoUpdater = null;
 try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
 let officeParser = null;
@@ -98,9 +103,20 @@ const DEFAULT_STATE = {
   prompts: [],
   // Uploaded base-knowledge documents (extracted text), per category.
   knowledge: { cv: [], jd: [], support: [], meetings: [] },
-  // Grok answer generation: its OWN xAI key (separate from transcription), the
-  // model, and which saved prompt (preset) is active.
-  answer: { apiKey: '', model: 'grok-4.3', activePromptId: null },
+  // Answer generation: provider + per-provider keys/models. `apiKey` is the
+  // legacy xAI key (kept so older state.json files still load).
+  answer: {
+    provider: 'xai',
+    apiKey: '',
+    model: 'grok-4.20-0309-non-reasoning',
+    keys: { xai: '', anthropic: '', openai: '' },
+    models: {
+      xai: 'grok-4.20-0309-non-reasoning',
+      anthropic: 'claude-haiku-4-5',
+      openai: 'gpt-4o',
+    },
+    activePromptId: null,
+  },
   avoidPhrases: '',   // newline-separated list of banned phrases/patterns
   // Remembered personal profile, pre-filled into the New-session form.
   profile: { name: '', city: '', country: '', timezone: '' },
@@ -360,8 +376,44 @@ function loadState() {
       hotkeys: { ...HOTKEY_DEFAULTS },
     };
   }
+  migrateAnswerConfig();
   seedDefaultPromptsIfNeeded();
   migrateProfilesIfNeeded();
+}
+
+function migrateAnswerConfig() {
+  if (!state.answer) state.answer = { ...DEFAULT_STATE.answer };
+  const a = state.answer;
+  const prevKeys = { ...(a.keys || {}) };
+  if (a.keys) delete a.keys.gemini;
+  if (a.models) delete a.models.gemini;
+  a.keys = { ...DEFAULT_STATE.answer.keys, ...(a.keys || {}) };
+  a.models = { ...DEFAULT_STATE.answer.models, ...(a.models || {}) };
+
+  if (!a.provider || !PROVIDERS[a.provider]) {
+    const withKey = ['openai', 'anthropic', 'xai'].find((id) => String((prevKeys[id] || a.keys[id] || '')).trim());
+    a.provider = withKey || 'xai';
+  }
+
+  if (!a.keys.xai && a.apiKey) a.keys.xai = a.apiKey;
+  if (!a.apiKey && a.keys.xai) a.apiKey = a.keys.xai;
+
+  // Stock defaults that were slower — move to the fast model unless the
+  // user already picked something else.
+  const oldSlow = {
+    xai: ['grok-4.6', 'grok-4.5'],
+    anthropic: ['claude-sonnet-5'],
+    openai: ['gpt-5.6-terra'],
+  };
+  const stored = a.models[a.provider] || a.model;
+  if (oldSlow[a.provider] && oldSlow[a.provider].includes(stored)) {
+    a.model = getProvider(a.provider).defaultModel;
+    a.models[a.provider] = a.model;
+  } else if (a.model && PROVIDERS[a.provider]) {
+    a.models[a.provider] = a.model;
+  } else {
+    a.model = a.models[a.provider] || getProvider(a.provider).defaultModel;
+  }
 }
 
 // One-time migration: fold the single remembered profile into the named list.
@@ -468,8 +520,8 @@ function createWindow() {
   if (state.clickThrough) try { win.setIgnoreMouseEvents(true, { forward: true }); } catch {}
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  // Embedded web AI removed — answers come from the Grok API into the in-app
-  // Answer panel, so we no longer create the WebContentsView.
+  // Embedded web AI removed — answers come from the selected provider API
+  // into the in-app Answer panel, so we no longer create the WebContentsView.
   win.once('ready-to-show', () => {
     win.show();
     // Pre-warm the xAI connection so first real request skips TLS handshake.
@@ -2048,9 +2100,9 @@ ipcMain.handle('session-finalize', (_e, { company, position } = {}) => {
 ipcMain.handle('paste-text', (_e, text) => pasteToForeground(text));
 
 // ---------------------------------------------------------------------------
-// Grok answer generation. Takes the captured "saying" + the active preset's
-// system prompt and streams Grok's reply to the renderer's Answer panel. Uses
-// the same xAI key the user pasted for transcription.
+// Answer generation. Builds the interview prompt, then streams a reply from
+// the selected provider (xAI / Anthropic / OpenAI) into the Answer
+// panel. Keys and last-used models are stored per provider.
 // ---------------------------------------------------------------------------
 let answerAbort = null;
 // Speculative answer state
@@ -2449,14 +2501,86 @@ ipcMain.handle('kb-get', () => {
   return out;
 });
 
-function friendlyAnswerError(status) {
-  switch (status) {
-    case 400: return 'xAI rejected the answer request (400). Check the model in Settings → Prompts.';
-    case 401:
-    case 403: return `xAI rejected your answer key (${status}). Set/verify the xAI key in Settings → Prompts → Answer generation (needs API credits).`;
-    case 429: return 'xAI rate limit / out of credits (429). Try again shortly.';
-    default:  return `xAI answer request failed (${status || 'unknown'}).`;
+function getAnswerProvider() {
+  return getProvider(state.answer && state.answer.provider);
+}
+
+function getAnswerApiKey(providerId) {
+  const id = providerId || getAnswerProvider().id;
+  const keys = (state.answer && state.answer.keys) || {};
+  const fromKeys = String(keys[id] || '').trim();
+  if (fromKeys) return fromKeys;
+  if (id === 'xai') {
+    return String((state.answer && state.answer.apiKey) || '').trim()
+      || String((state.transcription && state.transcription.xaiApiKey) || '').trim();
   }
+  return '';
+}
+
+function getAnswerModel(providerId) {
+  const id = providerId || getAnswerProvider().id;
+  const currentProvider = (state.answer && state.answer.provider) || 'xai';
+  if (id === currentProvider && state.answer && state.answer.model) {
+    return state.answer.model;
+  }
+  const models = (state.answer && state.answer.models) || {};
+  if (models[id]) return models[id];
+  return getProvider(id).defaultModel;
+}
+
+function publicAnswerConfig() {
+  const provider = getAnswerProvider();
+  const keys = { ...DEFAULT_STATE.answer.keys, ...((state.answer && state.answer.keys) || {}) };
+  const models = { ...DEFAULT_STATE.answer.models, ...((state.answer && state.answer.models) || {}) };
+  return {
+    provider: provider.id,
+    model: getAnswerModel(provider.id),
+    activePromptId: (state.answer && state.answer.activePromptId) || null,
+    apiKey: keys.xai || ((state.answer && state.answer.apiKey) || ''),
+    keys,
+    models,
+    providers: providerList(),
+    fallbackModels: provider.fallbackModels.slice(),
+    railAbbr: modelAbbr(provider.id, getAnswerModel(provider.id)),
+  };
+}
+
+function applyAnswerConfig(cfg) {
+  if (!cfg || typeof cfg !== 'object') return publicAnswerConfig();
+  const prev = state.answer || { ...DEFAULT_STATE.answer };
+  const next = { ...prev };
+  if (cfg.keys && typeof cfg.keys === 'object') {
+    next.keys = { ...(prev.keys || {}), ...cfg.keys };
+  }
+  if (cfg.models && typeof cfg.models === 'object') {
+    next.models = { ...(prev.models || {}), ...cfg.models };
+  }
+  if (cfg.apiKey !== undefined) {
+    next.apiKey = String(cfg.apiKey || '');
+    next.keys = { ...(next.keys || {}), xai: next.apiKey };
+  }
+  if (next.keys && next.keys.xai !== undefined) next.apiKey = next.keys.xai;
+  if (cfg.activePromptId !== undefined) next.activePromptId = cfg.activePromptId;
+
+  const nextProvider = (cfg.provider && PROVIDERS[cfg.provider]) ? cfg.provider : (next.provider || 'xai');
+  if (nextProvider !== (prev.provider || 'xai')) {
+    const oldId = prev.provider || 'xai';
+    next.models = { ...(next.models || {}), [oldId]: prev.model || getAnswerModel(oldId) };
+    next.provider = nextProvider;
+    next.model = (next.models && next.models[nextProvider]) || getProvider(nextProvider).defaultModel;
+    next.models[nextProvider] = next.model;
+  } else {
+    next.provider = nextProvider;
+  }
+
+  if (cfg.model) {
+    next.model = cfg.model;
+    next.models = { ...(next.models || {}), [next.provider]: cfg.model };
+  }
+
+  state.answer = next;
+  saveState();
+  return publicAnswerConfig();
 }
 
 function activePromptText() {
@@ -2506,64 +2630,27 @@ Reply with only one of: DIAGRAM, CODE, ANSWER`,
     } else {
       msgs.push({ role: 'user', content: q });
     }
-    const res = await fetch('https://api.x.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages: msgs, max_tokens: 5, stream: false }),
-    });
-    if (!res.ok) return 'ANSWER';
-    const data = await res.json();
-    const word = ((data.choices?.[0]?.message?.content) || '').trim().toUpperCase().split(/\W/)[0];
+    const word = (await completeChat({
+      provider: getAnswerProvider(),
+      apiKey,
+      model,
+      messages: msgs,
+      maxTokens: 8,
+    })).toUpperCase().split(/\W/)[0];
     return ['DIAGRAM', 'CODE'].includes(word) ? word : 'ANSWER';
   } catch { return 'ANSWER'; }
 }
 
-async function generateAnswer(question, images, forcedMode) {
-  // images: array of { base64, mime } or null/undefined
-  // forcedMode: 'AUTO'|'CODE'|'DIAGRAM'|'ANSWER' — from the manual mode selector
-  const imgs = Array.isArray(images) && images.length ? images : null;
-  const q = String(question || '').trim();
-  if (!q && !imgs) return;
-  // Use the dedicated answer key; fall back to the transcription xAI key so users
-  // who use xAI for both don't have to paste it twice.
-  const apiKey = (
-    ((state.answer && state.answer.apiKey) || '').trim() ||
-    ((state.transcription && state.transcription.xaiApiKey) || '').trim()
-  );
-  if (!apiKey) {
-    if (win && !win.isDestroyed()) win.webContents.send('answer-error', 'No xAI answer key set (Settings → Prompts → Answer generation).');
-    return;
-  }
-  if (answerAbort) { try { answerAbort.abort(); } catch {} answerAbort = null; }
-  const ac = new AbortController();
-  answerAbort = ac;
-
-  const model = (state.answer && state.answer.model) || 'grok-4.3';
-  // If user picked a mode manually, skip the classifier entirely.
-  const mode = (forcedMode && forcedMode !== 'AUTO')
-    ? forcedMode
-    : await Promise.race([
-        classifyQuestion(q, imgs, apiKey, model),
-        new Promise(r => setTimeout(() => r('ANSWER'), 300)),
-      ]);
-
+function buildAnswerMessages(q, imgs, mode) {
   const messages = [];
   const sys = activePromptText();
 
-  // ── 1. Knowledge base — factual grounding only, no style influence ──────
   const kb = buildKnowledgeContext();
   if (kb) messages.push({
     role: 'system',
     content: 'REFERENCE MATERIAL (facts only — do NOT copy its tone, phrasing, or style into your answer):\n\n' + kb,
   });
 
-  // ── 2. Persona / selected prompt ────────────────────────────────────────
-  // ANSWER mode: persona is the PRIMARY directive — it controls everything.
-  // CODE/DIAGRAM mode: the persona must NOT override the output format. An
-  // interview persona ("answer as the candidate…") otherwise makes the model
-  // introduce itself instead of drawing/coding. So here the persona is demoted
-  // to content/voice guidance and the format directive (section 5) is placed
-  // LAST as the authoritative instruction.
   if (sys && mode === 'ANSWER') {
     messages.push({
       role: 'system',
@@ -2576,7 +2663,6 @@ async function generateAnswer(question, images, forcedMode) {
     });
   }
 
-  // ── 3. Technical rendering rules (diagram + sticky) — CODE/DIAGRAM only ──
   if (mode !== 'ANSWER') {
     messages.push({
       role: 'system',
@@ -2588,7 +2674,6 @@ async function generateAnswer(question, images, forcedMode) {
     });
   }
 
-  // ── 4. Banned phrases ────────────────────────────────────────────────────
   const avoidRaw = (state.avoidPhrases || '').trim();
   if (avoidRaw) {
     const list = avoidRaw.split('\n').map(l => l.trim()).filter(Boolean);
@@ -2600,7 +2685,6 @@ async function generateAnswer(question, images, forcedMode) {
     }
   }
 
-  // ── 5. Mode-specific output directive — LAST so it has highest priority ──
   if (mode === 'DIAGRAM') {
     messages.push({
       role: 'system',
@@ -2613,10 +2697,8 @@ async function generateAnswer(question, images, forcedMode) {
     });
   }
 
-  // Prior turns (answers, code, diagrams this session) as grounding context.
   for (const m of conversationContextMessages()) messages.push(m);
 
-  // Build user message — text only, or text + one/many images for vision models.
   if (imgs) {
     const userContent = [];
     if (q) userContent.push({ type: 'text', text: q });
@@ -2627,65 +2709,70 @@ async function generateAnswer(question, images, forcedMode) {
   } else {
     messages.push({ role: 'user', content: q });
   }
+  return messages;
+}
+
+async function generateAnswer(question, images, forcedMode) {
+  // images: array of { base64, mime } or null/undefined
+  // forcedMode: 'AUTO'|'CODE'|'DIAGRAM'|'ANSWER' — from the manual mode selector
+  const imgs = Array.isArray(images) && images.length ? images : null;
+  const q = String(question || '').trim();
+  if (!q && !imgs) return;
+  const provider = getAnswerProvider();
+  const apiKey = getAnswerApiKey(provider.id);
+  if (!apiKey) {
+    if (win && !win.isDestroyed()) win.webContents.send('answer-error', `No ${provider.label} API key set (Settings → API keys → Answer generation).`);
+    return;
+  }
+  if (answerAbort) { try { answerAbort.abort(); } catch {} answerAbort = null; }
+  const ac = new AbortController();
+  answerAbort = ac;
+
+  const model = getAnswerModel(provider.id);
+  // If user picked a mode manually, skip the classifier entirely.
+  const mode = (forcedMode && forcedMode !== 'AUTO')
+    ? forcedMode
+    : await Promise.race([
+        classifyQuestion(q, imgs, apiKey, model),
+        new Promise(r => setTimeout(() => r('ANSWER'), 300)),
+      ]);
+
+  const messages = buildAnswerMessages(q, imgs, mode);
+  const sys = activePromptText();
 
   const displayQ = q || (imgs ? `[${imgs.length} image${imgs.length > 1 ? 's' : ''}]` : '');
   if (win && !win.isDestroyed()) win.webContents.send('answer-start', { question: displayQ, hasImage: !!imgs, mode });
 
-  appendLogLine(`[answer] mode=${mode} forced=${forcedMode || '-'} sysLen=${sys.length} q="${q.slice(0, 80)}" sysMsgs=${messages.filter(m => m.role === 'system').length}`);
-
-  let res;
-  try {
-    res = await fetch('https://api.x.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages, stream: true }),
-      signal: ac.signal,
-    });
-  } catch (e) {
-    if (e.name !== 'AbortError' && win && !win.isDestroyed())
-      win.webContents.send('answer-error', 'xAI request failed: ' + e.message);
-    answerAbort = null;
-    return;
-  }
-  if (!res.ok) {
-    let body = '';
-    try { body = await res.text(); } catch {}
-    appendLogLine(`[grok] ${res.status}: ${body.slice(0, 200)}`);
-    if (win && !win.isDestroyed())
-      win.webContents.send('answer-error', friendlyAnswerError(res.status));
-    answerAbort = null;
-    return;
-  }
+  appendLogLine(`[answer] provider=${provider.id} model=${model} mode=${mode} forced=${forcedMode || '-'} sysLen=${sys.length} q="${q.slice(0, 80)}" sysMsgs=${messages.filter(m => m.role === 'system').length}`);
 
   let full = '';
+  const t0 = Date.now();
+  let firstToken = true;
   try {
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        const t = line.trim();
-        if (!t.startsWith('data:')) continue;
-        const payload = t.slice(5).trim();
-        if (payload === '[DONE]') continue;
-        try {
-          const json = JSON.parse(payload);
-          const delta = json.choices?.[0]?.delta?.content || '';
-          if (delta) {
-            full += delta;
-            if (win && !win.isDestroyed()) win.webContents.send('answer-chunk', delta);
-          }
-        } catch {}
+    await streamChat({
+      provider,
+      apiKey,
+      model,
+      messages,
+      signal: ac.signal,
+      onDelta: (delta) => {
+        if (firstToken) {
+          firstToken = false;
+          appendLogLine(`[answer] first-token ${Date.now() - t0}ms provider=${provider.id} model=${model}`);
+        }
+        full += delta;
+        if (win && !win.isDestroyed()) win.webContents.send('answer-chunk', delta);
+      },
+    });
+  } catch (e) {
+    if (e.name !== 'AbortError' && win && !win.isDestroyed()) {
+      if (e.status) {
+        appendLogLine(`[${provider.id}] ${e.status}: ${(e.body || e.message || '').slice(0, 200)}`);
+        win.webContents.send('answer-error', friendlyAnswerError(provider, e.status, e.body));
+      } else {
+        win.webContents.send('answer-error', `${provider.label} request failed: ` + e.message);
       }
     }
-  } catch (e) {
-    if (e.name !== 'AbortError' && win && !win.isDestroyed())
-      win.webContents.send('answer-error', 'Stream error: ' + e.message);
     answerAbort = null;
     return;
   }
@@ -2702,21 +2789,23 @@ ipcMain.handle('generate-answer', (_e, { question, images, forcedMode } = {}) =>
   generateAnswer(question, images, forcedMode);
 });
 
-// ── Warm-up: pre-establish the TLS connection to api.x.ai so the first real
+// ── Warm-up: pre-establish TLS to the active provider so the first real
 // request skips the ~300-600 ms handshake cost.
 async function warmApiConnection() {
-  const apiKey = (
-    ((state.answer && state.answer.apiKey) || '').trim() ||
-    ((state.transcription && state.transcription.xaiApiKey) || '').trim()
-  );
-  if (!apiKey) return;
+  const provider = getAnswerProvider();
+  const apiKey = getAnswerApiKey(provider.id);
+  if (!apiKey || !provider.warmUrl) return;
   try {
     const ac = new AbortController();
     setTimeout(() => { try { ac.abort(); } catch {} }, 4000);
-    await fetch('https://api.x.ai/v1/models', {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: ac.signal,
-    });
+    const headers = { };
+    if (provider.style === 'anthropic') {
+      headers['x-api-key'] = apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+    } else {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+    await fetch(provider.warmUrl, { headers, signal: ac.signal });
   } catch {}
 }
 ipcMain.handle('warm-api-connection', () => warmApiConnection());
@@ -2728,10 +2817,8 @@ async function startSpeculative(question, forcedMode) {
   speculativeActive = false;
   const q = (question || '').trim();
   if (!q) return;
-  const apiKey = (
-    ((state.answer && state.answer.apiKey) || '').trim() ||
-    ((state.transcription && state.transcription.xaiApiKey) || '').trim()
-  );
+  const provider = getAnswerProvider();
+  const apiKey = getAnswerApiKey(provider.id);
   if (!apiKey) return;
 
   speculativeQuestion = q;
@@ -2739,7 +2826,7 @@ async function startSpeculative(question, forcedMode) {
   const ac = new AbortController();
   speculativeAbort = ac;
 
-  const model = (state.answer && state.answer.model) || 'grok-4.3';
+  const model = getAnswerModel(provider.id);
 
   // Use forced mode if set, otherwise classify with 300ms race
   const specMode = (forcedMode && forcedMode !== 'AUTO')
@@ -2750,80 +2837,25 @@ async function startSpeculative(question, forcedMode) {
       ]);
   ac._mode = specMode; // stash so commitSpeculative can read it
 
-  // Mirrors generateAnswer's message construction (see comments there).
-  const messages = [];
-  const sys = activePromptText();
-  const kb2 = buildKnowledgeContext();
-  if (kb2) messages.push({ role: 'system', content: 'REFERENCE MATERIAL (facts only — do NOT copy its tone, phrasing, or style into your answer):\n\n' + kb2 });
-  // Persona: PRIMARY in ANSWER mode; demoted to content-only guidance otherwise.
-  if (sys && specMode === 'ANSWER') {
-    messages.push({ role: 'system', content: `PRIMARY DIRECTIVE — this overrides all previous instructions for style, tone, persona, and format. Follow it exactly and completely:\n\n${sys}` });
-  } else if (sys) {
-    messages.push({ role: 'system', content: `PERSONA & CONTENT GUIDANCE — apply this only to WORDING and technical choices. It must NOT change the required output format below, and must NOT make you introduce yourself or describe your experience when a diagram or code is requested:\n\n${sys}` });
-  }
-  if (specMode !== 'ANSWER') {
-    messages.push({ role: 'system', content: 'When the user asks for a diagram, chart, flowchart, sequence diagram, or any visual structure, output it as a Mermaid code block (```mermaid ... ```) so it can be rendered graphically. Rules for valid Mermaid: (1) No HTML tags inside node labels — plain text only. (2) Use only rectangle brackets [text] for node shapes — do NOT use [/text] or [/text/] trapezoid syntax. (3) No "color:" in style directives. (4) Keep node IDs simple alphanumeric. (5) Do NOT use ASCII art. (6) READABILITY FIRST: keep each diagram graspable at a glance — aim for at most ~12-15 nodes. If the system is complex, do NOT cram everything into one diagram. Instead output a high-level OVERVIEW diagram first (major components only), then one or more SEPARATE ```mermaid blocks that each zoom into a single subsystem. (7) Group related nodes with subgraphs, and choose a direction that reads well (graph LR for wide pipelines, graph TD for hierarchies). (8) NEVER reuse one identifier for both a subgraph and a node — every subgraph id must be unique and distinct from all node ids (reusing an id causes a render cycle error).' });
-    messages.push({ role: 'system', content: 'Whenever your answer contains a diagram (Mermaid block) or a code block, append a presenter talking-script at the very end of your response using exactly this format:\n<sticky>\nOVERVIEW\n[One sentence: what this diagram/code shows and why it matters.]\n\nWALKTHROUGH\n[Narrate each major step, node, or code section as if explaining to someone who cannot see the screen. Write in full sentences. Cover every significant part. Aim for 60-90 seconds of speaking.]\n\nKEY INSIGHT\n[One sentence: the single most important takeaway or design decision.]\n</sticky>\nUse plain text only inside the sticky tags — no markdown, no asterisks, no bullet points.' });
-  }
-  const avoidRaw2 = (state.avoidPhrases || '').trim();
-  if (avoidRaw2) {
-    const list2 = avoidRaw2.split('\n').map(l => l.trim()).filter(Boolean);
-    if (list2.length) messages.push({ role: 'system', content: `BANNED PHRASES — never output these or close paraphrases:\n${list2.map(p => `• "${p}"`).join('\n')}` });
-  }
-  // Output-format directive LAST so it has highest priority over the persona.
-  if (specMode === 'DIAGRAM') {
-    messages.push({ role: 'system', content: 'OUTPUT FORMAT — DIAGRAM MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above, INCLUDING the persona/content guidance. Draw a diagram of the system described in the USER MESSAGE below. Your VERY FIRST characters must be ```mermaid — no introduction, no greeting, no self-description, no preamble. Do NOT introduce yourself or talk about your experience. Start the mermaid block immediately. Keep it readable at a glance: for a complex system, output a high-level overview diagram first, then separate ```mermaid blocks that drill into individual subsystems, rather than one dense diagram. After the closing ``` of EACH diagram, write a thorough explanation of THAT diagram in prose: (a) what every major component/node does, (b) why it is necessary — the specific role it plays and what would break without it, (c) how the parts connect (the data and control flow between them). Then, after the final diagram, add a "Workflow" section that walks through the end-to-end flow step by step, and a "Why this solves the problem" section that explicitly maps the design back to the original requirements — which requirement each major part satisfies and the key trade-offs. Be substantive and concrete; do not pad with filler.' });
-  } else if (specMode === 'CODE') {
-    messages.push({ role: 'system', content: 'OUTPUT FORMAT — LIVE CODING MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above, INCLUDING the persona/content guidance. Write code that solves the USER MESSAGE below. Your VERY FIRST characters must be ``` opening a code block — no introduction, no greeting, no self-description, no preamble of any kind. Do NOT introduce yourself or talk about your experience. Write clean, complete, runnable code with NO comments or docstrings of any kind — no inline comments, no block comments, no triple-quoted docstrings; output only executable code. After the closing ``` you may add a brief explanation only.' });
-  }
-  // Prior turns (answers, code, diagrams this session) as grounding context.
-  for (const m of conversationContextMessages()) messages.push(m);
-  messages.push({ role: 'user', content: q });
+  const messages = buildAnswerMessages(q, null, specMode);
   // Do NOT send answer-start yet — we buffer silently and only show the UI
   // when the user actually commits (or the text matches on submit).
 
-  let res;
-  try {
-    res = await fetch('https://api.x.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages, stream: true }),
-      signal: ac.signal,
-    });
-  } catch (e) {
-    if (e.name !== 'AbortError') { speculativeActive = false; speculativeAbort = null; }
-    return;
-  }
-  if (!res.ok) { speculativeActive = false; speculativeAbort = null; return; }
-
-  // Buffer chunks silently until commit; after commit, pipe directly to renderer.
   let speculativeBuffer = '';
   try {
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const lines = buf.split('\n');
-      buf = lines.pop();
-      for (const line of lines) {
-        const t = line.trim();
-        if (!t.startsWith('data:')) continue;
-        const payload = t.slice(5).trim();
-        if (payload === '[DONE]') continue;
-        try {
-          const delta = JSON.parse(payload).choices?.[0]?.delta?.content || '';
-          if (!delta) continue;
-          speculativeBuffer += delta;
-          // If already committed, stream this chunk live to the renderer
-          if (speculativeCommitted && win && !win.isDestroyed()) {
-            win.webContents.send('answer-chunk', delta);
-          }
-        } catch {}
-      }
-    }
+    await streamChat({
+      provider,
+      apiKey,
+      model,
+      messages,
+      signal: ac.signal,
+      onDelta: (delta) => {
+        speculativeBuffer += delta;
+        if (speculativeCommitted && win && !win.isDestroyed()) {
+          win.webContents.send('answer-chunk', delta);
+        }
+      },
+    });
   } catch (e) {
     if (e.name === 'AbortError') { speculativeCommitted = false; return; }
     speculativeCommitted = false; speculativeActive = false; speculativeAbort = null;
@@ -2860,7 +2892,9 @@ function commitSpeculative(question, images, forcedMode) {
   const q = (question || '').trim();
   const hasImages = Array.isArray(images) && images.length > 0;
 
-  if (!hasImages && speculativeQuestion === q) {
+  // Only adopt a live or finished stream. If speculation failed (abort
+  // cleared, not active), fall through and start a real request.
+  if (!hasImages && speculativeQuestion === q && (speculativeAbort || speculativeActive)) {
     const ac = speculativeAbort; // null if stream already finished naturally
     const buffered = (ac && ac._buffer) || '';
     const streamDone = (ac && ac._done) || !ac;
@@ -2923,31 +2957,15 @@ ipcMain.handle('clear-answer-memory', () => {
   if (s) { s.turns = []; s.updatedAt = Date.now(); saveSessions(); }
   return true;
 });
-ipcMain.handle('list-xai-models', async () => {
-  const apiKey = (
-    ((state.answer && state.answer.apiKey) || '').trim() ||
-    ((state.transcription && state.transcription.xaiApiKey) || '').trim()
-  );
-  if (!apiKey) return null;
-  try {
-    const r = await fetch('https://api.x.ai/v1/models', {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    if (!r.ok) return null;
-    const data = await r.json();
-    const ids = (data.data || data.models || [])
-      .map((m) => (typeof m === 'string' ? m : m.id))
-      .filter(Boolean);
-    return ids.length ? ids : null;
-  } catch {
-    return null;
-  }
-});
-ipcMain.handle('get-answer-config', () => ({ ...state.answer }));
-ipcMain.handle('set-answer-config', (_e, cfg) => {
-  state.answer = { ...state.answer, ...(cfg || {}) };
-  saveState();
-});
+async function listAnswerModels() {
+  const provider = getAnswerProvider();
+  const apiKey = getAnswerApiKey(provider.id);
+  return listModels({ provider, apiKey });
+}
+ipcMain.handle('list-xai-models', () => listAnswerModels());
+ipcMain.handle('list-answer-models', () => listAnswerModels());
+ipcMain.handle('get-answer-config', () => publicAnswerConfig());
+ipcMain.handle('set-answer-config', (_e, cfg) => applyAnswerConfig(cfg));
 
 // ---- Avoid-phrases list ----
 ipcMain.handle('get-avoid-phrases', () => state.avoidPhrases || '');
@@ -2999,32 +3017,45 @@ function showPromptMenu() {
 }
 ipcMain.handle('show-prompt-menu', () => showPromptMenu());
 
+function emitAnswerConfig() {
+  if (win && !win.isDestroyed()) win.webContents.send('answer-config-changed', publicAnswerConfig());
+}
+
 async function showModelMenu() {
   if (!win) return;
-  const apiKey = (
-    ((state.answer && state.answer.apiKey) || '').trim() ||
-    ((state.transcription && state.transcription.xaiApiKey) || '').trim()
-  );
-  const current = (state.answer && state.answer.model) || 'grok-4.3';
+  const provider = getAnswerProvider();
+  const apiKey = getAnswerApiKey(provider.id);
+  const current = getAnswerModel(provider.id);
 
-  // Try to fetch live model list; fall back to a sensible static list.
   let ids = [];
   if (apiKey) {
-    try {
-      const r = await fetch('https://api.x.ai/v1/models', { headers: { Authorization: `Bearer ${apiKey}` } });
-      if (r.ok) {
-        const data = await r.json();
-        ids = (data.data || data.models || []).map(m => typeof m === 'string' ? m : m.id).filter(Boolean);
-      }
-    } catch {}
+    try { ids = (await listModels({ provider, apiKey })) || []; } catch { ids = []; }
   }
-  if (!ids.length) ids = ['grok-4.3', 'grok-4.20-0309-non-reasoning', 'grok-4.20-0309-reasoning', 'grok-3', 'grok-3-mini'];
+  if (!ids.length) ids = provider.fallbackModels.slice();
   if (!ids.includes(current)) ids.unshift(current);
 
-  const items = ids.map(id => ({
-    label: (id === current ? '• ' : '  ') + id,
-    click: () => { if (win && !win.isDestroyed()) win.webContents.send('model-selected', id); },
-  }));
+  const items = [
+    { label: 'Provider', enabled: false },
+    ...providerList().map((p) => ({
+      label: (p.id === provider.id ? '• ' : '  ') + p.label,
+      click: () => {
+        applyAnswerConfig({ provider: p.id });
+        emitAnswerConfig();
+      },
+    })),
+    { type: 'separator' },
+    { label: `${provider.short} models`, enabled: false },
+    ...ids.map((id) => ({
+      label: (id === current ? '• ' : '  ') + id,
+      click: () => {
+        applyAnswerConfig({ model: id });
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('model-selected', id);
+          emitAnswerConfig();
+        }
+      },
+    })),
+  ];
   Menu.buildFromTemplate(items).popup({ window: win });
 }
 ipcMain.handle('show-model-menu', () => showModelMenu());

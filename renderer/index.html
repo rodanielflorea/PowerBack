@@ -84,17 +84,32 @@
         </section>
 
         <section class="settings-section">
-          <h3>Answer generation (Grok)</h3>
-          <p class="hint">Used by the xAI Grok API to generate answers. Separate from transcription, so you can use Deepgram above and xAI here.</p>
+          <h3>Answer generation</h3>
+          <p class="hint">Pick a provider, paste its key, then switch anytime. Keys and last-used models are remembered separately. Transcription above is independent of this.</p>
+          <div class="field-row" id="answerProviderRow">
+            <label class="radio"><input type="radio" name="answerProvider" value="xai" id="answerProviderXai" /> xAI</label>
+            <label class="radio"><input type="radio" name="answerProvider" value="anthropic" id="answerProviderAnthropic" /> Anthropic</label>
+            <label class="radio"><input type="radio" name="answerProvider" value="openai" id="answerProviderOpenai" /> OpenAI</label>
+          </div>
           <div class="field">
-            <label for="answerKey">xAI API key (for answers)</label>
+            <label for="answerKey">xAI API key</label>
             <input type="password" id="answerKey" placeholder="Paste xAI key for answers..." spellcheck="false" />
-            <p class="hint">If blank, the xAI key above is used. Get a key with API credits at console.x.ai.</p>
+            <p class="hint">If blank, the xAI transcription key above is used. Get a key at console.x.ai.</p>
+          </div>
+          <div class="field">
+            <label for="answerKeyAnthropic">Anthropic API key</label>
+            <input type="password" id="answerKeyAnthropic" placeholder="Paste Anthropic key (sk-ant-…)..." spellcheck="false" />
+            <p class="hint">Get a key at console.anthropic.com.</p>
+          </div>
+          <div class="field">
+            <label for="answerKeyOpenai">OpenAI API key</label>
+            <input type="password" id="answerKeyOpenai" placeholder="Paste OpenAI key (sk-…)..." spellcheck="false" />
+            <p class="hint">Get a key at platform.openai.com/api-keys.</p>
           </div>
           <div class="field">
             <label for="answerModel">Model</label>
             <select id="answerModel"></select>
-            <p class="hint">Reasoning models "think" before answering (slower first token). Pick a non-reasoning model for the fastest replies.</p>
+            <p class="hint">List is for the selected provider. Reasoning models think first (slower first token).</p>
           </div>
         </section>
       </div>
@@ -340,7 +355,7 @@
           <ol class="help-steps">
             <li>Setup &rarr; pick <b>Caption</b> or <b>Voice</b> mode.</li>
             <li>If using Voice: <b>Voice</b> tab &rarr; choose engine (Deepgram or xAI) and paste the API key.</li>
-            <li><b>Prompts</b> tab &rarr; pick/edit the answer preset for the meeting type, and paste your xAI key for answers.</li>
+            <li><b>API keys</b> tab &rarr; pick an answer provider (xAI, Anthropic, or OpenAI) and paste its key.</li>
             <li>Click <b>Start</b>.</li>
             <li>For Caption mode: a screen-area selector appears &mdash; drag a rectangle around the live caption strip you want to OCR.</li>
             <li>Click the <b>&#9679;</b> rec dot in the header to begin / stop.</li>
@@ -736,6 +751,11 @@
     <div class="answer-presetbar">
       <select id="presetSelect" class="answer-preset-select" style="display:none">
         <option value="">(no prompt)</option>
+      </select>
+      <select id="answerProviderSelect" class="answer-provider-select" title="Answer API provider">
+        <option value="xai">xAI</option>
+        <option value="anthropic">Anthropic</option>
+        <option value="openai">OpenAI</option>
       </select>
       <div class="mode-seg" id="modeSeg">
         <button class="mode-seg-btn mode-seg-btn--active" data-mode="ANSWER" title="Plain text answer">Text</button>

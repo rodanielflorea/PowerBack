@@ -543,6 +543,10 @@ body.in-interview .end-btn.live::before {
   flex-shrink: 0;
   font-weight: 500;
 }
+.answer-presetbar .csel-provider {
+  flex: 0 0 auto;
+  width: 104px;
+}
 .answer-preset-select,
 .answer-presetbar .csel { flex: 1; min-width: 0; }
 .answer-preset-select,

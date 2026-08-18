@@ -179,9 +179,12 @@ function makeCustomSelect(sel, compact) {
 // Apply to every <select> in the document after DOM is ready.
 // compact=true for the small presetbar selects.
 (function applyCustomSelects() {
-  const compactIds = new Set(["presetSelect", "answerModelHeader"]);
+  const compactIds = new Set(["presetSelect", "answerModelHeader", "answerProviderSelect"]);
   document.querySelectorAll("select").forEach((sel) => {
     makeCustomSelect(sel, compactIds.has(sel.id));
+    if (sel.id === "answerProviderSelect" && sel.parentElement) {
+      sel.parentElement.classList.add("csel-provider");
+    }
   });
 })();
 
@@ -417,7 +420,7 @@ function hideSetup() {
   endBtn.classList.add("live");
   const role = (setupRoleSupporterV && setupRoleSupporterV.checked) ? "supporter" : "speaker";
   applyRoleClass(role);
-  // The speaker sees the Grok answer panel; the supporter uses the chat panel.
+  // The speaker sees the answer panel; the supporter uses the chat panel.
   if (answerMain) answerMain.hidden = role === "supporter";
 }
 
@@ -1352,7 +1355,7 @@ const HOTKEY_LABELS = {
   stickyScrollUp: "Scroll sticky note up",
   stickyScrollDown: "Scroll sticky note down",
   helpRequest: "Send help request (speaker → supporter)",
-  submitPrompt: "Get answer (send to Grok)",
+  submitPrompt: "Get answer (send to selected API)",
   toggleClickThrough: "Toggle click-through (mouse passes through)",
 };
 
@@ -1626,34 +1629,52 @@ window.api.onCaptureState((on) => {
   updateRecTitle();
 });
 
-// ===== Grok answer panel =====
+// ===== Answer panel =====
 const answerHistory = document.getElementById("answerHistory");
 const answerEmpty = document.getElementById("answerEmpty");
 const getAnswerBtn = document.getElementById("getAnswerBtn");
 const answerClearBtn = document.getElementById("answerClearBtn");
 const presetSelect = document.getElementById("presetSelect");
 const answerKeyEl = document.getElementById("answerKey");
+const answerKeyAnthropicEl = document.getElementById("answerKeyAnthropic");
+const answerKeyOpenaiEl = document.getElementById("answerKeyOpenai");
 const answerModelEl = document.getElementById("answerModel");
 const answerModelHeaderEl = document.getElementById("answerModelHeader");
+const answerProviderSelect = document.getElementById("answerProviderSelect");
 const modeSeg = document.getElementById("modeSeg");
 const railModelBtn = document.getElementById("railModelBtn");
 let currentAnswerEl = null;
+let answerCfgCache = { provider: "xai", model: "grok-4.20-0309-non-reasoning", keys: {}, fallbackModels: [] };
 
-// Rail model button — opens native popup menu, same style as prompt menu
+function updateRailModelBtn(cfg) {
+  if (!railModelBtn) return;
+  const c = cfg || answerCfgCache;
+  const id = c.model || "";
+  railModelBtn.textContent = c.railAbbr || "M";
+  const prov = (c.providers || []).find((p) => p.id === c.provider);
+  railModelBtn.title = (prov ? prov.label + " · " : "") + id;
+}
+
+function setProviderRadios(provider) {
+  document.querySelectorAll('input[name="answerProvider"]').forEach((el) => {
+    el.checked = el.value === provider;
+  });
+  if (answerProviderSelect && answerProviderSelect.value !== provider) {
+    answerProviderSelect.value = provider;
+  }
+}
+
+// Rail model button — opens native popup menu (provider + models)
 if (railModelBtn && window.api.showModelMenu) {
   railModelBtn.addEventListener('click', () => window.api.showModelMenu());
 }
 if (window.api.onModelSelected) {
   window.api.onModelSelected((id) => {
     setAnswerModel(id);
-    // Update button label to a short abbreviation of the selected model
-    if (railModelBtn) {
-      // Show something like "G4" for grok-4, "G3" for grok-3, etc.
-      const abbr = id.replace('grok-', 'G').replace(/\.\d+$/, '').replace(/-.*/, '').slice(0, 4);
-      railModelBtn.textContent = abbr || 'M';
-      railModelBtn.title = id;
-    }
   });
+}
+if (window.api.onAnswerConfigChanged) {
+  window.api.onAnswerConfigChanged((cfg) => applyAnswerConfigUi(cfg));
 }
 
 // Manual mode — default Text; CODE/DIAGRAM force specific output format.
@@ -1667,12 +1688,12 @@ if (modeSeg) {
   });
 }
 
-// Short hint labels shown next to each model ID in the dropdown.
-// Applied to both the static fallback list and the live list from xAI.
 // Clean display names shown in the dropdown instead of raw API IDs.
 const MODEL_DISPLAY = {
   "grok-4":                           "Grok 4  ⚡ latest",
   "grok-4-0709":                      "Grok 4 (Jul)  ⚡ latest",
+  "grok-4.6":                         "Grok 4.6  🧠 latest",
+  "grok-4.5":                         "Grok 4.5",
   "grok-4.3":                         "Grok 4.3  🧠 smartest",
   "grok-4.20-0309-non-reasoning":     "Grok 4.20 Fast  ⚡ no reasoning",
   "grok-4.20-0309-reasoning":         "Grok 4.20 Reasoning  🧠 slower",
@@ -1685,38 +1706,49 @@ const MODEL_DISPLAY = {
   "grok-2-vision-1212":               "Grok 2 Vision  (legacy)",
   "grok-beta":                        "Grok Beta  (experimental)",
   "grok-build-0.1":                   "Grok Build  🔧 code",
-  "grok-imagine-image":               "Grok Image Gen  🎨",
-  "grok-imagine-image-quality":       "Grok Image HQ  🎨",
-  "grok-imagine-video":               "Grok Video Gen  🎬",
-  "grok-imagine-video-1.5":           "Grok Video Gen v1.5  🎬",
+  "claude-sonnet-5":                  "Claude Sonnet 5",
+  "claude-opus-5":                    "Claude Opus 5  🧠",
+  "claude-fable-5":                   "Claude Fable 5  🧠 flagship",
+  "claude-haiku-4-5":                 "Claude Haiku 4.5  ⚡ fastest",
+  "claude-sonnet-4-6":                "Claude Sonnet 4.6",
+  "gpt-5.6-sol":                      "GPT-5.6 Sol  🧠 flagship",
+  "gpt-5.6-terra":                    "GPT-5.6 Terra  ⚖ balanced",
+  "gpt-5.6-luna":                     "GPT-5.6 Luna  ⚡ cheap",
+  "gpt-5.4":                          "GPT-5.4",
+  "gpt-4.1":                          "GPT-4.1",
+  "gpt-4o":                           "GPT-4o  ⚡ fastest",
 };
 
 function modelLabel(id) {
   return MODEL_DISPLAY[id] || id;
 }
 
-// Fallback model list (used when the live list from xAI can't be fetched, e.g.
-// no key yet). The live list from the API supersedes this when available.
 const FALLBACK_MODELS = [
   { id: "grok-4.20-0309-non-reasoning" },
   { id: "grok-4.3" },
+  { id: "grok-4.6" },
   { id: "grok-4.20-0309-reasoning" },
-  { id: "grok-4.20-multi-agent-0309" },
 ];
 
-// Populate BOTH model dropdowns (Setup/Settings panel + header) from the live
-// xAI model list for the current key, falling back to the static list.
-async function populateModelSelects() {
-  const cfg = await window.api.getAnswerConfig();
-  const current = cfg.model || FALLBACK_MODELS[0].id;
+function fillKeyFields(cfg) {
+  const keys = cfg.keys || {};
+  const setVal = (el, val) => {
+    if (!el || document.activeElement === el) return;
+    el.value = val || "";
+  };
+  setVal(answerKeyEl, keys.xai || cfg.apiKey || "");
+  setVal(answerKeyAnthropicEl, keys.anthropic || "");
+  setVal(answerKeyOpenaiEl, keys.openai || "");
+}
+
+function fillModelSelects(cfg, liveIds) {
+  const fallback = (cfg.fallbackModels && cfg.fallbackModels.length)
+    ? cfg.fallbackModels.map((id) => ({ id }))
+    : FALLBACK_MODELS.slice();
+  const current = cfg.model || fallback[0].id;
   let opts;
-  let live = null;
-  try { live = await window.api.listXaiModels(); } catch {}
-  if (Array.isArray(live) && live.length) {
-    opts = live.map((id) => ({ id }));
-  } else {
-    opts = FALLBACK_MODELS.slice();
-  }
+  if (Array.isArray(liveIds) && liveIds.length) opts = liveIds.map((id) => ({ id }));
+  else opts = fallback;
   if (!opts.some((o) => o.id === current)) opts.unshift({ id: current });
   for (const sel of [answerModelEl, answerModelHeaderEl]) {
     if (!sel) continue;
@@ -1730,17 +1762,40 @@ async function populateModelSelects() {
     sel.value = current;
     if (sel._cselRefresh) sel._cselRefresh();
   }
-  // Update rail model button label to show current model abbreviation
-  if (railModelBtn) {
-    const abbr = current.replace('grok-', 'G').replace(/\.\d+$/, '').replace(/-.*/, '').slice(0, 4);
-    railModelBtn.textContent = abbr || 'M';
-    railModelBtn.title = current;
+}
+
+async function applyAnswerConfigUi(cfg, { refreshLive = false } = {}) {
+  if (!cfg) return;
+  answerCfgCache = cfg;
+  setProviderRadios(cfg.provider || "xai");
+  fillKeyFields(cfg);
+  let live = null;
+  if (refreshLive) {
+    try { live = await window.api.listAnswerModels(); } catch {}
   }
+  fillModelSelects(cfg, live);
+  updateRailModelBtn(cfg);
+}
+
+async function populateModelSelects() {
+  const cfg = await window.api.getAnswerConfig();
+  await applyAnswerConfigUi(cfg, { refreshLive: true });
+}
+
+async function setAnswerProvider(provider) {
+  if (!provider) return;
+  const cfg = await window.api.setAnswerConfig({ provider, keys: collectAnswerKeys() });
+  await applyAnswerConfigUi(cfg || await window.api.getAnswerConfig(), { refreshLive: true });
 }
 
 function setAnswerModel(value) {
   if (!value) return;
-  window.api.setAnswerConfig({ model: value });
+  window.api.setAnswerConfig({ model: value }).then((cfg) => {
+    if (cfg) {
+      answerCfgCache = cfg;
+      updateRailModelBtn(cfg);
+    }
+  });
   if (answerModelEl && answerModelEl.value !== value) {
     answerModelEl.value = value;
     if (answerModelEl._cselRefresh) answerModelEl._cselRefresh();
@@ -1752,6 +1807,14 @@ function setAnswerModel(value) {
 }
 if (answerModelEl) answerModelEl.addEventListener("change", () => setAnswerModel(answerModelEl.value));
 if (answerModelHeaderEl) answerModelHeaderEl.addEventListener("change", () => setAnswerModel(answerModelHeaderEl.value));
+document.querySelectorAll('input[name="answerProvider"]').forEach((el) => {
+  el.addEventListener("change", () => {
+    if (el.checked) setAnswerProvider(el.value);
+  });
+});
+if (answerProviderSelect) {
+  answerProviderSelect.addEventListener("change", () => setAnswerProvider(answerProviderSelect.value));
+}
 
 // ===== Composer image attachments (multiple screenshots via Alt+A) =====
 const composerImgStrip = document.getElementById("composerImgStrip");
@@ -1914,6 +1977,8 @@ function submitComposer() {
   if (!composerInput) return;
   const q = composerInput.value.trim();
   if (!q && attachedImages.length === 0) return;
+
+  if (typeof persistAnswerKeys === "function") persistAnswerKeys();
 
   // Cancel pending speculative timer — we're submitting now
   if (_speculativeTimer) { clearTimeout(_speculativeTimer); _speculativeTimer = null; }
@@ -2086,6 +2151,7 @@ function setManualMode(mode) {
 function resendTurn(question, imgs) {
   const hasImgs = Array.isArray(imgs) && imgs.length > 0;
   if (!question && !hasImgs) return;
+  if (typeof persistAnswerKeys === "function") persistAnswerKeys();
   // Cancel any in-flight speculation, then fire a fresh request.
   _speculativeText = null;
   if (window.api.speculativeCancel) window.api.speculativeCancel();
@@ -2588,8 +2654,7 @@ async function refreshPresetSelect() {
     if (sel._cselRefresh) sel._cselRefresh();
   }
 
-  if (answerKeyEl) answerKeyEl.value = cfg.apiKey || "";
-  await populateModelSelects();
+  await applyAnswerConfigUi(cfg, { refreshLive: true });
 }
 
 function onPresetChange(sourceSelect) {
@@ -2603,13 +2668,42 @@ function onPresetChange(sourceSelect) {
 
 if (presetSelect) presetSelect.addEventListener("change", () => onPresetChange(presetSelect));
 if (setupPresetSelect) setupPresetSelect.addEventListener("change", () => onPresetChange(setupPresetSelect));
-if (answerKeyEl) {
-  answerKeyEl.addEventListener("change", () => {
-    window.api.setAnswerConfig({ apiKey: answerKeyEl.value.trim() });
-    // A new key may expose a different model list — refresh it.
-    populateModelSelects();
+function collectAnswerKeys() {
+  return {
+    xai: answerKeyEl ? answerKeyEl.value.trim() : "",
+    anthropic: answerKeyAnthropicEl ? answerKeyAnthropicEl.value.trim() : "",
+    openai: answerKeyOpenaiEl ? answerKeyOpenaiEl.value.trim() : "",
+  };
+}
+
+function persistAnswerKeys() {
+  return window.api.setAnswerConfig({ keys: collectAnswerKeys() });
+}
+
+function persistAnswerKey(providerId, value) {
+  const keys = collectAnswerKeys();
+  keys[providerId] = value;
+  window.api.setAnswerConfig({ keys }).then(() => populateModelSelects());
+}
+
+function bindAnswerKeyField(el, providerId) {
+  if (!el) return;
+  let timer = null;
+  const save = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    persistAnswerKey(providerId, el.value.trim());
+  };
+  el.addEventListener("change", save);
+  el.addEventListener("paste", () => setTimeout(save, 0));
+  el.addEventListener("input", () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(save, 400);
   });
 }
+
+bindAnswerKeyField(answerKeyEl, "xai");
+bindAnswerKeyField(answerKeyAnthropicEl, "anthropic");
+bindAnswerKeyField(answerKeyOpenaiEl, "openai");
 refreshPresetSelect();
 
 async function refreshMicList() {
