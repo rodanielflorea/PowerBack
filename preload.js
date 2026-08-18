@@ -123,7 +123,7 @@ contextBridge.exposeInMainWorld('api', {
   onIdeTypingState: (cb) => ipcRenderer.on('ide-typing-state', (_e, s) => cb(s)),
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
   showPromptMenu: () => ipcRenderer.invoke('show-prompt-menu'),
-  showModelMenu: () => ipcRenderer.invoke('show-model-menu'),
+  showModelMenu: (anchor) => ipcRenderer.invoke('show-model-menu', anchor),
   onModelSelected: (cb) => ipcRenderer.on('model-selected', (_e, id) => cb(id)),
   onAnswerConfigChanged: (cb) => ipcRenderer.on('answer-config-changed', (_e, cfg) => cb(cfg)),
   exportPrompts: () => ipcRenderer.invoke('prompts-export'),

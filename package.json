@@ -16,6 +16,7 @@
     "files": [
       "main.js",
       "llm-providers.js",
+      "defaults/**/*",
       "preload*.js",
       "renderer/**/*",
       "build/icon.png",

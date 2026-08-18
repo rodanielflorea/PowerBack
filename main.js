@@ -117,7 +117,8 @@ const DEFAULT_STATE = {
     },
     activePromptId: null,
   },
-  avoidPhrases: '',   // newline-separated list of banned phrases/patterns
+  avoidPhrases: '',   // filled from defaults/avoid.txt on seed
+  promptDefaultsVersion: 0,
   // Remembered personal profile, pre-filled into the New-session form.
   profile: { name: '', city: '', country: '', timezone: '' },
   // Named, switchable profiles for the New-session form.
@@ -429,24 +430,48 @@ function migrateProfilesIfNeeded() {
   }
 }
 
-// Seed starter answer presets (one per meeting type) on first run so the user has
-// something to switch between. Runs once; deleting them later won't re-seed.
-function seedDefaultPromptsIfNeeded() {
-  if (state.promptsSeeded) return;
-  if (Array.isArray(state.prompts) && state.prompts.length > 0) { state.promptsSeeded = true; return; }
-  state.prompts = [
-    { id: 'preset-intro', title: 'Intro / recruiter screen',
-      text: 'You are an expert interview coach. Based on what the interviewer just said, write a concise, confident answer (3–5 sentences) the candidate can say aloud in a recruiter/intro screen. Be warm, professional, and specific; no filler, no preamble — just the answer.' },
-    { id: 'preset-tech', title: 'Technical interview',
-      text: 'You are a senior engineer coaching a candidate in a technical interview. Based on what was asked, give a correct, concise, structured answer the candidate can say aloud: state the approach, the key trade-offs, and complexity where relevant. Prefer clarity over completeness. Output only the answer.' },
-    { id: 'preset-ceo', title: 'CEO / executive',
-      text: 'You are coaching the candidate in a conversation with a CEO or executive. Answer strategically and concisely, focusing on business impact, vision, and leadership. Speak with confidence and brevity. Output only the answer.' },
-    { id: 'preset-team', title: 'Team meeting',
-      text: 'You are helping the user contribute in a team meeting. Based on what was just said, suggest a concise, collaborative response or talking point the user can say aloud. Keep it practical and brief. Output only the response.' },
+const DEFAULT_PROMPT_ID = 'preset-general';
+const DEFAULT_PROMPT_TITLE = 'General';
+const PROMPT_DEFAULTS_VERSION = 3;
+
+function loadBundledText(filename) {
+  const dirs = [
+    path.join(__dirname, '.claude'),
+    path.join(__dirname, 'defaults'),
   ];
+  for (const dir of dirs) {
+    const p = path.join(dir, filename);
+    try {
+      if (fs.existsSync(p)) {
+        return fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').trim();
+      }
+    } catch {}
+  }
+  return '';
+}
+
+function builtinPromptDefaults() {
+  return {
+    prompt: loadBundledText('prompt.txt'),
+    avoid: loadBundledText('avoid.txt'),
+  };
+}
+
+// Replace the old multi-preset seed with the bundled general prompt + avoid list.
+function seedDefaultPromptsIfNeeded() {
+  if (state.promptDefaultsVersion === PROMPT_DEFAULTS_VERSION && state.promptsSeeded) return;
+  const bundled = builtinPromptDefaults();
+  state.prompts = [{
+    id: DEFAULT_PROMPT_ID,
+    title: DEFAULT_PROMPT_TITLE,
+    text: bundled.prompt,
+  }];
   if (!state.answer) state.answer = { ...DEFAULT_STATE.answer };
-  if (!state.answer.activePromptId) state.answer.activePromptId = 'preset-intro';
+  state.answer.activePromptId = DEFAULT_PROMPT_ID;
+  state.avoidPhrases = bundled.avoid;
   state.promptsSeeded = true;
+  state.promptDefaultsVersion = PROMPT_DEFAULTS_VERSION;
+  try { saveState(); } catch {}
 }
 
 function saveState() {
@@ -2680,9 +2705,16 @@ function buildAnswerMessages(q, imgs, mode) {
     if (list.length) {
       messages.push({
         role: 'system',
-        content: `BANNED PHRASES — never output these or close paraphrases of them:\n${list.map(p => `• "${p}"`).join('\n')}`,
+        content: `BANNED PHRASES: never output these or close paraphrases of them:\n${list.map(p => `- "${p}"`).join('\n')}`,
       });
     }
+  }
+
+  if (mode === 'ANSWER') {
+    messages.push({
+      role: 'system',
+      content: 'SPOKEN OUTPUT: Talk like a native American engineer in a real standup or 1:1. Short sentences. Contractions. Start naturally with So or Yeah so when it fits. Never output an em dash, en dash, or --. Use a new sentence, a comma, or the words so / and / which instead. No resume voice. No blog voice. Only paragraphs someone can say out loud.',
+    });
   }
 
   if (mode === 'DIAGRAM') {
@@ -2710,6 +2742,20 @@ function buildAnswerMessages(q, imgs, mode) {
     messages.push({ role: 'user', content: q });
   }
   return messages;
+}
+
+function spokenSanitize(text, mode) {
+  let s = String(text || '');
+  if (!s) return s;
+  const spoken = !mode || mode === 'ANSWER';
+  s = s.replace(/\u2014|\u2013|\u2015|\u2212/g, spoken ? ', ' : '-');
+  if (spoken) {
+    s = s.replace(/\s*--+\s*/g, ', ');
+    s = s.replace(/\s+,/g, ',');
+    s = s.replace(/,(?=\S)/g, ', ');
+    s = s.replace(/[ \t]{2,}/g, ' ');
+  }
+  return s;
 }
 
 async function generateAnswer(question, images, forcedMode) {
@@ -2756,12 +2802,14 @@ async function generateAnswer(question, images, forcedMode) {
       messages,
       signal: ac.signal,
       onDelta: (delta) => {
+        const piece = spokenSanitize(delta, mode);
+        if (!piece) return;
         if (firstToken) {
           firstToken = false;
           appendLogLine(`[answer] first-token ${Date.now() - t0}ms provider=${provider.id} model=${model}`);
         }
-        full += delta;
-        if (win && !win.isDestroyed()) win.webContents.send('answer-chunk', delta);
+        full += piece;
+        if (win && !win.isDestroyed()) win.webContents.send('answer-chunk', piece);
       },
     });
   } catch (e) {
@@ -2807,6 +2855,7 @@ async function warmApiConnection() {
     }
     await fetch(provider.warmUrl, { headers, signal: ac.signal });
   } catch {}
+  prefetchModelList(provider);
 }
 ipcMain.handle('warm-api-connection', () => warmApiConnection());
 
@@ -2850,9 +2899,11 @@ async function startSpeculative(question, forcedMode) {
       messages,
       signal: ac.signal,
       onDelta: (delta) => {
-        speculativeBuffer += delta;
+        const piece = spokenSanitize(delta, specMode);
+        if (!piece) return;
+        speculativeBuffer += piece;
         if (speculativeCommitted && win && !win.isDestroyed()) {
-          win.webContents.send('answer-chunk', delta);
+          win.webContents.send('answer-chunk', piece);
         }
       },
     });
@@ -2902,14 +2953,15 @@ function commitSpeculative(question, images, forcedMode) {
     if (win && !win.isDestroyed()) {
       const specModeCommit = (ac && ac._mode) || 'ANSWER';
       win.webContents.send('answer-start', { question: q, hasImage: false, mode: specModeCommit });
-      if (buffered) win.webContents.send('answer-chunk', buffered);
+      const clean = buffered ? spokenSanitize(buffered, specModeCommit) : '';
+      if (clean) win.webContents.send('answer-chunk', clean);
       if (streamDone) {
         // Stream already finished — flush everything and close
-        win.webContents.send('answer-done', { text: buffered });
-        if (buffered.trim()) {
+        win.webContents.send('answer-done', { text: clean });
+        if (clean.trim()) {
           if (q) sessionLog.push({ ts: Date.now(), kind: 'question', text: q });
-          sessionLog.push({ ts: Date.now(), kind: 'answer', text: buffered.trim() });
-          recordTurn(q, buffered, specModeCommit);
+          sessionLog.push({ ts: Date.now(), kind: 'answer', text: clean.trim() });
+          recordTurn(q, clean, specModeCommit);
         }
         speculativeActive = false;
         speculativeQuestion = null;
@@ -2960,7 +3012,9 @@ ipcMain.handle('clear-answer-memory', () => {
 async function listAnswerModels() {
   const provider = getAnswerProvider();
   const apiKey = getAnswerApiKey(provider.id);
-  return listModels({ provider, apiKey });
+  const ids = await listModels({ provider, apiKey });
+  if (Array.isArray(ids) && ids.length) modelListCache[provider.id] = ids;
+  return ids;
 }
 ipcMain.handle('list-xai-models', () => listAnswerModels());
 ipcMain.handle('list-answer-models', () => listAnswerModels());
@@ -2997,7 +3051,15 @@ ipcMain.handle('save-prompt', (_e, prompt) => {
 });
 ipcMain.handle('delete-prompt', (_e, id) => {
   state.prompts = (state.prompts || []).filter((p) => p.id !== id);
-  saveState();
+  if (!state.prompts.length) {
+    state.promptDefaultsVersion = 0;
+    seedDefaultPromptsIfNeeded();
+  } else if (state.answer && state.answer.activePromptId === id) {
+    state.answer.activePromptId = state.prompts[0].id;
+    saveState();
+  } else {
+    saveState();
+  }
   return state.prompts.slice();
 });
 ipcMain.handle('copy-text', (_e, text) => {
@@ -3021,18 +3083,46 @@ function emitAnswerConfig() {
   if (win && !win.isDestroyed()) win.webContents.send('answer-config-changed', publicAnswerConfig());
 }
 
-async function showModelMenu() {
+const modelListCache = Object.create(null);
+
+function cachedModelIds(provider) {
+  const current = getAnswerModel(provider.id);
+  const cached = modelListCache[provider.id];
+  let ids = (Array.isArray(cached) && cached.length) ? cached.slice() : provider.fallbackModels.slice();
+  if (current && !ids.includes(current)) ids.unshift(current);
+  return ids;
+}
+
+function prefetchModelList(provider) {
+  const p = provider || getAnswerProvider();
+  const apiKey = getAnswerApiKey(p.id);
+  if (!apiKey) return;
+  listModels({ provider: p, apiKey }).then((ids) => {
+    if (Array.isArray(ids) && ids.length) modelListCache[p.id] = ids;
+  }).catch(() => {});
+}
+
+function popupNearAnchor(menu, anchor) {
+  const opts = { window: win };
+  if (anchor && Number.isFinite(Number(anchor.x)) && Number.isFinite(Number(anchor.y))) {
+    const zoom = (win.webContents && win.webContents.getZoomFactor()) || 1;
+    const left = Number(anchor.x) * zoom;
+    const top = Number(anchor.y) * zoom;
+    const btnW = Number(anchor.width) || 26;
+    // Rail sits on the right edge; open the list immediately to the left of the button.
+    const menuW = 260;
+    opts.x = Math.max(0, Math.round(left + btnW - menuW));
+    opts.y = Math.round(top);
+  }
+  menu.popup(opts);
+}
+
+function showModelMenu(anchor) {
   if (!win) return;
   const provider = getAnswerProvider();
-  const apiKey = getAnswerApiKey(provider.id);
   const current = getAnswerModel(provider.id);
-
-  let ids = [];
-  if (apiKey) {
-    try { ids = (await listModels({ provider, apiKey })) || []; } catch { ids = []; }
-  }
-  if (!ids.length) ids = provider.fallbackModels.slice();
-  if (!ids.includes(current)) ids.unshift(current);
+  const ids = cachedModelIds(provider);
+  prefetchModelList(provider);
 
   const items = [
     { label: 'Provider', enabled: false },
@@ -3041,6 +3131,7 @@ async function showModelMenu() {
       click: () => {
         applyAnswerConfig({ provider: p.id });
         emitAnswerConfig();
+        prefetchModelList(getAnswerProvider());
       },
     })),
     { type: 'separator' },
@@ -3056,9 +3147,9 @@ async function showModelMenu() {
       },
     })),
   ];
-  Menu.buildFromTemplate(items).popup({ window: win });
+  popupNearAnchor(Menu.buildFromTemplate(items), anchor);
 }
-ipcMain.handle('show-model-menu', () => showModelMenu());
+ipcMain.handle('show-model-menu', (_e, anchor) => showModelMenu(anchor));
 
 function importPromptsList(list) {
   if (!Array.isArray(state.prompts)) state.prompts = [];

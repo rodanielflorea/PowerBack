@@ -1666,7 +1666,12 @@ function setProviderRadios(provider) {
 
 // Rail model button — opens native popup menu (provider + models)
 if (railModelBtn && window.api.showModelMenu) {
-  railModelBtn.addEventListener('click', () => window.api.showModelMenu());
+  railModelBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const r = railModelBtn.getBoundingClientRect();
+    window.api.showModelMenu({ x: r.left, y: r.top, width: r.width, height: r.height });
+  });
 }
 if (window.api.onModelSelected) {
   window.api.onModelSelected((id) => {
@@ -2638,12 +2643,14 @@ const setupPresetSelect = document.getElementById("setupPresetSelect");
 async function refreshPresetSelect() {
   const cfg = await window.api.getAnswerConfig();
   const prompts = await window.api.getPrompts();
-  const activeId = cfg.activePromptId || "";
+  const fallbackId = (prompts[0] && prompts[0].id) || "";
+  const activeId = (cfg.activePromptId && prompts.some((p) => p.id === cfg.activePromptId))
+    ? cfg.activePromptId
+    : fallbackId;
 
-  // Populate both selects with the same list
   for (const sel of [presetSelect, setupPresetSelect]) {
     if (!sel) continue;
-    sel.innerHTML = '<option value="">(no prompt)</option>';
+    sel.innerHTML = "";
     for (const p of prompts) {
       const opt = document.createElement("option");
       opt.value = p.id;
@@ -2659,10 +2666,10 @@ async function refreshPresetSelect() {
 
 function onPresetChange(sourceSelect) {
   const id = sourceSelect.value || null;
+  if (!id) return;
   window.api.setAnswerConfig({ activePromptId: id });
-  // Keep both selects in sync
   for (const sel of [presetSelect, setupPresetSelect]) {
-    if (sel && sel !== sourceSelect) sel.value = id || "";
+    if (sel && sel !== sourceSelect) sel.value = id;
   }
 }
 
