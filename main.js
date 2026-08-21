@@ -550,7 +550,7 @@ function createWindow() {
   win.once('ready-to-show', () => {
     win.show();
     // Pre-warm the xAI connection so first real request skips TLS handshake.
-    setTimeout(() => warmApiConnection().catch(() => {}), 1500);
+    setTimeout(() => startWarmLoop(), 400);
   });
 
   win.on('move', () => { saveState(); syncStickyPosition(); });
@@ -2196,7 +2196,33 @@ let speculativeCommitted = false; // true after commit — stream pipes directly
 // is remembered and fed back as context so follow-up questions build on the CV,
 // support material AND the diagrams/code already generated.
 let convoHistory = []; // [{ user, assistant, mode }]
-const CONVO_CHAR_BUDGET = 14000; // cap injected history; oldest pairs trimmed first
+const CONVO_CHAR_BUDGET = 6000; // recent turns only — long history inflates prefill/TTFT
+const ANSWER_CONV_FALLBACK = 'ace-' + Date.now().toString(36);
+
+function answerConvId() {
+  return currentSessionId || ANSWER_CONV_FALLBACK;
+}
+
+function maxTokensForMode(mode) {
+  if (mode === 'CODE') return 8192;
+  if (mode === 'DIAGRAM') return 8192;
+  return 2048; // spoken answers ~90s still fit; 700 was cutting the ending
+}
+
+function classifyQuestionLocal(q) {
+  const s = String(q || '').toLowerCase();
+  if (!s) return 'ANSWER';
+  const wantsCode = /\b(implement|leetcode|pseudocode|write (a |the )?(function|class|method|script|code)|code (a |the )?\w)/.test(s);
+  const wantsDiagram = /\b(draw|sketch|visualize|diagram|flowchart|sequence diagram|architecture diagram|mermaid|\buml\b)/.test(s);
+  if (wantsCode && !wantsDiagram) return 'CODE';
+  if (wantsDiagram && !wantsCode) return 'DIAGRAM';
+  return 'ANSWER';
+}
+
+function resolveAnswerMode(forcedMode, q) {
+  if (forcedMode && forcedMode !== 'AUTO') return forcedMode;
+  return classifyQuestionLocal(q);
+}
 
 // Record a completed, user-visible turn. Strips the <sticky> presenter block
 // (redundant with the diagram + explanation) to save context budget.
@@ -2227,13 +2253,14 @@ function recordTurn(user, assistant, mode, images) {
 
 // Prior turns as chat messages (user/assistant pairs), newest kept, oldest
 // pairs dropped once the char budget is exceeded.
-function conversationContextMessages() {
+function conversationContextMessages(budget) {
+  const cap = budget || CONVO_CHAR_BUDGET;
   const msgs = [];
   let total = 0;
   for (let i = convoHistory.length - 1; i >= 0; i--) {
     const t = convoHistory[i];
     const len = (t.user || '').length + (t.assistant || '').length;
-    if (total + len > CONVO_CHAR_BUDGET && msgs.length) break;
+    if (total + len > cap && msgs.length) break;
     msgs.unshift({ role: 'assistant', content: t.assistant });
     msgs.unshift({ role: 'user', content: t.user || '[image/screenshot question]' });
     total += len;
@@ -2320,6 +2347,7 @@ ipcMain.handle('session-new', (_e, meta) => {
   state.profile = { ...s.profile }; // remember as the default for next time
   saveState();
   saveSessions();
+  schedulePromptCacheWarm();
   return s.id;
 });
 // Remembered personal profile, pre-filled into the New-session form.
@@ -2386,6 +2414,7 @@ ipcMain.handle('session-load', (_e, id) => {
   // Restore the session's own materials + profile (in-memory; global save untouched).
   if (s.knowledge) state.knowledge = JSON.parse(JSON.stringify(s.knowledge));
   activeProfile = s.profile || {};
+  schedulePromptCacheWarm();
   return { id: s.id, name: s.name, turns: s.turns || [], profile: s.profile || {}, knowledgeMeta: knowledgeMeta(s.knowledge) };
 });
 ipcMain.handle('session-delete', (_e, id) => {
@@ -2453,32 +2482,31 @@ async function extractDocText(arrayBuffer, name) {
   return buf.toString('utf8');
 }
 
-// Concatenate all uploaded knowledge into one context block (uncapped).
-function buildKnowledgeContext() {
+function clipText(s, n) {
+  s = String(s || '');
+  if (s.length <= n) return s;
+  return s.slice(0, n) + '\n[truncated]';
+}
+
+// Spoken answers need a small prompt so the first token isn't 2–3s of prefill.
+// CODE/DIAGRAM keep more material.
+function buildKnowledgeContext(mode) {
+  const compact = !mode || mode === 'ANSWER';
   const k = state.knowledge || {};
   const join = (arr) => (arr || []).map((i) => i.text).filter(Boolean).join('\n\n');
-  // Candidate profile (name / location / timezone + derived local time) from
-  // the active session — used as supporting context for answers.
   const p = activeProfile || {};
   const loc = [p.city, p.country].filter(Boolean).join(', ');
   const profileParts = [];
   if (p.name) profileParts.push(`Name: ${p.name}`);
   if (loc) profileParts.push(`Location: ${loc}`);
-  if (p.timezone) {
-    profileParts.push(`Timezone: ${p.timezone}`);
-    try {
-      const localNow = new Intl.DateTimeFormat('en-US', {
-        timeZone: p.timezone, dateStyle: 'full', timeStyle: 'short',
-      }).format(new Date());
-      profileParts.push(`Local time: ${localNow}`);
-    } catch {}
-  }
+  // Timezone only — a live clock here would bust prompt-cache on every minute.
+  if (p.timezone) profileParts.push(`Timezone: ${p.timezone}`);
   const sections = [
     ['CANDIDATE PROFILE', profileParts.join('\n')],
-    ['CANDIDATE RESUME / CV', join(k.cv)],
-    ['JOB DESCRIPTION', join(k.jd)],
-    ['SUPPORTING MATERIAL', join(k.support)],
-    ['PREVIOUS MEETING RECORDS', join(k.meetings)],
+    ['CANDIDATE RESUME / CV', clipText(join(k.cv), compact ? 5000 : 16000)],
+    ['JOB DESCRIPTION', clipText(join(k.jd), compact ? 2200 : 12000)],
+    ['SUPPORTING MATERIAL', clipText(join(k.support), compact ? 1200 : 12000)],
+    ['PREVIOUS MEETING RECORDS', clipText(join(k.meetings), compact ? 0 : 8000)],
   ];
   return sections
     .filter(([, body]) => body)
@@ -2501,12 +2529,14 @@ ipcMain.handle('kb-add', async (_e, { kind, name, data }) => {
   if (kind === 'cv' || kind === 'jd') state.knowledge[kind] = [item];
   else state.knowledge[kind].push(item);
   saveState();
+  schedulePromptCacheWarm();
   return { ok: true, name, chars: text.length };
 });
 
 ipcMain.handle('kb-remove', (_e, { kind, index }) => {
   if (state.knowledge[kind]) state.knowledge[kind].splice(index, 1);
   saveState();
+  schedulePromptCacheWarm();
   return { ok: true };
 });
 
@@ -2515,6 +2545,7 @@ ipcMain.handle('kb-remove', (_e, { kind, index }) => {
 ipcMain.handle('kb-clear', () => {
   state.knowledge = { cv: [], jd: [], support: [], meetings: [] };
   saveState();
+  schedulePromptCacheWarm();
   return { ok: true };
 });
 
@@ -2605,6 +2636,7 @@ function applyAnswerConfig(cfg) {
 
   state.answer = next;
   saveState();
+  schedulePromptCacheWarm();
   return publicAnswerConfig();
 }
 
@@ -2614,122 +2646,52 @@ function activePromptText() {
   return p ? p.text : '';
 }
 
-// ── Question classifier ───────────────────────────────────────────────────────
-// Fast non-streaming call that returns 'DIAGRAM', 'CODE', or 'ANSWER'.
-// Called in parallel with the main stream; result shapes system messages.
-async function classifyQuestion(q, imgs, apiKey, model) {
-  try {
-    const msgs = [{
-      role: 'system',
-      content: `You are a strict question classifier for a live coding interview assistant. Reply with exactly ONE word — no punctuation, no explanation.
-
-DECISION RULE — apply the FIRST matching rule:
-
-1. If the question contains write/implement/code/program/build/create/solve/make/develop AND asks for a function/algorithm/class/script → CODE (even for sorting, searching, graph, DP, or any data-structure algorithm).
-2. If the question explicitly asks to DRAW, SKETCH, VISUALIZE, or SHOW A DIAGRAM of a system → DIAGRAM.
-3. Everything else → ANSWER.
-
-CRITICAL: "implement quicksort", "write merge sort", "code a BFS", "build an LRU cache", "solve two-sum" → always CODE. Never DIAGRAM for algorithm implementation.
-CRITICAL: Only DIAGRAM when the user wants a visual picture, not working code.
-
-Examples:
-"write a quicksort" → CODE
-"implement merge sort in Python" → CODE
-"code a binary search tree" → CODE
-"draw the architecture of a REST API" → DIAGRAM
-"show a sequence diagram for OAuth" → DIAGRAM
-"design a URL shortener" → ANSWER
-"what is your experience with React" → ANSWER
-"explain TCP vs UDP" → ANSWER
-"what is a deadlock" → ANSWER
-
-Reply with only one of: DIAGRAM, CODE, ANSWER`,
-    }];
-    if (imgs && imgs.length) {
-      const content = [];
-      if (q) content.push({ type: 'text', text: q });
-      imgs.forEach(({ base64, mime }) =>
-        content.push({ type: 'image_url', image_url: { url: `data:${mime || 'image/png'};base64,${base64}` } })
-      );
-      msgs.push({ role: 'user', content });
-    } else {
-      msgs.push({ role: 'user', content: q });
-    }
-    const word = (await completeChat({
-      provider: getAnswerProvider(),
-      apiKey,
-      model,
-      messages: msgs,
-      maxTokens: 8,
-    })).toUpperCase().split(/\W/)[0];
-    return ['DIAGRAM', 'CODE'].includes(word) ? word : 'ANSWER';
-  } catch { return 'ANSWER'; }
-}
-
-function buildAnswerMessages(q, imgs, mode) {
-  const messages = [];
+function assembleStaticSystem(mode) {
   const sys = activePromptText();
-
-  const kb = buildKnowledgeContext();
-  if (kb) messages.push({
-    role: 'system',
-    content: 'REFERENCE MATERIAL (facts only — do NOT copy its tone, phrasing, or style into your answer):\n\n' + kb,
-  });
+  const staticParts = [];
+  const kb = buildKnowledgeContext(mode);
+  if (kb) {
+    staticParts.push('REFERENCE MATERIAL (facts only — do NOT copy its tone, phrasing, or style into your answer):\n\n' + kb);
+  }
 
   if (sys && mode === 'ANSWER') {
-    messages.push({
-      role: 'system',
-      content: `PRIMARY DIRECTIVE — this overrides all previous instructions for style, tone, persona, and format. Follow it exactly and completely:\n\n${sys}`,
-    });
+    staticParts.push(`PRIMARY DIRECTIVE — this overrides all previous instructions for style, tone, persona, and format. Follow it exactly and completely:\n\n${sys}`);
   } else if (sys) {
-    messages.push({
-      role: 'system',
-      content: `PERSONA & CONTENT GUIDANCE — apply this only to WORDING and technical choices. It must NOT change the required output format below, and must NOT make you introduce yourself or describe your experience when a diagram or code is requested:\n\n${sys}`,
-    });
+    staticParts.push(`PERSONA & CONTENT GUIDANCE — apply this only to WORDING and technical choices. It must NOT change the required output format below, and must NOT make you introduce yourself or describe your experience when a diagram or code is requested:\n\n${sys}`);
   }
 
   if (mode !== 'ANSWER') {
-    messages.push({
-      role: 'system',
-      content: 'When the user asks for a diagram, chart, flowchart, sequence diagram, or any visual structure, output it as a Mermaid code block (```mermaid ... ```) so it can be rendered graphically. Rules for valid Mermaid: (1) No HTML tags inside node labels — plain text only. (2) Use only rectangle brackets [text] for node shapes — do NOT use [/text] or [/text/] trapezoid syntax. (3) No "color:" in style directives. (4) Keep node IDs simple alphanumeric. (5) Do NOT use ASCII art. (6) READABILITY FIRST: keep each diagram graspable at a glance — aim for at most ~12-15 nodes. If the system is complex, do NOT cram everything into one diagram. Instead output a high-level OVERVIEW diagram first (major components only), then one or more SEPARATE ```mermaid blocks that each zoom into a single subsystem. (7) Group related nodes with subgraphs, and choose a direction that reads well (graph LR for wide pipelines, graph TD for hierarchies). (8) NEVER reuse one identifier for both a subgraph and a node — every subgraph id must be unique and distinct from all node ids (reusing an id causes a render cycle error).',
-    });
-    messages.push({
-      role: 'system',
-      content: 'Whenever your answer contains a diagram (Mermaid block) or a code block, append a presenter talking-script at the very end of your response using exactly this format:\n<sticky>\nOVERVIEW\n[One sentence: what this diagram/code shows and why it matters.]\n\nWALKTHROUGH\n[Narrate each major step, node, or code section as if explaining to someone who cannot see the screen. Write in full sentences. Cover every significant part. Aim for 60-90 seconds of speaking.]\n\nKEY INSIGHT\n[One sentence: the single most important takeaway or design decision.]\n</sticky>\nUse plain text only inside the sticky tags — no markdown, no asterisks, no bullet points.',
-    });
+    staticParts.push('When the user asks for a diagram, chart, flowchart, sequence diagram, or any visual structure, output it as a Mermaid code block (```mermaid ... ```) so it can be rendered graphically. Rules for valid Mermaid: (1) No HTML tags inside node labels — plain text only. (2) Use only rectangle brackets [text] for node shapes — do NOT use [/text] or [/text/] trapezoid syntax. (3) No "color:" in style directives. (4) Keep node IDs simple alphanumeric. (5) Do NOT use ASCII art. (6) READABILITY FIRST: keep each diagram graspable at a glance — aim for at most ~12-15 nodes. If the system is complex, do NOT cram everything into one diagram. Instead output a high-level OVERVIEW diagram first (major components only), then one or more SEPARATE ```mermaid blocks that each zoom into a single subsystem. (7) Group related nodes with subgraphs, and choose a direction that reads well (graph LR for wide pipelines, graph TD for hierarchies). (8) NEVER reuse one identifier for both a subgraph and a node — every subgraph id must be unique and distinct from all node ids (reusing an id causes a render cycle error).');
+    staticParts.push('Whenever your answer contains a diagram (Mermaid block) or a code block, append a presenter talking-script at the very end of your response using exactly this format:\n<sticky>\nOVERVIEW\n[One sentence: what this diagram/code shows and why it matters.]\n\nWALKTHROUGH\n[Narrate each major step, node, or code section as if explaining to someone who cannot see the screen. Write in full sentences. Cover every significant part. Aim for 60-90 seconds of speaking.]\n\nKEY INSIGHT\n[One sentence: the single most important takeaway or design decision.]\n</sticky>\nUse plain text only inside the sticky tags — no markdown, no asterisks, no bullet points.');
   }
 
   const avoidRaw = (state.avoidPhrases || '').trim();
   if (avoidRaw) {
     const list = avoidRaw.split('\n').map(l => l.trim()).filter(Boolean);
     if (list.length) {
-      messages.push({
-        role: 'system',
-        content: `BANNED PHRASES: never output these or close paraphrases of them:\n${list.map(p => `- "${p}"`).join('\n')}`,
-      });
+      staticParts.push(`BANNED PHRASES: never output these or close paraphrases of them:\n${list.map(p => `- "${p}"`).join('\n')}`);
     }
   }
 
   if (mode === 'ANSWER') {
-    messages.push({
-      role: 'system',
-      content: 'SPOKEN OUTPUT: Talk like a native American engineer in a real standup or 1:1. Short sentences. Contractions. Start naturally with So or Yeah so when it fits. Never output an em dash, en dash, or --. Use a new sentence, a comma, or the words so / and / which instead. No resume voice. No blog voice. Only paragraphs someone can say out loud.',
-    });
+    staticParts.push('SPOKEN OUTPUT: Talk like a native American engineer in a real standup or 1:1. Short sentences. Contractions. Start naturally with So or Yeah so when it fits. Never output an em dash, en dash, or --. Use a new sentence, a comma, or the words so / and / which instead. No resume voice. No blog voice. Only paragraphs someone can say out loud.');
   }
 
   if (mode === 'DIAGRAM') {
-    messages.push({
-      role: 'system',
-      content: 'OUTPUT FORMAT — DIAGRAM MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above, INCLUDING the persona/content guidance. Draw a diagram of the system described in the USER MESSAGE below. Your VERY FIRST characters must be ```mermaid — no introduction, no greeting, no self-description, no "Sure!", no "Here is...", no preamble whatsoever. Do NOT introduce yourself or talk about your experience. Start the mermaid block immediately. Keep it readable at a glance: for a complex system, output a high-level overview diagram first, then separate ```mermaid blocks that drill into individual subsystems, rather than one dense diagram. After the closing ``` of EACH diagram, write a thorough explanation of THAT diagram in prose: (a) what every major component/node does, (b) why it is necessary — the specific role it plays and what would break without it, (c) how the parts connect (the data and control flow between them). Then, after the final diagram, add a "Workflow" section that walks through the end-to-end flow step by step, and a "Why this solves the problem" section that explicitly maps the design back to the original requirements — which requirement each major part satisfies and the key trade-offs. Be substantive and concrete; do not pad with filler.',
-    });
+    staticParts.push('OUTPUT FORMAT — DIAGRAM MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above, INCLUDING the persona/content guidance. Draw a diagram of the system described in the USER MESSAGE below. Your VERY FIRST characters must be ```mermaid — no introduction, no greeting, no self-description, no "Sure!", no "Here is...", no preamble whatsoever. Do NOT introduce yourself or talk about your experience. Start the mermaid block immediately. Keep it readable at a glance: for a complex system, output a high-level overview diagram first, then separate ```mermaid blocks that drill into individual subsystems, rather than one dense diagram. After the closing ``` of EACH diagram, write a thorough explanation of THAT diagram in prose: (a) what every major component/node does, (b) why it is necessary — the specific role it plays and what would break without it, (c) how the parts connect (the data and control flow between them). Then, after the final diagram, add a "Workflow" section that walks through the end-to-end flow step by step, and a "Why this solves the problem" section that explicitly maps the design back to the original requirements — which requirement each major part satisfies and the key trade-offs. Be substantive and concrete; do not pad with filler.');
   } else if (mode === 'CODE') {
-    messages.push({
-      role: 'system',
-      content: 'OUTPUT FORMAT — LIVE CODING MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above, INCLUDING the persona/content guidance. Write code that solves the USER MESSAGE below. Your VERY FIRST characters must be ``` opening a code block — no introduction, no greeting, no self-description, no "Sure!", no "Here is...", no preamble of any kind. Do NOT introduce yourself or talk about your experience. Write clean, complete, runnable code with NO comments or docstrings of any kind — no inline comments, no block comments, no triple-quoted docstrings; output only executable code. After the closing ``` you may add a brief explanation only.',
-    });
+    staticParts.push('OUTPUT FORMAT — LIVE CODING MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above, INCLUDING the persona/content guidance. Write code that solves the USER MESSAGE below. Your VERY FIRST characters must be ``` opening a code block — no introduction, no greeting, no self-description, no "Sure!", no "Here is...", no preamble of any kind. Do NOT introduce yourself or talk about your experience. Write clean, complete, runnable code with NO comments or docstrings of any kind — no inline comments, no block comments, no triple-quoted docstrings; output only executable code. After the closing ``` you may add a brief explanation only.');
   }
 
-  for (const m of conversationContextMessages()) messages.push(m);
+  return staticParts.join('\n\n');
+}
+
+function buildAnswerMessages(q, imgs, mode) {
+  const messages = [];
+  const staticText = assembleStaticSystem(mode);
+  if (staticText) messages.push({ role: 'system', content: staticText });
+  const convoBudget = mode === 'ANSWER' ? 2000 : CONVO_CHAR_BUDGET;
+  for (const m of conversationContextMessages(convoBudget)) messages.push(m);
 
   if (imgs) {
     const userContent = [];
@@ -2770,26 +2732,22 @@ async function generateAnswer(question, images, forcedMode) {
     if (win && !win.isDestroyed()) win.webContents.send('answer-error', `No ${provider.label} API key set (Settings → API keys → Answer generation).`);
     return;
   }
+  abortPromptCacheWarm();
   if (answerAbort) { try { answerAbort.abort(); } catch {} answerAbort = null; }
   const ac = new AbortController();
   answerAbort = ac;
 
   const model = getAnswerModel(provider.id);
-  // If user picked a mode manually, skip the classifier entirely.
-  const mode = (forcedMode && forcedMode !== 'AUTO')
-    ? forcedMode
-    : await Promise.race([
-        classifyQuestion(q, imgs, apiKey, model),
-        new Promise(r => setTimeout(() => r('ANSWER'), 300)),
-      ]);
+  const mode = resolveAnswerMode(forcedMode, q);
+
+  const displayQ = q || (imgs ? `[${imgs.length} image${imgs.length > 1 ? 's' : ''}]` : '');
+  // Show the bubble before we build/send the prompt so Send never looks idle.
+  if (win && !win.isDestroyed()) win.webContents.send('answer-start', { question: displayQ, hasImage: !!imgs, mode });
 
   const messages = buildAnswerMessages(q, imgs, mode);
   const sys = activePromptText();
-
-  const displayQ = q || (imgs ? `[${imgs.length} image${imgs.length > 1 ? 's' : ''}]` : '');
-  if (win && !win.isDestroyed()) win.webContents.send('answer-start', { question: displayQ, hasImage: !!imgs, mode });
-
-  appendLogLine(`[answer] provider=${provider.id} model=${model} mode=${mode} forced=${forcedMode || '-'} sysLen=${sys.length} q="${q.slice(0, 80)}" sysMsgs=${messages.filter(m => m.role === 'system').length}`);
+  const promptChars = messages.reduce((n, m) => n + (typeof m.content === 'string' ? m.content.length : 0), 0);
+  appendLogLine(`[answer] provider=${provider.id} model=${model} mode=${mode} forced=${forcedMode || '-'} sysLen=${sys.length} promptChars=${promptChars} q="${q.slice(0, 80)}" sysMsgs=${messages.filter(m => m.role === 'system').length}`);
 
   let full = '';
   const t0 = Date.now();
@@ -2801,6 +2759,8 @@ async function generateAnswer(question, images, forcedMode) {
       model,
       messages,
       signal: ac.signal,
+      convId: answerConvId(),
+      maxTokens: maxTokensForMode(mode),
       onDelta: (delta) => {
         const piece = spokenSanitize(delta, mode);
         if (!piece) return;
@@ -2857,11 +2817,68 @@ async function warmApiConnection() {
   } catch {}
   prefetchModelList(provider);
 }
+let warmLoopTimer = null;
+function startWarmLoop() {
+  warmApiConnection().catch(() => {});
+  schedulePromptCacheWarm();
+  if (warmLoopTimer) return;
+  warmLoopTimer = setInterval(() => warmApiConnection().catch(() => {}), 20000);
+}
 ipcMain.handle('warm-api-connection', () => warmApiConnection());
+
+// Write the static system prefix into the provider's prompt cache so the next
+// real question only prefills the user turn (hundreds of ms, not 2–3s).
+let _warmCacheTimer = null;
+let _warmCacheKey = '';
+let promptCacheWarmAbort = null;
+function schedulePromptCacheWarm() {
+  if (_warmCacheTimer) clearTimeout(_warmCacheTimer);
+  _warmCacheTimer = setTimeout(() => { _warmCacheTimer = null; warmPromptCache().catch(() => {}); }, 250);
+}
+function abortPromptCacheWarm() {
+  if (promptCacheWarmAbort) { try { promptCacheWarmAbort.abort(); } catch {} promptCacheWarmAbort = null; }
+}
+async function warmPromptCache() {
+  if (answerAbort || speculativeCommitted) return;
+  const provider = getAnswerProvider();
+  const apiKey = getAnswerApiKey(provider.id);
+  if (!apiKey) return;
+  const sys = assembleStaticSystem('ANSWER');
+  if (!sys) return;
+  const key = [provider.id, getAnswerModel(provider.id), answerConvId(), sys.length, sys.slice(0, 48), sys.slice(-48)].join('|');
+  if (key === _warmCacheKey) return;
+  abortPromptCacheWarm();
+  const ac = new AbortController();
+  promptCacheWarmAbort = ac;
+  setTimeout(() => { try { ac.abort(); } catch {} }, 8000);
+  try {
+    await completeChat({
+      provider,
+      apiKey,
+      model: getAnswerModel(provider.id),
+      messages: [
+        { role: 'system', content: sys },
+        { role: 'user', content: 'Ready.' },
+      ],
+      maxTokens: 1,
+      convId: answerConvId(),
+      signal: ac.signal,
+    });
+    if (promptCacheWarmAbort === ac) {
+      _warmCacheKey = key;
+      promptCacheWarmAbort = null;
+      appendLogLine(`[answer] prompt-cache warmed provider=${provider.id} sysLen=${sys.length}`);
+    }
+  } catch {
+    if (promptCacheWarmAbort === ac) promptCacheWarmAbort = null;
+  }
+}
 
 // ── Speculative answer: start streaming before the user hits send.
 // Shares the same message-building logic as generateAnswer but is abortable.
 async function startSpeculative(question, forcedMode) {
+  // Never kill a live, user-visible stream to prefetch the next question.
+  if (speculativeCommitted || answerAbort) return;
   if (speculativeAbort) { try { speculativeAbort.abort(); } catch {} speculativeAbort = null; }
   speculativeActive = false;
   const q = (question || '').trim();
@@ -2870,20 +2887,17 @@ async function startSpeculative(question, forcedMode) {
   const apiKey = getAnswerApiKey(provider.id);
   if (!apiKey) return;
 
+  abortPromptCacheWarm();
   speculativeQuestion = q;
   speculativeActive = true;
   const ac = new AbortController();
   speculativeAbort = ac;
+  ac._buffer = '';
+  ac._flushed = false;
 
   const model = getAnswerModel(provider.id);
 
-  // Use forced mode if set, otherwise classify with 300ms race
-  const specMode = (forcedMode && forcedMode !== 'AUTO')
-    ? forcedMode
-    : await Promise.race([
-        classifyQuestion(q, null, apiKey, model),
-        new Promise(r => setTimeout(() => r('ANSWER'), 300)),
-      ]);
+  const specMode = resolveAnswerMode(forcedMode, q);
   ac._mode = specMode; // stash so commitSpeculative can read it
 
   const messages = buildAnswerMessages(q, null, specMode);
@@ -2898,17 +2912,26 @@ async function startSpeculative(question, forcedMode) {
       model,
       messages,
       signal: ac.signal,
+      convId: answerConvId(),
+      maxTokens: maxTokensForMode(specMode),
       onDelta: (delta) => {
         const piece = spokenSanitize(delta, specMode);
         if (!piece) return;
         speculativeBuffer += piece;
-        if (speculativeCommitted && win && !win.isDestroyed()) {
+        ac._buffer = speculativeBuffer;
+        if (speculativeCommitted && ac._flushed && win && !win.isDestroyed()) {
           win.webContents.send('answer-chunk', piece);
         }
       },
     });
   } catch (e) {
-    if (e.name === 'AbortError') { speculativeCommitted = false; return; }
+    if (e.name === 'AbortError') {
+      if (speculativeCommitted && win && !win.isDestroyed()) {
+        win.webContents.send('answer-done', { text: speculativeBuffer });
+      }
+      speculativeCommitted = false;
+      return;
+    }
     speculativeCommitted = false; speculativeActive = false; speculativeAbort = null;
     return;
   }
@@ -2939,22 +2962,28 @@ async function startSpeculative(question, forcedMode) {
   }
 }
 
+function normQuestion(s) {
+  return String(s || '').replace(/\s+/g, ' ').replace(/[.?!\s]+$/g, '').trim().toLowerCase();
+}
+
 function commitSpeculative(question, images, forcedMode) {
   const q = (question || '').trim();
   const hasImages = Array.isArray(images) && images.length > 0;
 
   // Only adopt a live or finished stream. If speculation failed (abort
   // cleared, not active), fall through and start a real request.
-  if (!hasImages && speculativeQuestion === q && (speculativeAbort || speculativeActive)) {
+  if (!hasImages && speculativeQuestion && normQuestion(speculativeQuestion) === normQuestion(q) && (speculativeAbort || speculativeActive)) {
     const ac = speculativeAbort; // null if stream already finished naturally
-    const buffered = (ac && ac._buffer) || '';
     const streamDone = (ac && ac._done) || !ac;
 
     if (win && !win.isDestroyed()) {
       const specModeCommit = (ac && ac._mode) || 'ANSWER';
+      if (!streamDone) speculativeCommitted = true;
       win.webContents.send('answer-start', { question: q, hasImage: false, mode: specModeCommit });
+      const buffered = (ac && ac._buffer) || '';
       const clean = buffered ? spokenSanitize(buffered, specModeCommit) : '';
       if (clean) win.webContents.send('answer-chunk', clean);
+      if (ac) ac._flushed = true;
       if (streamDone) {
         // Stream already finished — flush everything and close
         win.webContents.send('answer-done', { text: clean });
@@ -2967,11 +2996,8 @@ function commitSpeculative(question, images, forcedMode) {
         speculativeQuestion = null;
         speculativeAbort = null;
         speculativeCommitted = false;
-      } else {
-        // Stream still in flight — set flag so the loop pipes future chunks live
-        speculativeCommitted = true;
-        // speculativeActive/Question/Abort cleared by the loop when it finishes
       }
+      // else: already marked committed so further deltas pipe live
     } else {
       // No window — just abort cleanly
       if (ac) { try { ac.abort(); } catch {} }
@@ -2989,9 +3015,12 @@ function commitSpeculative(question, images, forcedMode) {
   generateAnswer(question, images, forcedMode);
 }
 
-ipcMain.handle('speculative-start', (_e, { question, forcedMode }) => startSpeculative(question, forcedMode));
+ipcMain.handle('speculative-start', (_e, { question, forcedMode }) => {
+  startSpeculative(question, forcedMode);
+});
 ipcMain.handle('speculative-commit', (_e, { question, images, forcedMode } = {}) => commitSpeculative(question, images, forcedMode));
 ipcMain.handle('speculative-cancel', () => {
+  if (speculativeCommitted) return;
   if (speculativeAbort) { try { speculativeAbort.abort(); } catch {} speculativeAbort = null; }
   speculativeActive = false;
   speculativeQuestion = null;

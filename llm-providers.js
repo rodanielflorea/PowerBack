@@ -68,6 +68,29 @@ const PROVIDERS = {
 
 const PROVIDER_ORDER = ['xai', 'anthropic', 'openai'];
 
+// Node's default undici keep-alive is ~4s, so a pause between interview
+// questions drops the socket and the next answer pays TLS again. Hold the
+// pool open for the length of a session.
+(function installKeepAlive() {
+  for (const id of ['undici', 'node:undici']) {
+    try {
+      const u = require(id);
+      if (!u.Agent || !u.setGlobalDispatcher) continue;
+      // HTTP/1.1, several sockets. HTTP/2 with pipelining:1 serializes every
+      // POST on one connection, so a cache-warm can stall the live stream ~10s
+      // and buffer SSE until the response is complete.
+      const opts = {
+        keepAliveTimeout: 60_000,
+        keepAliveMaxTimeout: 600_000,
+        connections: 8,
+        pipelining: 1,
+      };
+      u.setGlobalDispatcher(new u.Agent(opts));
+      return;
+    } catch {}
+  }
+})();
+
 function getProvider(id) {
   return PROVIDERS[id] || PROVIDERS.xai;
 }
@@ -87,15 +110,29 @@ function providerList() {
   });
 }
 
-function authHeaders(provider, apiKey) {
+function authHeaders(provider, apiKey, extra) {
+  extra = extra || {};
   if (provider.style === 'anthropic') {
-    return {
+    const h = {
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'prompt-caching-2024-07-31',
       'Content-Type': 'application/json',
     };
+    if (extra.stream) {
+      h.Accept = 'text/event-stream';
+      h['Cache-Control'] = 'no-cache';
+    }
+    return h;
   }
-  return { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
+  const h = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
+  if (extra.stream) {
+    h.Accept = 'text/event-stream';
+    h['Cache-Control'] = 'no-cache';
+  }
+  // Sticky routing so xAI prompt-cache hits the same server across turns.
+  if (provider.id === 'xai' && extra.convId) h['x-grok-conv-id'] = String(extra.convId);
+  return h;
 }
 
 function parseDataUrl(url) {
@@ -151,7 +188,15 @@ function toAnthropicBody(model, messages, { stream, maxTokens }) {
       content: toAnthropicContent(m.content),
     })),
   };
-  if (split.system) body.system = split.system;
+  if (split.system) {
+    // Mark the (large, stable) system prefix as cacheable so later questions
+    // skip re-prefilling the CV / JD / prompt.
+    body.system = [{
+      type: 'text',
+      text: split.system,
+      cache_control: { type: 'ephemeral' },
+    }];
+  }
   return body;
 }
 
@@ -195,7 +240,7 @@ async function readSseLines(res, onLine) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
+    const lines = buffer.split(/\r?\n/);
     buffer = lines.pop();
     for (const line of lines) onLine(line);
   }
@@ -283,35 +328,41 @@ function openaiChatBody(model, messages, { stream, maxTokens }) {
 function xaiChatBody(model, messages, { stream, maxTokens }) {
   const body = { model, messages, stream: !!stream };
   if (maxTokens) body.max_tokens = maxTokens;
+  // Prefer no thinking. Models that reject `none` still get `low`.
   if (isXaiReasoningModel(model)) body.reasoning_effort = 'low';
+  else if (/grok-4\.3/i.test(String(model || ''))) body.reasoning_effort = 'none';
   return body;
 }
 
-function streamAttempts(p, model, messages, apiKey) {
+function streamAttempts(p, model, messages, { maxTokens, convId } = {}) {
+  const cap = maxTokens || (p.style === 'anthropic' ? 16384 : undefined);
   if (p.style === 'anthropic') {
     return [{
       url: p.chatUrl,
-      body: toAnthropicBody(model, messages, { stream: true, maxTokens: 16384 }),
+      body: toAnthropicBody(model, messages, { stream: true, maxTokens: cap || 16384 }),
       takeDelta: deltaFromAnthropic,
     }];
   }
   if (p.id === 'openai') {
+    const chatBody = openaiChatBody(model, messages, { stream: true, maxTokens: cap });
+    const respBody = { ...toOpenAiResponsesBody(model, messages, { stream: true, maxTokens: cap }), reasoning: { effort: 'none' } };
+    if (convId) respBody.prompt_cache_key = String(convId);
     return [
       {
         url: 'https://api.openai.com/v1/chat/completions',
-        body: openaiChatBody(model, messages, { stream: true }),
+        body: chatBody,
         takeDelta: (json) => deltaFromOpenAi(json) || deltaFromOpenAiResponses(json),
       },
       {
         url: 'https://api.openai.com/v1/responses',
-        body: { ...toOpenAiResponsesBody(model, messages, { stream: true }), reasoning: { effort: 'none' } },
+        body: respBody,
         takeDelta: (json) => deltaFromOpenAiResponses(json) || deltaFromOpenAi(json),
       },
     ];
   }
   return [{
     url: p.chatUrl,
-    body: xaiChatBody(model, messages, { stream: true }),
+    body: xaiChatBody(model, messages, { stream: true, maxTokens: cap }),
     takeDelta: deltaFromOpenAi,
   }];
 }
@@ -326,17 +377,18 @@ async function throwIfNotOk(res) {
   throw err;
 }
 
-async function streamChat({ provider, apiKey, model, messages, signal, onDelta }) {
+async function streamChat({ provider, apiKey, model, messages, signal, onDelta, convId, maxTokens }) {
   const p = typeof provider === 'string' ? getProvider(provider) : provider;
-  const attempts = streamAttempts(p, model, messages, apiKey);
+  const attempts = streamAttempts(p, model, messages, { maxTokens, convId });
   let lastErr = null;
+  const headers = authHeaders(p, apiKey, { stream: true, convId });
 
   for (let i = 0; i < attempts.length; i++) {
     const { url, body, takeDelta } = attempts[i];
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: authHeaders(p, apiKey),
+        headers,
         body: JSON.stringify(body),
         signal,
       });
@@ -357,7 +409,7 @@ async function streamChat({ provider, apiKey, model, messages, signal, onDelta }
   if (lastErr) throw lastErr;
 }
 
-async function completeChat({ provider, apiKey, model, messages, maxTokens, signal }) {
+async function completeChat({ provider, apiKey, model, messages, maxTokens, signal, convId }) {
   const p = typeof provider === 'string' ? getProvider(provider) : provider;
   let url;
   let body;
@@ -374,7 +426,7 @@ async function completeChat({ provider, apiKey, model, messages, maxTokens, sign
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: authHeaders(p, apiKey),
+    headers: authHeaders(p, apiKey, { convId }),
     body: JSON.stringify(body),
     signal,
   });

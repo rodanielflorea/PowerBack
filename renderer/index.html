@@ -81,6 +81,37 @@
             <label for="xaiKey">xAI API key</label>
             <input type="password" id="xaiKey" placeholder="Paste xAI key..." spellcheck="false" />
           </div>
+          <h3 class="settings-subhead">Audio sources</h3>
+          <p class="hint">Choose what Voice mode transcribes. Microphone is your voice; system audio is meeting or speaker output (Zoom, Teams, browser). Enable one or both. Changes apply the next time you start transcription.</p>
+          <div class="field-row tx-source-row">
+            <label class="checkbox"><input type="checkbox" id="captureMic" /> Microphone</label>
+            <label class="checkbox"><input type="checkbox" id="captureSystem" /> System audio</label>
+          </div>
+          <div class="field">
+            <label for="micSelect">Microphone device</label>
+            <select id="micSelect"></select>
+          </div>
+          <div class="field">
+            <label for="languageSelect">Language</label>
+            <select id="languageSelect">
+              <option value="auto">Auto-detect</option>
+              <option value="en">English</option>
+              <option value="ru">Russian</option>
+              <option value="ja">Japanese</option>
+              <option value="zh">Chinese</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="pt">Portuguese</option>
+              <option value="it">Italian</option>
+              <option value="nl">Dutch</option>
+              <option value="tr">Turkish</option>
+              <option value="pl">Polish</option>
+              <option value="ar">Arabic</option>
+              <option value="hi">Hindi</option>
+              <option value="uk">Ukrainian</option>
+            </select>
+          </div>
         </section>
 
         <section class="settings-section">
@@ -171,39 +202,7 @@
         </section>
       </div>
 
-      <div class="settings-tab" data-tab="voice" hidden>
-        <section class="settings-section">
-          <div class="field">
-            <label for="micSelect">Microphone</label>
-            <select id="micSelect"></select>
-          </div>
-          <div class="field-row">
-            <label class="checkbox"><input type="checkbox" id="captureMic" /> Capture microphone</label>
-            <label class="checkbox"><input type="checkbox" id="captureSystem" /> Capture system audio (loopback)</label>
-          </div>
-          <div class="field">
-            <label for="languageSelect">Language</label>
-            <select id="languageSelect">
-              <option value="auto">Auto-detect</option>
-              <option value="en">English</option>
-              <option value="ru">Russian</option>
-              <option value="ja">Japanese</option>
-              <option value="zh">Chinese</option>
-              <option value="es">Spanish</option>
-              <option value="fr">French</option>
-              <option value="de">German</option>
-              <option value="pt">Portuguese</option>
-              <option value="it">Italian</option>
-              <option value="nl">Dutch</option>
-              <option value="tr">Turkish</option>
-              <option value="pl">Polish</option>
-              <option value="ar">Arabic</option>
-              <option value="hi">Hindi</option>
-              <option value="uk">Ukrainian</option>
-            </select>
-          </div>
-        </section>
-      </div>
+      <div class="settings-tab" data-tab="voice" hidden></div>
 
       <div class="settings-tab" data-tab="caption" hidden>
         <section class="settings-section">
@@ -415,7 +414,7 @@
           <p>Captures mic and/or system audio in real-time and streams it to Deepgram or xAI. Final transcripts are injected directly into the loaded AI site's chat input — no clipboard, no focus theft. All transcripts are also saved to a <b>.txt file</b> when you click End.</p>
           <h4>Setup</h4>
           <ol class="help-steps">
-            <li><b>Voice</b> tab &rarr; pick microphone, toggle "Capture mic" / "Capture system audio".</li>
+            <li><b>Settings</b> &rarr; Transcription &rarr; enable <b>Microphone</b> and/or <b>System audio</b>, then pick the mic device.</li>
             <li>Pick engine:
               <ul>
                 <li><b>Deepgram API</b> &mdash; paste API key. Real-time, low-latency. Get a free key at deepgram.com.</li>

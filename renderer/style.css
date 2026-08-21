@@ -286,6 +286,29 @@ body:not(.in-interview) .right-rail { display: none !important; }
   font-weight: 700;
 }
 
+.settings-section h3.settings-subhead {
+  margin-top: 16px;
+}
+
+.tx-source-row .checkbox {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+  user-select: none;
+}
+
+.tx-source-row .checkbox:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.field select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .hint {
   font-size: 11.5px;
   color: var(--muted);
@@ -2285,6 +2308,7 @@ body.in-interview .end-btn.live::before {
 
 /* ── 25. CUSTOM SELECT ─────────────────────────────────────── */
 .csel { position: relative; display: inline-block; width: 100%; }
+.csel.is-disabled { opacity: 0.55; pointer-events: none; }
 .csel-btn {
   width: 100%; padding: 5px 26px 5px 9px;
   border: 1px solid var(--border); border-radius: var(--radius-sm);

@@ -142,7 +142,16 @@ function makeCustomSelect(sel, compact) {
     search.hidden = sel.options.length <= 20; // search only helps for long lists
   }
 
+  function syncDisabled() {
+    const off = !!sel.disabled;
+    wrap.classList.toggle("is-disabled", off);
+    btn.setAttribute("aria-disabled", off ? "true" : "false");
+    btn.tabIndex = off ? -1 : 0;
+    if (off) close();
+  }
+
   function open() {
+    if (sel.disabled) return;
     refresh();
     list.hidden = false;
     btn.classList.add("open");
@@ -160,20 +169,27 @@ function makeCustomSelect(sel, compact) {
 
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
+    if (sel.disabled) return;
     list.hidden ? open() : close();
   });
   btn.addEventListener("keydown", (e) => {
+    if (sel.disabled) return;
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); list.hidden ? open() : close(); }
     if (e.key === "Escape") close();
   });
   document.addEventListener("click", close);
 
   // Watch for option changes (populateModelSelects rebuilds options dynamically)
-  const mo = new MutationObserver(refresh);
-  mo.observe(sel, { childList: true, subtree: true, attributes: true, attributeFilter: ["selected"] });
+  const mo = new MutationObserver(() => {
+    refresh();
+    syncDisabled();
+  });
+  mo.observe(sel, { childList: true, subtree: true, attributes: true, attributeFilter: ["selected", "disabled"] });
 
   refresh();
+  syncDisabled();
   sel._cselRefresh = refresh;
+  sel._cselSyncDisabled = syncDisabled;
 }
 
 // Apply to every <select> in the document after DOM is ready.
@@ -1235,6 +1251,12 @@ function updateEngineBlocks(engine) {
   if (xa) xa.hidden = engine !== "xai";
 }
 
+function syncTxSourceUi() {
+  if (!micSelect) return;
+  micSelect.disabled = !captureMicEl || !captureMicEl.checked;
+  if (typeof micSelect._cselSyncDisabled === "function") micSelect._cselSyncDisabled();
+}
+
 async function refreshTranscriptionUI() {
   txCfg = await window.api.getTranscriptionConfig();
   engineDeepgram.checked = txCfg.engine !== "xai";
@@ -1244,7 +1266,13 @@ async function refreshTranscriptionUI() {
   languageSelect.value = txCfg.language || "auto";
   captureMicEl.checked = txCfg.captureMic !== false;
   captureSystemEl.checked = txCfg.captureSystem !== false;
+  if (!captureMicEl.checked && !captureSystemEl.checked) {
+    captureMicEl.checked = true;
+    captureSystemEl.checked = true;
+    persistTx({ captureMic: true, captureSystem: true });
+  }
   updateEngineBlocks(txCfg.engine);
+  syncTxSourceUi();
 }
 
 async function persistTx(patch) {
@@ -1271,12 +1299,23 @@ if (xaiKeyEl) xaiKeyEl.addEventListener("change", () =>
 languageSelect.addEventListener("change", () =>
   persistTx({ language: languageSelect.value }),
 );
-captureMicEl.addEventListener("change", () =>
-  persistTx({ captureMic: captureMicEl.checked }),
-);
-captureSystemEl.addEventListener("change", () =>
-  persistTx({ captureSystem: captureSystemEl.checked }),
-);
+function onTxSourceChange(e) {
+  if (!captureMicEl.checked && !captureSystemEl.checked) {
+    const target = e && e.target;
+    if (target === captureMicEl) captureSystemEl.checked = true;
+    else captureMicEl.checked = true;
+    if (typeof toast === "function") {
+      toast("Keep at least one audio source on", "info");
+    }
+  }
+  persistTx({
+    captureMic: captureMicEl.checked,
+    captureSystem: captureSystemEl.checked,
+  });
+  syncTxSourceUi();
+}
+captureMicEl.addEventListener("change", onTxSourceChange);
+captureSystemEl.addEventListener("change", onTxSourceChange);
 micSelect.addEventListener("change", () =>
   persistTx({ micDeviceId: micSelect.value }),
 );
@@ -1541,6 +1580,7 @@ function appendToComposer(text) {
   const cur = composerInput.value;
   composerInput.value = !cur ? t : (cur.endsWith(" ") ? cur + t : cur + " " + t);
   composerInput.scrollTop = composerInput.scrollHeight;
+  kickSpeculative(false);
 }
 
 // Live word-by-word streaming of the CURRENT speech segment into the composer
@@ -1562,6 +1602,9 @@ function streamSegment(text, isFinal) {
     liveSeg = (needSpace ? " " : "") + text;
   }
   composerInput.scrollTop = composerInput.scrollHeight;
+  // Pause-detect only: continuous speech keeps resetting the timer so we
+  // don't abort a half-prefilled request on every Deepgram final.
+  kickSpeculative(false);
 }
 
 // Coalesce the stream of interim hypotheses to a steady ~12fps so the input
@@ -1601,6 +1644,8 @@ window.api.onUtteranceEnd(() => {
   if (pendingInterim != null) { streamSegment(pendingInterim, true); pendingInterim = null; }
   else if (liveSeg) { streamSegment(liveSeg, true); }
   clearInterimPreview();
+  // Question is complete — start the answer immediately so send is often a cache hit.
+  kickSpeculative(true);
 });
 window.api.onTranscriptLiveError((msg) => {
   log("Transcription error: " + msg, "err");
@@ -1690,6 +1735,8 @@ if (modeSeg) {
     if (!btn) return;
     manualMode = btn.dataset.mode;
     modeSeg.querySelectorAll('.mode-seg-btn').forEach(b => b.classList.toggle('mode-seg-btn--active', b === btn));
+    _speculativeText = null;
+    kickSpeculative(true);
   });
 }
 
@@ -1942,40 +1989,78 @@ if (window.api.onSnipImage) window.api.onSnipImage((img) => {
 });
 
 // ── Latency optimizations ──────────────────────────────────
-// Pre-warm the TLS connection on first keypress, so the API handshake is
-// already done before the user hits send.
+// Pre-warm TLS on first activity. Speculate as soon as the composer looks
+// like a question (typing, OCR, or a finished transcript utterance) so the
+// first tokens are often already in flight when the user hits send.
 let _apiConnectionWarmed = false;
-// Debounced speculative request: after 800 ms of inactivity, start streaming
-// the answer — so it may be fully ready by the time the user hits send.
 let _speculativeTimer = null;
 let _speculativeText = null;
+const SPECULATE_MIN_CHARS = 6;
+const SPECULATE_DEBOUNCE_MS = 500;
+
+function normQuestion(s) {
+  return String(s || "").replace(/\s+/g, " ").replace(/[.?!\s]+$/g, "").trim().toLowerCase();
+}
+
+function ensureApiWarmed() {
+  if (_apiConnectionWarmed) return;
+  _apiConnectionWarmed = true;
+  if (window.api.warmApiConnection) window.api.warmApiConnection();
+}
+
+function answerIsStreaming() {
+  return !!(currentAnswerEl && currentAnswerEl.classList.contains("streaming"));
+}
+
+function kickSpeculative(immediate) {
+  if (!composerInput) return;
+  if (_optimisticAnswer || answerIsStreaming()) return;
+  ensureApiWarmed();
+  if (_speculativeTimer) { clearTimeout(_speculativeTimer); _speculativeTimer = null; }
+  const text = composerInput.value.trim();
+  if (!text || text.length < SPECULATE_MIN_CHARS) {
+    if (_speculativeText) {
+      _speculativeText = null;
+      if (window.api.speculativeCancel) window.api.speculativeCancel();
+    }
+    return;
+  }
+  const start = () => {
+    _speculativeTimer = null;
+    if (typeof attachedImages !== "undefined" && attachedImages.length > 0) return;
+    const t = composerInput.value.trim();
+    if (!t || t.length < SPECULATE_MIN_CHARS) return;
+    if (normQuestion(_speculativeText) === normQuestion(t)) return;
+    _speculativeText = t;
+    if (window.api.speculativeStart) {
+      window.api.speculativeStart({ question: t, forcedMode: manualMode });
+    }
+  };
+  if (immediate) start();
+  else _speculativeTimer = setTimeout(start, SPECULATE_DEBOUNCE_MS);
+}
 
 if (composerInput) {
-  composerInput.addEventListener("input", () => {
-    // One-time connection warm-up
-    if (!_apiConnectionWarmed) {
-      _apiConnectionWarmed = true;
-      if (window.api.warmApiConnection) window.api.warmApiConnection();
-    }
-    // Debounce speculative: cancel previous timer, schedule new one
-    if (_speculativeTimer) { clearTimeout(_speculativeTimer); _speculativeTimer = null; }
-    const text = composerInput.value.trim();
-    if (!text || text.length < 8) {
-      // Too short or empty — cancel any running speculation
-      if (_speculativeText) {
-        _speculativeText = null;
-        if (window.api.speculativeCancel) window.api.speculativeCancel();
-      }
-      return;
-    }
-    _speculativeTimer = setTimeout(() => {
-      _speculativeTimer = null;
-      // Only speculate when no images are attached (vision requests aren't speculative)
-      if (attachedImages.length > 0) return;
-      _speculativeText = text;
-      if (window.api.speculativeStart) window.api.speculativeStart({ question: text, forcedMode: manualMode });
-    }, 800);
-  });
+  composerInput.addEventListener("input", () => kickSpeculative(false));
+}
+
+let _optimisticAnswer = false;
+
+function dropEmptyStreamingTurn() {
+  if (!currentAnswerEl || !currentAnswerEl.classList.contains("streaming")) return;
+  const streamContent = currentAnswerEl._streamEl
+    ? currentAnswerEl._streamEl.textContent
+    : currentAnswerEl.textContent;
+  if (!(streamContent || "").trim()) {
+    const oldTurn = currentAnswerEl.parentElement;
+    if (oldTurn && oldTurn.classList.contains("answer-turn")) oldTurn.remove();
+    if (answerHistory && !answerHistory.querySelector(".answer-turn") && answerEmpty) answerEmpty.hidden = false;
+    currentAnswerEl = null;
+  } else {
+    currentAnswerEl.classList.remove("streaming");
+    if (currentAnswerEl._timeEl) currentAnswerEl._timeEl.textContent = fmtTime();
+    currentAnswerEl = null;
+  }
 }
 
 function submitComposer() {
@@ -1983,20 +2068,20 @@ function submitComposer() {
   const q = composerInput.value.trim();
   if (!q && attachedImages.length === 0) return;
 
-  if (typeof persistAnswerKeys === "function") persistAnswerKeys();
-
-  // Cancel pending speculative timer — we're submitting now
   if (_speculativeTimer) { clearTimeout(_speculativeTimer); _speculativeTimer = null; }
 
   pendingBubbleImages = attachedImages.slice();
   const hasImages = attachedImages.length > 0;
 
-  if (!hasImages && _speculativeText === q && window.api.speculativeCommit) {
-    // Speculative request is already streaming or done — adopt it
+  dropEmptyStreamingTurn();
+  currentAnswerEl = addAnswerTurn(q || "", pendingBubbleImages.slice(), manualMode);
+  _optimisticAnswer = true;
+
+  const specHit = !hasImages && _speculativeText && normQuestion(_speculativeText) === normQuestion(q);
+  if (specHit && window.api.speculativeCommit) {
     _speculativeText = null;
     window.api.speculativeCommit({ question: q, images: null, forcedMode: manualMode });
   } else {
-    // Cancel any speculation, start a fresh request
     _speculativeText = null;
     if (window.api.speculativeCancel) window.api.speculativeCancel();
     window.api.generateAnswer(q, hasImages ? attachedImages : null, manualMode);
@@ -2224,15 +2309,13 @@ function beginInlineEdit(q, question, imgs, mode) {
 window.api.onAnswerStart((data) => {
   const question = data && typeof data === "object" ? String(data.question || "") : String(data || "");
   const answerMode = (data && data.mode) || 'ANSWER';
-  // If a previous answer bubble is still streaming and has no content yet,
-  // remove it — it was interrupted before any tokens arrived.
-  const streamContent = currentAnswerEl && currentAnswerEl._streamEl ? currentAnswerEl._streamEl.textContent : (currentAnswerEl && currentAnswerEl.textContent);
-  if (currentAnswerEl && currentAnswerEl.classList.contains("streaming") && !(streamContent || '').trim()) {
-    const oldTurn = currentAnswerEl.parentElement;
-    if (oldTurn && oldTurn.classList.contains("answer-turn")) oldTurn.remove();
-    if (answerHistory && !answerHistory.querySelector(".answer-turn") && answerEmpty) answerEmpty.hidden = false;
-    currentAnswerEl = null;
+  if (_optimisticAnswer && currentAnswerEl) {
+    _optimisticAnswer = false;
+    pendingBubbleImages = [];
+    if (currentAnswerEl.dataset) currentAnswerEl.dataset.mode = answerMode;
+    return;
   }
+  dropEmptyStreamingTurn();
   const imgs = pendingBubbleImages.slice();
   pendingBubbleImages = [];
   currentAnswerEl = addAnswerTurn(question, imgs, answerMode);
@@ -2261,6 +2344,7 @@ function stripLeadingIntro(text, mode) {
 }
 
 window.api.onAnswerDone(() => {
+  _optimisticAnswer = false;
   if (currentAnswerEl) {
     currentAnswerEl.classList.remove("streaming");
     if (currentAnswerEl._timeEl) currentAnswerEl._timeEl.textContent = fmtTime();
@@ -2618,10 +2702,11 @@ if (diagramOverlay) {
 }
 
 window.api.onAnswerError((msg) => {
+  _optimisticAnswer = false;
   if (currentAnswerEl) {
     currentAnswerEl.classList.remove("streaming");
-    currentAnswerEl.textContent +=
-      (currentAnswerEl.textContent ? "\n\n" : "") + "[error] " + msg;
+    const target = currentAnswerEl._streamEl || currentAnswerEl;
+    target.textContent += (target.textContent ? "\n\n" : "") + "[error] " + msg;
     currentAnswerEl = null;
   } else {
     log("Answer error: " + msg, "err");
@@ -2791,6 +2876,10 @@ async function startVoice() {
       log(`${label} API key not set`, "err");
       return;
     }
+    if (txCfg.captureMic === false && txCfg.captureSystem === false) {
+      log("No audio source selected — enable Microphone or System audio in Settings → Transcription", "err");
+      return;
+    }
 
     const startStream = isXai
       ? window.api.startXaiStream
@@ -2898,7 +2987,11 @@ async function startVoice() {
     recState = { ctx, streams, processor, streaming: true, xai: isXai };
     recBtn.classList.add("on");
     updateRecTitle();
-    log(`Voice transcription started (${label} live)`, "info");
+    const sources = [
+      txCfg.captureMic !== false ? "mic" : null,
+      txCfg.captureSystem !== false ? "system audio" : null,
+    ].filter(Boolean).join(" + ");
+    log(`Voice transcription started (${label} live, ${sources})`, "info");
     return;
   }
 
