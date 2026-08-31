@@ -7,53 +7,11 @@ const hideBtn = document.getElementById("hideBtn");
 const quitBtn = document.getElementById("quitBtn");
 
 const setupOverlay = document.getElementById("setupOverlay");
-const setupModeCaption = document.getElementById("setupModeCaption");
-const setupModeVoice = document.getElementById("setupModeVoice");
-const setupRoleSpeaker = document.getElementById("setupRoleSpeaker");
-const setupRoleSupporter = document.getElementById("setupRoleSupporter");
-const setupPortBlock = document.getElementById("setupPortBlock");
-const setupAddressBlock = document.getElementById("setupAddressBlock");
-const setupPortEl = document.getElementById("setupPort");
-const setupAddressEl = document.getElementById("setupAddress");
-const setupSavePortBtn = document.getElementById("setupSavePortBtn");
-const setupSaveAddressBtn = document.getElementById("setupSaveAddressBtn");
-const setupStartBtn = document.getElementById("setupStartBtn");
 
-const setupUrlList = document.getElementById("setupUrlList");
-const setupUrlInput = document.getElementById("setupUrlInput");
-const setupUrlAddBtn = document.getElementById("setupUrlAddBtn");
-
-const setupCaptureLanguage = document.getElementById("setupCaptureLanguage");
-const setupCapturePollMs = document.getElementById("setupCapturePollMs");
-
-const setupEngineDeepgram = document.getElementById("setupEngineDeepgram");
-const setupEngineLocal = document.getElementById("setupEngineLocal");
-const setupDeepgramKey = document.getElementById("setupDeepgramKey");
-const setupWhisperExe = document.getElementById("setupWhisperExe");
-const setupWhisperExeBrowse = document.getElementById("setupWhisperExeBrowse");
-const setupWhisperModel = document.getElementById("setupWhisperModel");
-const setupWhisperModelBrowse = document.getElementById(
-  "setupWhisperModelBrowse",
-);
-const setupVoiceLanguage = document.getElementById("setupVoiceLanguage");
-const setupChunkSecondsRange = document.getElementById("setupChunkSecondsRange");
-const setupChunkSecondsValue = document.getElementById("setupChunkSecondsValue");
-const setupMicSelect = document.getElementById("setupMicSelect");
-const setupCaptureMic = document.getElementById("setupCaptureMic");
-const setupCaptureSystem = document.getElementById("setupCaptureSystem");
-
-const setupMaxSupporters = document.getElementById("setupMaxSupporters");
-const setupTwoWay = document.getElementById("setupTwoWay");
-
-const urlMenuBtn = document.getElementById("urlMenuBtn");
-const reloadBtn = document.getElementById("reloadBtn");
 const settingsBtn = document.getElementById("settingsBtn");
 const recBtn = document.getElementById("recBtn");
 const settingsOverlay = document.getElementById("settingsOverlay");
 const settingsCloseBtn = document.getElementById("settingsCloseBtn");
-const urlList = document.getElementById("urlList");
-const urlInput = document.getElementById("urlInput");
-const urlAddBtn = document.getElementById("urlAddBtn");
 
 const modeVoice = document.getElementById("modeVoice");
 const modeCaption = document.getElementById("modeCaption");
@@ -62,53 +20,10 @@ const micSelect = document.getElementById("micSelect");
 const captureMicEl = document.getElementById("captureMic");
 const captureSystemEl = document.getElementById("captureSystem");
 const engineDeepgram = document.getElementById("engineDeepgram");
-const engineLocal = document.getElementById("engineLocal");
+const engineXai = document.getElementById("engineXai");
 const deepgramKeyEl = document.getElementById("deepgramKey");
-const whisperExeEl = document.getElementById("whisperExe");
-const whisperExeBrowse = document.getElementById("whisperExeBrowse");
-const whisperModelEl = document.getElementById("whisperModel");
-const whisperModelBrowse = document.getElementById("whisperModelBrowse");
+const xaiKeyEl = document.getElementById("xaiKey");
 const languageSelect = document.getElementById("languageSelect");
-const chunkSecondsRange = document.getElementById("chunkSecondsRange");
-const chunkSecondsValue = document.getElementById("chunkSecondsValue");
-const chunkSecondsField = document.getElementById("chunkSecondsField");
-const setupChunkSecondsField = document.getElementById("setupChunkSecondsField");
-const chunkRailBtn = document.getElementById("chunkRailBtn");
-const chunkRailValue = document.getElementById("chunkRailValue");
-let chunkSecondsRuntime = 3.0;
-
-function isWhisperEngine() {
-  return (txCfg && txCfg.engine === "local");
-}
-
-function updateChunkUiVisibility() {
-  const whisper = isWhisperEngine();
-  if (chunkSecondsField) chunkSecondsField.hidden = !whisper;
-  if (setupChunkSecondsField) setupChunkSecondsField.hidden = !whisper;
-  updateChunkRail();
-}
-
-function updateChunkRail() {
-  if (!chunkRailBtn) return;
-  const isVoice = mode === "voice";
-  chunkRailBtn.hidden = !isVoice || !isWhisperEngine();
-  if (chunkRailValue) chunkRailValue.textContent = chunkSecondsRuntime.toFixed(1);
-}
-function setChunkSecondsEverywhere(v) {
-  const clamped = Math.max(1, Math.min(10, parseFloat(v) || 3));
-  chunkSecondsRuntime = clamped;
-  if (chunkSecondsRange) chunkSecondsRange.value = String(clamped);
-  if (chunkSecondsValue) chunkSecondsValue.textContent = clamped.toFixed(1);
-  if (setupChunkSecondsRange) setupChunkSecondsRange.value = String(clamped);
-  if (setupChunkSecondsValue) setupChunkSecondsValue.textContent = clamped.toFixed(1);
-  if (chunkRailValue) chunkRailValue.textContent = clamped.toFixed(1);
-}
-if (chunkRailBtn) {
-  chunkRailBtn.addEventListener("click", () => {
-    if (typeof openSettings === "function") openSettings();
-    if (typeof activateTab === "function") activateTab("voice");
-  });
-}
 
 const captureRectEl = document.getElementById("captureRect");
 const selectAreaBtn = document.getElementById("selectAreaBtn");
@@ -144,10 +59,150 @@ const muteToggleBtn = document.getElementById("muteToggleBtn");
 
 const logBody = document.getElementById("logBody");
 
-let urls = [];
 let txCfg = null;
 let capCfg = null;
 let mode = "voice";
+
+// ===== Custom select — replaces native <select> popups which are OS-level windows
+// and therefore bypass setContentProtection (stealth). The custom dropdown renders
+// entirely inside the Electron BrowserWindow and is always stealth-protected.
+function makeCustomSelect(sel, compact) {
+  if (!sel || sel._cselDone) return;
+  sel._cselDone = true;
+  sel.style.display = "none";
+
+  const wrap = document.createElement("div");
+  wrap.className = "csel" + (compact ? " csel-compact" : "");
+  sel.parentNode.insertBefore(wrap, sel);
+  wrap.appendChild(sel);
+
+  const btn = document.createElement("div");
+  btn.className = "csel-btn";
+  btn.setAttribute("tabindex", "0");
+  wrap.appendChild(btn);
+
+  const list = document.createElement("div");
+  list.className = "csel-list";
+  list.hidden = true;
+  wrap.appendChild(list);
+
+  // Search box (shown only for long lists, e.g. timezones).
+  const search = document.createElement("input");
+  search.className = "csel-search";
+  search.type = "text";
+  search.placeholder = "Search…";
+  search.hidden = true;
+  list.appendChild(search);
+
+  const itemsBox = document.createElement("div");
+  itemsBox.className = "csel-items";
+  list.appendChild(itemsBox);
+
+  function applyFilter() {
+    const q = search.value.trim().toLowerCase();
+    itemsBox.querySelectorAll(".csel-opt").forEach((it) => {
+      it.style.display = (!q || it.textContent.toLowerCase().includes(q)) ? "" : "none";
+    });
+  }
+  function selectValue(value) {
+    sel.value = value;
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    refresh();
+    close();
+  }
+  search.addEventListener("input", applyFilter);
+  search.addEventListener("click", (e) => e.stopPropagation());
+  search.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { close(); return; }
+    if (e.key === "Enter") {
+      // Pick the first currently-visible option.
+      e.preventDefault();
+      const first = Array.from(itemsBox.querySelectorAll(".csel-opt")).find((it) => it.style.display !== "none");
+      if (first) selectValue(first.dataset.value);
+    }
+  });
+
+  function refresh() {
+    const cur = Array.from(sel.options).find((o) => o.value === sel.value);
+    btn.textContent = cur ? cur.textContent : "";
+    itemsBox.innerHTML = "";
+    for (const o of Array.from(sel.options)) {
+      const item = document.createElement("div");
+      item.className = "csel-opt" + (o.value === sel.value ? " selected" : "");
+      item.textContent = o.textContent;
+      item.title = o.textContent;
+      item.dataset.value = o.value;
+      item.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        selectValue(o.value);
+      });
+      itemsBox.appendChild(item);
+    }
+    search.hidden = sel.options.length <= 20; // search only helps for long lists
+  }
+
+  function syncDisabled() {
+    const off = !!sel.disabled;
+    wrap.classList.toggle("is-disabled", off);
+    btn.setAttribute("aria-disabled", off ? "true" : "false");
+    btn.tabIndex = off ? -1 : 0;
+    if (off) close();
+  }
+
+  function open() {
+    if (sel.disabled) return;
+    refresh();
+    list.hidden = false;
+    btn.classList.add("open");
+    // Flip upward if the list would overflow the viewport bottom
+    const btnRect = btn.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - btnRect.bottom;
+    list.classList.toggle("up", spaceBelow < 200);
+    if (!search.hidden) { search.value = ""; applyFilter(); setTimeout(() => search.focus(), 0); }
+  }
+
+  function close() {
+    list.hidden = true;
+    btn.classList.remove("open");
+  }
+
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (sel.disabled) return;
+    list.hidden ? open() : close();
+  });
+  btn.addEventListener("keydown", (e) => {
+    if (sel.disabled) return;
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); list.hidden ? open() : close(); }
+    if (e.key === "Escape") close();
+  });
+  document.addEventListener("click", close);
+
+  // Watch for option changes (populateModelSelects rebuilds options dynamically)
+  const mo = new MutationObserver(() => {
+    refresh();
+    syncDisabled();
+  });
+  mo.observe(sel, { childList: true, subtree: true, attributes: true, attributeFilter: ["selected", "disabled"] });
+
+  refresh();
+  syncDisabled();
+  sel._cselRefresh = refresh;
+  sel._cselSyncDisabled = syncDisabled;
+}
+
+// Apply to every <select> in the document after DOM is ready.
+// compact=true for the small presetbar selects.
+(function applyCustomSelects() {
+  const compactIds = new Set(["presetSelect", "answerModelHeader", "answerProviderSelect"]);
+  document.querySelectorAll("select").forEach((sel) => {
+    makeCustomSelect(sel, compactIds.has(sel.id));
+    if (sel.id === "answerProviderSelect" && sel.parentElement) {
+      sel.parentElement.classList.add("csel-provider");
+    }
+  });
+})();
 
 function updateFill(opacity) {
   sliderFill.style.width = `${Math.round(opacity * 100)}%`;
@@ -216,271 +271,6 @@ window.api.onClickThroughChanged((v) => updateClickThrough(v));
 hideBtn.addEventListener("click", () => window.api.hide());
 quitBtn.addEventListener("click", () => window.api.quit());
 
-function applySetupRoleVisibility() {
-  const isSpeaker = setupRoleSpeaker.checked;
-  setupPortBlock.hidden = !isSpeaker;
-  setupAddressBlock.hidden = isSpeaker;
-  if (setupMaxSupporters) {
-    const field = document.getElementById("setupMaxSupportersField");
-    if (field) field.style.display = isSpeaker ? "" : "none";
-  }
-}
-
-function activateSetupTab(name) {
-  document
-    .querySelectorAll(".stab-btn")
-    .forEach((b) => b.classList.toggle("active", b.dataset.stab === name));
-  document.querySelectorAll(".setup-tab-pane").forEach((p) => {
-    p.hidden = p.dataset.stab !== name;
-  });
-}
-
-document.querySelectorAll(".stab-btn").forEach((btn) => {
-  btn.addEventListener("click", () => activateSetupTab(btn.dataset.stab));
-});
-
-function applySetupModeTabVisibility(activeMode) {
-  const voiceTab = document.querySelector('.stab-btn[data-stab="voice"]');
-  const captionTab = document.querySelector('.stab-btn[data-stab="caption"]');
-  const isCaption = activeMode === "caption";
-  if (voiceTab) voiceTab.style.display = isCaption ? "none" : "";
-  if (captionTab) captionTab.style.display = isCaption ? "" : "none";
-  const activeBtn = document.querySelector(".stab-btn.active");
-  if (activeBtn && activeBtn.style.display === "none")
-    activateSetupTab("essentials");
-}
-
-setupModeCaption.addEventListener("change", () => {
-  if (setupModeCaption.checked) applySetupModeTabVisibility("caption");
-});
-setupModeVoice.addEventListener("change", () => {
-  if (setupModeVoice.checked) applySetupModeTabVisibility("voice");
-});
-
-function flashSaved(el) {
-  if (!el) return;
-  el.classList.remove("save-flash");
-  void el.offsetWidth;
-  el.classList.add("save-flash");
-  setTimeout(() => el.classList.remove("save-flash"), 1300);
-}
-
-function renderSetupUrlList(urlsArr) {
-  setupUrlList.innerHTML = "";
-  if (urlsArr.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "url-empty";
-    empty.textContent = "No URLs added yet.";
-    setupUrlList.appendChild(empty);
-    return;
-  }
-  urlsArr.forEach((u, i) => {
-    const row = document.createElement("div");
-    row.className = "url-row";
-    const txt = document.createElement("span");
-    txt.className = "url-text";
-    txt.textContent = u;
-    const rm = document.createElement("button");
-    rm.className = "url-remove";
-    rm.textContent = "×";
-    rm.title = "Remove";
-    rm.addEventListener("click", async () => {
-      urlsArr.splice(i, 1);
-      await window.api.setUrls(urlsArr);
-      renderSetupUrlList(urlsArr);
-    });
-    row.appendChild(txt);
-    row.appendChild(rm);
-    setupUrlList.appendChild(row);
-  });
-}
-
-async function refreshSetupMicList() {
-  if (!setupMicSelect) return;
-  try {
-    await navigator.mediaDevices
-      .getUserMedia({ audio: true })
-      .then((s) => s.getTracks().forEach((t) => t.stop()));
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const mics = devices.filter((d) => d.kind === "audioinput");
-    setupMicSelect.innerHTML = "";
-    const def = document.createElement("option");
-    def.value = "";
-    def.textContent = "System default";
-    setupMicSelect.appendChild(def);
-    mics.forEach((m) => {
-      const o = document.createElement("option");
-      o.value = m.deviceId;
-      o.textContent = m.label || `Microphone (${m.deviceId.slice(0, 6)})`;
-      setupMicSelect.appendChild(o);
-    });
-    if (txCfg && txCfg.micDeviceId) setupMicSelect.value = txCfg.micDeviceId;
-  } catch (e) {
-    log("Setup mic enumeration failed: " + e.message, "err");
-  }
-}
-
-[setupRoleSpeaker, setupRoleSupporter].forEach((el) => {
-  el.addEventListener("change", applySetupRoleVisibility);
-});
-
-setupSavePortBtn.addEventListener("click", async () => {
-  const port = parseInt(setupPortEl.value, 10);
-  if (!Number.isFinite(port) || port < 1 || port > 65535) {
-    window.alert("Enter a valid port (1–65535)");
-    return;
-  }
-  await window.api.setNetworkConfig({ speakerPort: port });
-  flashSaved(setupPortEl);
-  log(`Default port saved: ${port}`, "info");
-});
-
-setupSaveAddressBtn.addEventListener("click", async () => {
-  const addr = setupAddressEl.value.trim();
-  if (!/^[^:\s]+:\d+$/.test(addr)) {
-    window.alert("Enter address as host:port (e.g. 172.16.98.11:2000)");
-    return;
-  }
-  await window.api.setNetworkConfig({ supporterAddress: addr });
-  flashSaved(setupAddressEl);
-  log(`Default address saved: ${addr}`, "info");
-});
-
-setupUrlAddBtn.addEventListener("click", async () => {
-  const u = normalizeUrl(setupUrlInput.value);
-  if (!u) return;
-  const data = await window.api.getUrls();
-  const arr = data.urls.slice();
-  arr.push(u);
-  await window.api.setUrls(arr);
-  setupUrlInput.value = "";
-  renderSetupUrlList(arr);
-});
-setupUrlInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") setupUrlAddBtn.click();
-});
-
-setupCaptureLanguage.addEventListener("change", () =>
-  window.api.setCaptureConfig({ language: setupCaptureLanguage.value }),
-);
-setupCapturePollMs.addEventListener("change", () => {
-  const v = parseInt(setupCapturePollMs.value, 10);
-  if (Number.isFinite(v) && v >= 200)
-    window.api.setCaptureConfig({ pollMs: v });
-});
-
-setupEngineDeepgram.addEventListener("change", () => {
-  if (!setupEngineDeepgram.checked) return;
-  txCfg = { ...(txCfg || {}), engine: "deepgram" };
-  window.api.setTranscriptionConfig({ engine: "deepgram" });
-  updateChunkUiVisibility();
-});
-setupEngineLocal.addEventListener("change", () => {
-  if (!setupEngineLocal.checked) return;
-  txCfg = { ...(txCfg || {}), engine: "local" };
-  window.api.setTranscriptionConfig({ engine: "local" });
-  updateChunkUiVisibility();
-});
-setupDeepgramKey.addEventListener("change", () =>
-  window.api.setTranscriptionConfig({
-    deepgramApiKey: setupDeepgramKey.value.trim(),
-  }),
-);
-setupWhisperExe.addEventListener("change", () =>
-  window.api.setTranscriptionConfig({
-    whisperExe: setupWhisperExe.value.trim(),
-  }),
-);
-setupWhisperModel.addEventListener("change", () =>
-  window.api.setTranscriptionConfig({
-    whisperModel: setupWhisperModel.value.trim(),
-  }),
-);
-setupVoiceLanguage.addEventListener("change", () =>
-  window.api.setTranscriptionConfig({ language: setupVoiceLanguage.value }),
-);
-setupCaptureMic.addEventListener("change", () =>
-  window.api.setTranscriptionConfig({ captureMic: setupCaptureMic.checked }),
-);
-setupCaptureSystem.addEventListener("change", () =>
-  window.api.setTranscriptionConfig({
-    captureSystem: setupCaptureSystem.checked,
-  }),
-);
-setupMicSelect.addEventListener("change", () =>
-  window.api.setTranscriptionConfig({ micDeviceId: setupMicSelect.value }),
-);
-if (setupChunkSecondsRange) {
-  setupChunkSecondsRange.addEventListener("input", () => setChunkSecondsEverywhere(setupChunkSecondsRange.value));
-  setupChunkSecondsRange.addEventListener("change", () => window.api.setTranscriptionConfig({ chunkSeconds: chunkSecondsRuntime }));
-}
-
-setupWhisperExeBrowse.addEventListener("click", async () => {
-  const p = await window.api.pickFile("exe");
-  if (p) {
-    setupWhisperExe.value = p;
-    window.api.setTranscriptionConfig({ whisperExe: p });
-  }
-});
-setupWhisperModelBrowse.addEventListener("click", async () => {
-  const p = await window.api.pickFile("model");
-  if (p) {
-    setupWhisperModel.value = p;
-    window.api.setTranscriptionConfig({ whisperModel: p });
-  }
-});
-
-setupMaxSupporters.addEventListener("change", () => {
-  const n = parseInt(setupMaxSupporters.value, 10);
-  if (Number.isFinite(n) && n >= 1)
-    window.api.setNetworkConfig({ maxSupporters: n });
-});
-if (setupTwoWay) setupTwoWay.addEventListener("change", () => {});
-
-async function refreshSetupUI() {
-  const m = await window.api.getMode();
-  setupModeCaption.checked = m !== "voice";
-  setupModeVoice.checked = m === "voice";
-  applySetupModeTabVisibility(m === "voice" ? "voice" : "caption");
-
-  const netC = await window.api.getNetworkConfig();
-  const role = netC.role || "speaker";
-  setupRoleSpeaker.checked = role === "speaker";
-  setupRoleSupporter.checked = role === "supporter";
-  setupPortEl.value = netC.speakerPort || parsePort(netC.address) || 2000;
-  setupAddressEl.value =
-    netC.supporterAddress ||
-    (netC.address && !netC.address.startsWith("0.0.0.0")
-      ? netC.address
-      : "172.16.98.11:2000");
-  setupMaxSupporters.value = netC.maxSupporters || 1;
-  if (setupTwoWay) setupTwoWay.checked = true;
-  applySetupRoleVisibility();
-
-  const data = await window.api.getUrls();
-  renderSetupUrlList(data.urls.slice());
-
-  const tx = await window.api.getTranscriptionConfig();
-  txCfg = tx;
-  setupEngineDeepgram.checked = tx.engine !== "local";
-  setupEngineLocal.checked = tx.engine === "local";
-  setupDeepgramKey.value = tx.deepgramApiKey || "";
-  setupWhisperExe.value = tx.whisperExe || "";
-  setupWhisperModel.value = tx.whisperModel || "";
-  setupVoiceLanguage.value = tx.language || "auto";
-  setupCaptureMic.checked = tx.captureMic !== false;
-  setupCaptureSystem.checked = tx.captureSystem !== false;
-  setChunkSecondsEverywhere(tx.chunkSeconds);
-  updateChunkUiVisibility();
-
-  const cap = await window.api.getCaptureConfig();
-  capCfg = cap;
-  setupCaptureLanguage.value = cap.language || "English";
-  setupCapturePollMs.value = cap.pollMs || 700;
-
-  refreshSetupMicList();
-}
-
 function applyRoleClass(role) {
   document.body.classList.toggle("role-supporter", role === "supporter");
   document.body.classList.toggle("role-speaker", role === "speaker");
@@ -489,94 +279,569 @@ function applyRoleClass(role) {
   applyRoleSettingsTabs(role === "supporter");
 }
 
-function applyRoleSettingsTabs(isSupporter) {
-  const hiddenForSupporter = ["general", "voice", "caption", "hotkeys"];
-  const shownForSupporter = ["network", "log", "help"];
-  document.querySelectorAll(".tab-btn").forEach((btn) => {
-    const tab = btn.dataset.tab;
-    if (isSupporter) {
-      btn.style.display = hiddenForSupporter.includes(tab) ? "none" : "";
-    } else {
-      btn.style.display = "";
-    }
-  });
-  if (isSupporter) {
-    const activeBtn = document.querySelector(".tab-btn.active");
-    if (activeBtn && activeBtn.style.display === "none") activateTab("network");
-  }
+function applyRoleSettingsTabs() {
+  // Settings is now just API keys / Prompts / Hotkeys — shown for both roles.
+  document.querySelectorAll(".tab-btn").forEach((btn) => { btn.style.display = ""; });
 }
 
+const answerMain = document.getElementById("answerMain");
+
+const modeSelectOverlay = document.getElementById("modeSelectOverlay");
+const continueOverlay = document.getElementById("continueOverlay");
+
+function hideAllSetupOverlays() {
+  if (modeSelectOverlay) modeSelectOverlay.hidden = true;
+  if (setupOverlay) setupOverlay.hidden = true;
+  if (continueOverlay) continueOverlay.hidden = true;
+}
+
+// Stage 1 — the New/Continue chooser shown on launch and after ending a session.
+function showModeSelect() {
+  if (settingsOverlay) settingsOverlay.hidden = true;
+  hideAllSetupOverlays();
+  if (modeSelectOverlay) modeSelectOverlay.hidden = false;
+  document.body.classList.remove("in-interview");
+  endBtn.classList.remove("live");
+  applyRoleClass("");
+  if (answerMain) answerMain.hidden = true;
+}
+
+// New-session setup page (uploads, profile, role, prompt).
 function showSetup() {
   if (settingsOverlay) settingsOverlay.hidden = true;
+  hideAllSetupOverlays();
   setupOverlay.hidden = false;
   document.body.classList.remove("in-interview");
   endBtn.classList.remove("live");
   applyRoleClass("");
-  window.api.setWebviewVisible(false);
-  activateSetupTab("essentials");
-  refreshSetupUI();
+  if (answerMain) answerMain.hidden = true;
+  if (typeof refreshKb === "function") refreshKb();
+  if (typeof refreshProfiles === "function") refreshProfiles();
+}
+
+// ── Named profiles: picker + save/update/delete on the New-session form ───────
+const profileSelect = document.getElementById("profileSelect");
+const profileSaveNewBtn = document.getElementById("profileSaveNewBtn");
+const profileUpdateBtn = document.getElementById("profileUpdateBtn");
+const profileDeleteBtn = document.getElementById("profileDeleteBtn");
+let _profiles = [];
+
+function readProfileFields() {
+  const v = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ""; };
+  return { name: v("profileName"), city: v("profileCity"), country: v("profileCountry"), timezone: v("profileTimezone") };
+}
+function fillProfileFields(p) {
+  p = p || {};
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ""; };
+  set("profileName", p.name);
+  set("profileCity", p.city);
+  set("profileCountry", p.country);
+  const tz = document.getElementById("profileTimezone");
+  if (tz) { tz.value = p.timezone || ""; if (tz._cselRefresh) tz._cselRefresh(); }
+}
+
+async function refreshProfiles(selectId) {
+  if (typeof closeSaveRow === "function") closeSaveRow();
+  if (!profileSelect || !window.api.profilesList) return;
+  const data = await window.api.profilesList().catch(() => null);
+  _profiles = (data && data.profiles) || [];
+  const wantId = selectId || (data && data.activeProfileId) || (_profiles[0] && _profiles[0].id) || "";
+  profileSelect.innerHTML = "";
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = _profiles.length ? "— Select profile —" : "— No saved profiles —";
+  profileSelect.appendChild(blank);
+  _profiles.forEach((p) => {
+    const o = document.createElement("option");
+    o.value = p.id; o.textContent = p.label || "(unnamed)";
+    profileSelect.appendChild(o);
+  });
+  profileSelect.value = _profiles.some((p) => p.id === wantId) ? wantId : "";
+  if (profileSelect._cselRefresh) profileSelect._cselRefresh();
+  const active = _profiles.find((p) => p.id === profileSelect.value);
+  if (active) fillProfileFields(active);
+}
+
+if (profileSelect) {
+  profileSelect.addEventListener("change", () => {
+    const p = _profiles.find((x) => x.id === profileSelect.value);
+    if (p) { fillProfileFields(p); if (window.api.profileSetActive) window.api.profileSetActive(p.id); }
+  });
+}
+// Inline "save as new" row (Electron has no window.prompt).
+const profileSaveRow = document.getElementById("profileSaveRow");
+const profileLabelInput = document.getElementById("profileLabelInput");
+const profileSaveConfirm = document.getElementById("profileSaveConfirm");
+const profileSaveCancel = document.getElementById("profileSaveCancel");
+
+function openSaveRow() {
+  if (!profileSaveRow) return;
+  if (profileLabelInput) profileLabelInput.value = readProfileFields().name || "";
+  profileSaveRow.hidden = false;
+  if (profileLabelInput) { profileLabelInput.focus(); profileLabelInput.select(); }
+}
+function closeSaveRow() { if (profileSaveRow) profileSaveRow.hidden = true; }
+async function confirmSaveRow() {
+  const label = (profileLabelInput ? profileLabelInput.value : "").trim();
+  if (!label) { if (profileLabelInput) profileLabelInput.focus(); return; }
+  if (!window.api.profileSaveNew) { window.alert("Profiles need the latest app version — fully close and reopen the app."); return; }
+  try {
+    const id = await window.api.profileSaveNew(label, readProfileFields());
+    closeSaveRow();
+    await refreshProfiles(id);
+    if (!id) window.alert("Could not save the profile.");
+  } catch (e) {
+    window.alert("Could not save the profile — please fully close and reopen the app to load the update.\n\n" + (e && e.message ? e.message : e));
+  }
+}
+if (profileSaveNewBtn) profileSaveNewBtn.addEventListener("click", openSaveRow);
+if (profileSaveConfirm) profileSaveConfirm.addEventListener("click", confirmSaveRow);
+if (profileSaveCancel) profileSaveCancel.addEventListener("click", closeSaveRow);
+if (profileLabelInput) profileLabelInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); confirmSaveRow(); }
+  else if (e.key === "Escape") { e.preventDefault(); closeSaveRow(); }
+});
+if (profileUpdateBtn) profileUpdateBtn.addEventListener("click", async () => {
+  const id = profileSelect ? profileSelect.value : "";
+  if (!id) { window.alert("Select a profile to update, or press ＋ to save a new one."); return; }
+  const cur = _profiles.find((p) => p.id === id);
+  await window.api.profileUpdate(id, cur ? cur.label : null, readProfileFields());
+  await refreshProfiles(id);
+});
+if (profileDeleteBtn) profileDeleteBtn.addEventListener("click", async () => {
+  const id = profileSelect ? profileSelect.value : "";
+  if (!id) return;
+  const cur = _profiles.find((p) => p.id === id);
+  if (!window.confirm(`Delete profile "${cur ? cur.label : ""}"?`)) return;
+  await window.api.profileDelete(id);
+  await refreshProfiles();
+});
+
+// Continue page (session list + search on the left, materials on the right).
+function showContinue() {
+  if (settingsOverlay) settingsOverlay.hidden = true;
+  hideAllSetupOverlays();
+  if (continueOverlay) continueOverlay.hidden = false;
+  document.body.classList.remove("in-interview");
+  endBtn.classList.remove("live");
+  applyRoleClass("");
+  if (answerMain) answerMain.hidden = true;
+  if (typeof refreshContinueList === "function") refreshContinueList();
 }
 
 function hideSetup() {
   if (settingsOverlay) settingsOverlay.hidden = true;
-  setupOverlay.hidden = true;
+  hideAllSetupOverlays();
   document.body.classList.add("in-interview");
   endBtn.classList.add("live");
-  const role = setupRoleSpeaker.checked
-    ? "speaker"
-    : setupRoleSupporter.checked
-      ? "supporter"
-      : "";
+  const role = (setupRoleSupporterV && setupRoleSupporterV.checked) ? "supporter" : "speaker";
   applyRoleClass(role);
-  if (role === "supporter") {
-    window.api.setWebviewVisible(false);
-  } else {
-    window.api.setWebviewVisible(true);
-  }
+  // The speaker sees the answer panel; the supporter uses the chat panel.
+  if (answerMain) answerMain.hidden = role === "supporter";
 }
 
-setupStartBtn.addEventListener("click", async () => {
-  const chosenMode = setupModeCaption.checked ? "caption" : "voice";
-  const chosenRole = setupRoleSpeaker.checked ? "speaker" : "supporter";
+// Mode-chooser + back navigation.
+const modeNewBtn = document.getElementById("modeNewBtn");
+const modeContinueBtn = document.getElementById("modeContinueBtn");
+const setupBackBtn = document.getElementById("setupBackBtn");
+const continueBackBtn = document.getElementById("continueBackBtn");
+const modeSelectSettingsBtn = document.getElementById("modeSelectSettingsBtn");
+if (modeNewBtn) modeNewBtn.addEventListener("click", async () => {
+  // Start fresh: clear any carried-over materials (profile is still pre-filled).
+  if (window.api.kbClear) await window.api.kbClear();
+  showSetup();
+});
+if (modeContinueBtn) modeContinueBtn.addEventListener("click", () => showContinue());
+if (setupBackBtn) setupBackBtn.addEventListener("click", () => showModeSelect());
+if (continueBackBtn) continueBackBtn.addEventListener("click", () => showModeSelect());
+if (modeSelectSettingsBtn) modeSelectSettingsBtn.addEventListener("click", () => openSettings());
+
+// ===== New Interview-Setup page (Stage 2): gear, role toggle, Start, uploads =====
+const setupSettingsBtn = document.getElementById("setupSettingsBtn");
+if (setupSettingsBtn) setupSettingsBtn.addEventListener("click", () => openSettings());
+
+const setupRoleSpeakerV = document.getElementById("setupRoleSpeakerV");
+const setupRoleSupporterV = document.getElementById("setupRoleSupporterV");
+const setupAddressV = document.getElementById("setupAddressV");
+const setupStartBtnV = document.getElementById("setupStartBtnV");
+
+const roleCardSpeaker   = document.getElementById("roleCardSpeaker");
+const roleCardSupporter = document.getElementById("roleCardSupporter");
+
+function syncSetupRoleV() {
+  const sup = !!(setupRoleSupporterV && setupRoleSupporterV.checked);
+  if (setupAddressV) setupAddressV.hidden = !sup;
+  if (roleCardSpeaker)   roleCardSpeaker.classList.toggle("role-card--active", !sup);
+  if (roleCardSupporter) roleCardSupporter.classList.toggle("role-card--active",  sup);
+}
+if (setupRoleSpeakerV) setupRoleSpeakerV.addEventListener("change", syncSetupRoleV);
+if (setupRoleSupporterV) setupRoleSupporterV.addEventListener("change", syncSetupRoleV);
+syncSetupRoleV();
+
+if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
+  const sup = !!(setupRoleSupporterV && setupRoleSupporterV.checked);
+  const chosenRole = sup ? "supporter" : "speaker";
   const patch = { role: chosenRole };
-  if (chosenRole === "speaker") {
-    const port = parseInt(setupPortEl.value, 10);
-    if (!Number.isFinite(port) || port < 1 || port > 65535) {
-      window.alert("Enter a valid port (1–65535)");
-      return;
-    }
-    patch.speakerPort = port;
-  } else {
-    const addr = setupAddressEl.value.trim();
+  if (sup) {
+    const addr = (setupAddressV && setupAddressV.value.trim()) || "172.16.98.11:2000";
     if (!/^[^:\s]+:\d+$/.test(addr)) {
       window.alert("Enter address as host:port (e.g. 172.16.98.11:2000)");
       return;
     }
     patch.supporterAddress = addr;
+  } else {
+    patch.speakerPort = 2000;
   }
-  await window.api.setMode(chosenMode);
-  mode = chosenMode;
+  await window.api.setMode("voice");
+  mode = "voice";
   updateModeToggleBtn();
   await window.api.setNetworkConfig(patch);
   netCfg = await window.api.getNetworkConfig();
-  log(`Setup-start: netCfg refreshed (role=${netCfg.role || "none"})`, "info");
   await window.api.startNetwork();
+  // Fresh session for the speaker's answer panel — snapshot profile + materials.
+  if (!sup) {
+    clearAnswerPanel();
+    const val = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ""; };
+    const profile = { name: val("profileName"), city: val("profileCity"), country: val("profileCountry"), timezone: val("profileTimezone") };
+    if (window.api.sessionNew) await window.api.sessionNew({ profile });
+    maybeOpenInfoWindow(profile);
+  }
   hideSetup();
-  const showAddr =
-    chosenRole === "speaker"
-      ? `0.0.0.0:${patch.speakerPort}`
-      : patch.supporterAddress;
-  log(`Started: ${chosenMode} mode as ${chosenRole} on ${showAddr}`, "info");
+  log(`Started: voice mode as ${chosenRole}`, "info");
+});
 
-  if (chosenMode === "caption") {
-    const cap = await window.api.getCaptureConfig();
-    if (!cap.rect) {
-      log("Caption mode: pick a screen area to OCR", "info");
-      pendingCaptureStart = true;
-      setTimeout(() => window.api.selectCaptureArea(), 300);
+// Runtime IANA timezones (offline). Used to fill the scrollable, searchable
+// timezone selects in both the new-session and continue pre-setup pages.
+function timezoneList() {
+  try { return (Intl.supportedValuesOf && Intl.supportedValuesOf("timeZone")) || []; } catch { return []; }
+}
+function populateTimezoneSelect(selectEl, current) {
+  if (!selectEl) return;
+  selectEl.innerHTML = "";
+  const blank = document.createElement("option");
+  blank.value = ""; blank.textContent = "Timezone…";
+  selectEl.appendChild(blank);
+  timezoneList().forEach((z) => {
+    const o = document.createElement("option");
+    o.value = z; o.textContent = z;
+    selectEl.appendChild(o);
+  });
+  if (current) selectEl.value = current;
+  if (selectEl._cselRefresh) selectEl._cselRefresh();
+}
+populateTimezoneSelect(document.getElementById("profileTimezone"));
+
+// Open the info window for a profile that has at least a location or timezone.
+function maybeOpenInfoWindow(profile) {
+  if (!profile || !window.api.infoOpen) return;
+  if (profile.city || profile.country || profile.timezone) window.api.infoOpen(profile);
+}
+
+// ── Saved sessions: list / continue / delete in the setup screen ──────────────
+function clearAnswerPanel() {
+  if (answerHistory) answerHistory.querySelectorAll(".answer-turn").forEach((n) => n.remove());
+  if (answerEmpty) answerEmpty.hidden = false;
+  if (answerSpacer) answerSpacer.style.height = "0px";
+}
+
+// ── Continue overlay: searchable session list + materials preview ─────────────
+const sessionSearch = document.getElementById("sessionSearch");
+const continueSessionList = document.getElementById("continueSessionList");
+const continueDetail = document.getElementById("continueDetail");
+const continueOkBtn = document.getElementById("continueOkBtn");
+let _continueSessions = [];
+let _continueSelectedId = null;
+
+function esc(s) { return (typeof escapeHtml === "function") ? escapeHtml(s) : String(s == null ? "" : s); }
+
+async function refreshContinueList() {
+  if (!window.api.sessionList) return;
+  _continueSessions = await window.api.sessionList();
+  _continueSelectedId = null;
+  if (continueOkBtn) continueOkBtn.disabled = true;
+  if (continueDetail) continueDetail.innerHTML = '<p class="continue-empty">Select a session on the left to see its profile and attached materials.</p>';
+  renderContinueList(sessionSearch ? sessionSearch.value : "");
+}
+
+function renderContinueList(filter) {
+  if (!continueSessionList) return;
+  const f = (filter || "").toLowerCase();
+  const items = _continueSessions.filter((s) =>
+    !f || (s.name || "").toLowerCase().includes(f) || ((s.profile && s.profile.name) || "").toLowerCase().includes(f));
+  continueSessionList.innerHTML = "";
+  if (!items.length) { continueSessionList.innerHTML = '<div class="session-empty">No matching sessions.</div>'; return; }
+  items.forEach((s) => {
+    const card = document.createElement("div");
+    card.className = "session-card" + (s.id === _continueSelectedId ? " session-card--active" : "");
+    const info = document.createElement("div");
+    info.className = "session-card-info";
+    const name = document.createElement("div");
+    name.className = "session-card-name";
+    name.textContent = s.name || "(untitled)";
+    const meta = document.createElement("div");
+    meta.className = "session-card-meta";
+    const d = new Date(s.updatedAt || s.createdAt || Date.now());
+    const dateStr = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    meta.textContent = `${s.turnCount} message${s.turnCount === 1 ? "" : "s"} · ${dateStr}`;
+    info.appendChild(name);
+    info.appendChild(meta);
+    info.addEventListener("click", () => selectContinueSession(s.id));
+    const del = document.createElement("button");
+    del.className = "session-card-del";
+    del.textContent = "🗑";
+    del.title = "Erase this session";
+    del.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!window.confirm(`Erase session "${s.name || "(untitled)"}"? This cannot be undone.`)) return;
+      await window.api.sessionDelete(s.id);
+      refreshContinueList();
+    });
+    card.appendChild(info);
+    card.appendChild(del);
+    continueSessionList.appendChild(card);
+  });
+}
+
+async function selectContinueSession(id) {
+  _continueSelectedId = id;
+  renderContinueList(sessionSearch ? sessionSearch.value : "");
+  if (continueOkBtn) continueOkBtn.disabled = false;
+  if (!window.api.sessionMeta) return;
+  const meta = await window.api.sessionMeta(id);
+  renderContinueDetail(meta);
+}
+
+// Right panel = the session's pre-setup page (editable profile + materials).
+const CONTINUE_KB_KINDS = [
+  { kind: "cv", label: "Resume / CV", multi: false },
+  { kind: "jd", label: "Job Description", multi: false },
+  { kind: "support", label: "Support material", multi: true },
+  { kind: "meetings", label: "Meeting records", multi: true },
+];
+function renderContinueDetail(meta) {
+  if (!continueDetail) return;
+  if (!meta) { continueDetail.innerHTML = '<p class="continue-empty">Session not found.</p>'; return; }
+  const p = meta.profile || {};
+  const id = meta.id;
+
+  let html = '<div class="cd-section"><div class="cd-label">Your profile</div>' +
+    '<div class="profile-inputs profile-inputs--vertical">' +
+    '<input type="text" id="cProfileName" class="profile-input" placeholder="Name" spellcheck="false" value="' + esc(p.name) + '" />' +
+    '<input type="text" id="cProfileCity" class="profile-input" placeholder="City" spellcheck="false" value="' + esc(p.city) + '" />' +
+    '<input type="text" id="cProfileCountry" class="profile-input" placeholder="Country" spellcheck="false" value="' + esc(p.country) + '" />' +
+    '<select id="cProfileTimezone" class="profile-input profile-tz-select"></select>' +
+    "</div></div>";
+
+  html += '<div class="cd-section"><div class="cd-label">Materials</div><div class="upload-grid upload-grid--continue">';
+  CONTINUE_KB_KINDS.forEach(({ kind, label, multi }) => {
+    const K = cap1(kind);
+    html += '<div class="upload-zone" id="cDrop' + K + '" data-kind="' + kind + '">' +
+      '<div class="upload-zone-title">' + label + "</div>" +
+      '<div class="upload-zone-hint">Click or drag &amp; drop' + (multi ? " · multiple" : "") + "</div>" +
+      '<div class="upload-files" id="cFiles' + K + '"></div>' +
+      '<input type="file" id="cFile' + K + '" hidden' + (multi ? " multiple" : "") + " /></div>";
+  });
+  html += "</div></div>";
+  html += '<div class="cd-section"><div class="cd-meta">' + meta.turnCount + " message" + (meta.turnCount === 1 ? "" : "s") + "</div></div>";
+  continueDetail.innerHTML = html;
+
+  // Turn the timezone <select> into the scrollable/searchable custom select.
+  const tzSel = document.getElementById("cProfileTimezone");
+  if (tzSel) { makeCustomSelect(tzSel); populateTimezoneSelect(tzSel, p.timezone); }
+
+  wireContinueKbZones(id);
+  renderContinueKb(id);
+}
+
+// Render the chip lists for the selected session's materials.
+async function renderContinueKb(id) {
+  if (!window.api.sessionKbGet) return;
+  const kb = await window.api.sessionKbGet(id);
+  if (!kb) return;
+  CONTINUE_KB_KINDS.forEach(({ kind }) => {
+    const el = document.getElementById("cFiles" + cap1(kind));
+    if (!el) return;
+    el.innerHTML = "";
+    (kb[kind] || []).forEach((it, i) => {
+      const chip = document.createElement("span");
+      chip.className = "upload-chip";
+      const kbz = it.chars ? ` · ${Math.max(1, Math.round(it.chars / 1000))}k` : "";
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "upload-chip-name";
+      nameSpan.textContent = it.name + kbz;
+      chip.appendChild(nameSpan);
+      const x = document.createElement("button");
+      x.className = "upload-chip-x";
+      x.textContent = "×";
+      x.title = "Remove";
+      x.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        await window.api.sessionKbRemove(id, kind, i);
+        renderContinueKb(id);
+      });
+      chip.appendChild(x);
+      el.appendChild(chip);
+    });
+  });
+}
+
+async function addContinueKbFiles(id, kind, fileList) {
+  const files = Array.from(fileList || []);
+  for (const f of files) {
+    try {
+      const buf = await f.arrayBuffer();
+      const r = await window.api.sessionKbAdd(id, kind, f.name, buf);
+      if (r && !r.ok) log(`Upload failed (${f.name}): ${r.error || "error"}`, "err");
+    } catch (err) {
+      log(`Upload failed (${f.name}): ${err.message}`, "err");
     }
   }
+  renderContinueKb(id);
+}
+
+function wireContinueKbZones(id) {
+  CONTINUE_KB_KINDS.forEach(({ kind }) => {
+    const K = cap1(kind);
+    const zone = document.getElementById("cDrop" + K);
+    const input = document.getElementById("cFile" + K);
+    if (!zone || !input) return;
+    zone.addEventListener("click", () => input.click());
+    input.addEventListener("change", () => { addContinueKbFiles(id, kind, input.files); input.value = ""; });
+    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("dragover"); });
+    zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      zone.classList.remove("dragover");
+      addContinueKbFiles(id, kind, e.dataTransfer && e.dataTransfer.files);
+    });
+  });
+}
+
+if (sessionSearch) sessionSearch.addEventListener("input", () => renderContinueList(sessionSearch.value));
+if (continueOkBtn) continueOkBtn.addEventListener("click", () => { if (_continueSelectedId) continueSession(_continueSelectedId); });
+
+async function continueSession(id) {
+  if (!window.api.sessionLoad) return;
+  // Persist any profile edits made in the right panel before loading.
+  const cval = (cid) => { const el = document.getElementById(cid); return el ? el.value.trim() : ""; };
+  const editedProfile = {
+    name: cval("cProfileName"), city: cval("cProfileCity"),
+    country: cval("cProfileCountry"), timezone: cval("cProfileTimezone"),
+  };
+  if (window.api.sessionUpdateProfile) await window.api.sessionUpdateProfile(id, editedProfile);
+
+  const data = await window.api.sessionLoad(id);
+  if (!data) return;
+  // Sessions are speaker-side (answer panel). Start in voice mode as speaker.
+  await window.api.setMode("voice");
+  mode = "voice";
+  updateModeToggleBtn();
+  await window.api.setNetworkConfig({ role: "speaker", speakerPort: 2000 });
+  netCfg = await window.api.getNetworkConfig();
+  await window.api.startNetwork();
+  if (setupRoleSpeakerV) { setupRoleSpeakerV.checked = true; syncSetupRoleV(); }
+  clearAnswerPanel();
+  renderLoadedTurns(data.turns || []);
+  hideSetup();
+  maybeOpenInfoWindow(data.profile || editedProfile);
+  log(`Continued session: ${data.name || id}`, "info");
+}
+
+// Rebuild saved turns in the answer panel (rendered, not streaming).
+function renderLoadedTurns(turns) {
+  (turns || []).forEach((t) => {
+    const imgs = Array.isArray(t.images) && t.images.length ? t.images : null;
+    const el = addAnswerTurn(t.q || "", imgs, t.mode || "ANSWER", t.ts);
+    if (!el) return;
+    el.classList.remove("streaming");
+    if (el._timeEl) el._timeEl.textContent = fmtTime(t.ts);
+    const mode2 = el.dataset.mode || "ANSWER";
+    const streamEl = el._streamEl || el;
+    let txt = t.a || "";
+    if (mode2 === "CODE" || mode2 === "DIAGRAM") txt = stripLeadingIntro(txt, mode2);
+    const m = txt.match(/<sticky>([\s\S]*?)<\/sticky>/i);
+    if (m) {
+      const md = txt.replace(/<sticky>[\s\S]*?<\/sticky>/i, "").trimEnd();
+      el._rawText = md;
+      streamEl.textContent = md;
+      renderMermaidInElement(streamEl);
+      appendScriptToAnswer(el, m[1].trim());
+    } else {
+      el._rawText = txt;
+      streamEl.textContent = txt;
+      renderMermaidInElement(streamEl);
+    }
+    if (streamEl.classList.contains("has-diagram")) el.classList.add("has-diagram");
+    if (mode2 === "CODE") appendCodeActions(el);
+  });
+}
+
+// Upload zones — read each file's bytes, send to main for text extraction, and
+// render chips from the stored (persisted) knowledge.
+const KB_KINDS = ["cv", "jd", "support", "meetings"];
+const cap1 = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+function renderKbList(kind, items) {
+  const el = document.getElementById("files" + cap1(kind));
+  if (!el) return;
+  el.innerHTML = "";
+  (items || []).forEach((it, i) => {
+    const chip = document.createElement("span");
+    chip.className = "upload-chip";
+    const kb = it.chars ? ` · ${Math.max(1, Math.round(it.chars / 1000))}k` : "";
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "upload-chip-name";
+    nameSpan.textContent = it.name + kb;
+    chip.appendChild(nameSpan);
+    const x = document.createElement("button");
+    x.className = "upload-chip-x";
+    x.textContent = "×";
+    x.title = "Remove";
+    x.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await window.api.kbRemove(kind, i);
+      refreshKb();
+    });
+    chip.appendChild(x);
+    el.appendChild(chip);
+  });
+}
+
+async function refreshKb() {
+  if (!window.api.kbGet) return;
+  const kb = await window.api.kbGet();
+  for (const kind of KB_KINDS) renderKbList(kind, kb[kind] || []);
+}
+
+async function addKbFiles(kind, fileList) {
+  const files = Array.from(fileList || []);
+  for (const f of files) {
+    try {
+      const buf = await f.arrayBuffer();
+      const r = await window.api.kbAdd(kind, f.name, buf);
+      if (r && !r.ok) log(`Upload failed (${f.name}): ${r.error || "error"}`, "err");
+    } catch (err) {
+      log(`Upload failed (${f.name}): ${err.message}`, "err");
+    }
+  }
+  refreshKb();
+}
+
+KB_KINDS.forEach((kind) => {
+  const zone = document.getElementById("drop" + cap1(kind));
+  const input = document.getElementById("file" + cap1(kind));
+  if (!zone || !input) return;
+  zone.addEventListener("click", () => input.click());
+  input.addEventListener("change", () => { addKbFiles(kind, input.files); input.value = ""; });
+  zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("dragover"); });
+  zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    zone.classList.remove("dragover");
+    addKbFiles(kind, e.dataTransfer && e.dataTransfer.files);
+  });
 });
+refreshKb();
 
 const endModal = document.getElementById("endModal");
 const endModalList = document.getElementById("endModalList");
@@ -610,153 +875,47 @@ async function showEndModal() {
   }
 
   endModal.hidden = false;
-  window.api.setWebviewVisible(false);
 }
 
 function hideEndModal() {
   endModal.hidden = true;
-  if (setupOverlay.hidden && settingsOverlay.hidden)
-    window.api.setWebviewVisible(true);
 }
 
 endBtn.addEventListener("click", showEndModal);
 endModalCancel.addEventListener("click", hideEndModal);
 endModalConfirm.addEventListener("click", async () => {
   endModal.hidden = true;
-  await window.api.saveSessionLog().catch(() => {});
+  // Compose the session title from company/position (+ date), then save the
+  // transcript using that title as the suggested filename.
+  const companyEl = document.getElementById("endCompany");
+  const positionEl = document.getElementById("endPosition");
+  const company = companyEl ? companyEl.value.trim() : "";
+  const position = positionEl ? positionEl.value.trim() : "";
+  let title = "";
+  if (window.api.sessionFinalize) title = await window.api.sessionFinalize(company, position).catch(() => "");
+  await window.api.saveSessionLog(title).catch(() => {});
+  if (companyEl) companyEl.value = "";
+  if (positionEl) positionEl.value = "";
   if (recState) await stopVoice().catch(() => {});
   if (captureRunning) await stopCaption().catch(() => {});
   await window.api.stopNetwork();
   teardownPeers();
   delete netActionBtn.dataset.connecting;
+  if (window.api.infoClose) window.api.infoClose();
   log("Session ended — back to setup", "info");
-  showSetup();
+  showModeSelect();
 });
 
 document.addEventListener("keydown", (e) => {
   if (!endModal.hidden && e.key === "Escape") hideEndModal();
 });
 
-showSetup();
+showModeSelect();
 
 window.api.onOpacityChanged((v) => updateFill(v));
 window.api.onStealthChanged((v) => updateStealth(v));
 window.api.getOpacity().then(updateFill);
 window.api.getStealth().then(updateStealth);
-
-function normalizeUrl(input) {
-  const u = input.trim();
-  if (!u) return null;
-  if (/^https?:\/\//i.test(u)) return u;
-  if (/^[\w.-]+\.[a-z]{2,}/i.test(u)) return "https://" + u;
-  return null;
-}
-
-function renderUrlList() {
-  urlList.innerHTML = "";
-  if (urls.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "url-empty";
-    empty.textContent = "No URLs added yet.";
-    urlList.appendChild(empty);
-    return;
-  }
-  urls.forEach((url, i) => {
-    const row = document.createElement("div");
-    row.className = "url-row";
-    const txt = document.createElement("span");
-    txt.className = "url-text";
-    txt.textContent = url;
-    const rm = document.createElement("button");
-    rm.className = "url-remove";
-    rm.textContent = "×";
-    rm.title = "Remove";
-    rm.addEventListener("click", () => {
-      urls.splice(i, 1);
-      window.api.setUrls(urls);
-      renderUrlList();
-    });
-    row.appendChild(txt);
-    row.appendChild(rm);
-    urlList.appendChild(row);
-  });
-}
-
-async function refreshUrls() {
-  const data = await window.api.getUrls();
-  urls = data.urls;
-  renderUrlList();
-}
-
-urlAddBtn.addEventListener("click", () => {
-  const u = normalizeUrl(urlInput.value);
-  if (!u) return;
-  urls.push(u);
-  window.api.setUrls(urls);
-  urlInput.value = "";
-  renderUrlList();
-});
-
-urlInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") urlAddBtn.click();
-});
-
-urlMenuBtn.addEventListener("click", () => window.api.showUrlMenu());
-reloadBtn.addEventListener("click", () => window.api.reloadWebview());
-
-// --- Top URL bar: type a URL to navigate the loaded page directly. Useful when
-// the site bounces to a human-verification page. ---
-const urlInputBar = document.getElementById("urlInputBar");
-const urlBackBtn = document.getElementById("urlBackBtn");
-const urlForwardBtn = document.getElementById("urlForwardBtn");
-const urlReloadBtn = document.getElementById("urlReloadBtn");
-const urlGoBtn = document.getElementById("urlGoBtn");
-let urlBarFocused = false;
-
-const urlbarEl = document.getElementById("urlbar");
-function setWebviewLoading(on) {
-  if (urlbarEl) urlbarEl.classList.toggle("loading", !!on);
-  if (urlGoBtn) urlGoBtn.classList.toggle("loading", !!on);
-}
-
-function goToUrlBarValue() {
-  const v = (urlInputBar.value || "").trim();
-  if (v) {
-    setWebviewLoading(true); // instant feedback before the page starts loading
-    window.api.navigateUrl(v);
-  }
-  urlInputBar.blur();
-}
-
-if (urlInputBar) {
-  urlInputBar.addEventListener("focus", () => {
-    urlBarFocused = true;
-    urlInputBar.select();
-  });
-  urlInputBar.addEventListener("blur", () => { urlBarFocused = false; });
-  urlInputBar.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); goToUrlBarValue(); }
-    else if (e.key === "Escape") { urlInputBar.blur(); }
-  });
-}
-if (urlGoBtn) urlGoBtn.addEventListener("click", goToUrlBarValue);
-if (urlBackBtn) urlBackBtn.addEventListener("click", () => { setWebviewLoading(true); window.api.webviewBack(); });
-if (urlForwardBtn) urlForwardBtn.addEventListener("click", () => { setWebviewLoading(true); window.api.webviewForward(); });
-if (urlReloadBtn) urlReloadBtn.addEventListener("click", () => { setWebviewLoading(true); window.api.reloadWebview(); });
-window.api.onWebviewLoading(setWebviewLoading);
-
-function applyWebviewNav(info) {
-  if (!info) return;
-  // Don't clobber what the user is typing.
-  if (!urlBarFocused && urlInputBar && typeof info.url === "string") {
-    urlInputBar.value = info.url;
-  }
-  if (urlBackBtn) urlBackBtn.disabled = !info.canBack;
-  if (urlForwardBtn) urlForwardBtn.disabled = !info.canForward;
-}
-
-window.api.onWebviewUrlChanged(applyWebviewNav);
-if (window.api.getWebviewUrl) window.api.getWebviewUrl().then(applyWebviewNav);
 
 const tabBtns = document.querySelectorAll(".tab-btn");
 const tabPanels = document.querySelectorAll(".settings-tab");
@@ -802,44 +961,6 @@ if (updaterInstallBtn)
     window.api.installUpdateNow(),
   );
 
-// ---- Session cookie export / import ----
-const cookieExportBtn = document.getElementById("cookieExportBtn");
-const cookieImportBtn = document.getElementById("cookieImportBtn");
-const cookieStatusEl = document.getElementById("cookieStatus");
-function setCookieStatus(msg) {
-  if (cookieStatusEl) cookieStatusEl.textContent = msg;
-}
-if (cookieExportBtn)
-  cookieExportBtn.addEventListener("click", async () => {
-    setCookieStatus("Exporting…");
-    const r = await window.api.exportCookies();
-    if (r && r.ok) setCookieStatus(`Exported ${r.count} cookies. Keep this file private.`);
-    else if (r && r.canceled) setCookieStatus("Export canceled.");
-    else setCookieStatus("Export failed: " + ((r && r.error) || "unknown error"));
-  });
-if (cookieImportBtn)
-  cookieImportBtn.addEventListener("click", async () => {
-    setCookieStatus("Importing…");
-    const r = await window.api.importCookies();
-    if (r && r.ok)
-      setCookieStatus(`Imported ${r.imported} cookies${r.skipped ? `, skipped ${r.skipped}` : ""}. Reloading the site…`);
-    else if (r && r.canceled) setCookieStatus("Import canceled.");
-    else setCookieStatus("Import failed: " + ((r && r.error) || "unknown error"));
-  });
-
-// Setup-wizard import (same handler) for restoring a session on a new machine.
-const setupImportCookiesBtn = document.getElementById("setupImportCookiesBtn");
-const setupCookieStatusEl = document.getElementById("setupCookieStatus");
-if (setupImportCookiesBtn)
-  setupImportCookiesBtn.addEventListener("click", async () => {
-    if (setupCookieStatusEl) setupCookieStatusEl.textContent = "Importing…";
-    const r = await window.api.importCookies();
-    if (setupCookieStatusEl) {
-      if (r && r.ok) setupCookieStatusEl.textContent = `Imported ${r.imported} cookies.`;
-      else if (r && r.canceled) setupCookieStatusEl.textContent = "";
-      else setupCookieStatusEl.textContent = "Failed: " + ((r && r.error) || "error");
-    }
-  });
 
 // ---- Prompt library ----
 const promptListEl = document.getElementById("promptList");
@@ -862,6 +983,8 @@ function clearPromptEditor() {
   if (promptEditorTitle) promptEditorTitle.textContent = "New prompt";
 }
 function renderPrompts(list) {
+  // Keep the answer-panel preset dropdown in sync whenever prompts change.
+  if (typeof refreshPresetSelect === "function") refreshPresetSelect();
   if (!promptListEl) return;
   promptListEl.innerHTML = "";
   if (!list || list.length === 0) {
@@ -886,10 +1009,9 @@ function renderPrompts(list) {
     title.title = p.text;
     row.appendChild(title);
     row.appendChild(
-      mkBtn("Insert", async () => {
-        setPromptStatus("Inserting…");
-        await window.api.injectToWebview(p.text);
-        setPromptStatus('Inserted "' + p.title + '".');
+      mkBtn("Insert", () => {
+        appendToComposer(p.text);
+        setPromptStatus('Inserted "' + p.title + '" into the question box.');
       }),
     );
     row.appendChild(
@@ -966,6 +1088,34 @@ if (promptImportBtn)
 
 if (window.api && window.api.getPrompts) window.api.getPrompts().then(renderPrompts);
 
+// ---- Avoid-phrases UI ----
+const avoidPhrasesInput  = document.getElementById("avoidPhrasesInput");
+const avoidPhrasesSaveBtn = document.getElementById("avoidPhrasesSaveBtn");
+const avoidPhrasesStatus  = document.getElementById("avoidPhrasesStatus");
+
+function setAvoidStatus(msg, ok) {
+  if (!avoidPhrasesStatus) return;
+  avoidPhrasesStatus.textContent = msg;
+  avoidPhrasesStatus.style.color = ok ? 'var(--accent)' : 'var(--danger, #ef4444)';
+  setTimeout(() => { if (avoidPhrasesStatus) avoidPhrasesStatus.textContent = ''; }, 2500);
+}
+
+async function loadAvoidPhrases() {
+  if (!avoidPhrasesInput || !window.api.getAvoidPhrases) return;
+  const text = await window.api.getAvoidPhrases();
+  avoidPhrasesInput.value = text || '';
+}
+
+if (avoidPhrasesSaveBtn) {
+  avoidPhrasesSaveBtn.addEventListener('click', async () => {
+    const text = avoidPhrasesInput ? avoidPhrasesInput.value : '';
+    await window.api.setAvoidPhrases(text);
+    setAvoidStatus('Saved.', true);
+  });
+}
+
+loadAvoidPhrases();
+
 if (window.api && window.api.onUpdaterStatus) {
   window.api.onUpdaterStatus((s) => {
     if (!updaterStatusEl) return;
@@ -997,15 +1147,11 @@ if (logClearBtn)
 
 function openSettings() {
   settingsOverlay.hidden = false;
-  window.api.setWebviewVisible(false);
-  const inInterview = document.body.classList.contains("in-interview");
   const isSupporter = netCfg && netCfg.role === "supporter";
-  let defaultTab = "general";
-  if (inInterview) defaultTab = "network";
-  activateTab(defaultTab);
-  refreshUrls();
+  activateTab("apikeys");
   refreshModeUI();
   refreshTranscriptionUI();
+  loadAvoidPhrases();
   refreshCaptureUI();
   refreshMicList();
   refreshHotkeysUI();
@@ -1015,8 +1161,6 @@ function openSettings() {
 
 function closeSettings() {
   settingsOverlay.hidden = true;
-  const isSupporter = netCfg && netCfg.role === "supporter";
-  if (!isSupporter) window.api.setWebviewVisible(true);
 }
 
 settingsBtn.addEventListener("click", openSettings);
@@ -1063,7 +1207,6 @@ async function refreshModeUI() {
   updateRecTitle();
   updateTabVisibility(mode);
   updateModeToggleBtn();
-  updateChunkRail();
 }
 
 function updateTabVisibility(activeMode) {
@@ -1100,18 +1243,36 @@ modeCaption.addEventListener("change", async () => {
   }
 });
 
+// Show only the key field that belongs to the selected engine.
+function updateEngineBlocks(engine) {
+  const dg = document.getElementById("deepgramBlock");
+  const xa = document.getElementById("xaiBlock");
+  if (dg) dg.hidden = engine !== "deepgram";
+  if (xa) xa.hidden = engine !== "xai";
+}
+
+function syncTxSourceUi() {
+  if (!micSelect) return;
+  micSelect.disabled = !captureMicEl || !captureMicEl.checked;
+  if (typeof micSelect._cselSyncDisabled === "function") micSelect._cselSyncDisabled();
+}
+
 async function refreshTranscriptionUI() {
   txCfg = await window.api.getTranscriptionConfig();
-  engineDeepgram.checked = txCfg.engine !== "local";
-  engineLocal.checked = txCfg.engine === "local";
+  engineDeepgram.checked = txCfg.engine !== "xai";
+  if (engineXai) engineXai.checked = txCfg.engine === "xai";
   deepgramKeyEl.value = txCfg.deepgramApiKey || "";
-  whisperExeEl.value = txCfg.whisperExe || "";
-  whisperModelEl.value = txCfg.whisperModel || "";
+  if (xaiKeyEl) xaiKeyEl.value = txCfg.xaiApiKey || "";
   languageSelect.value = txCfg.language || "auto";
   captureMicEl.checked = txCfg.captureMic !== false;
   captureSystemEl.checked = txCfg.captureSystem !== false;
-  setChunkSecondsEverywhere(txCfg.chunkSeconds);
-  updateChunkUiVisibility();
+  if (!captureMicEl.checked && !captureSystemEl.checked) {
+    captureMicEl.checked = true;
+    captureSystemEl.checked = true;
+    persistTx({ captureMic: true, captureSystem: true });
+  }
+  updateEngineBlocks(txCfg.engine);
+  syncTxSourceUi();
 }
 
 async function persistTx(patch) {
@@ -1122,53 +1283,42 @@ async function persistTx(patch) {
 engineDeepgram.addEventListener("change", () => {
   if (!engineDeepgram.checked) return;
   persistTx({ engine: "deepgram" });
-  updateChunkUiVisibility();
+  updateEngineBlocks("deepgram");
 });
-engineLocal.addEventListener("change", () => {
-  if (!engineLocal.checked) return;
-  persistTx({ engine: "local" });
-  updateChunkUiVisibility();
+if (engineXai) engineXai.addEventListener("change", () => {
+  if (!engineXai.checked) return;
+  persistTx({ engine: "xai" });
+  updateEngineBlocks("xai");
 });
 deepgramKeyEl.addEventListener("change", () =>
   persistTx({ deepgramApiKey: deepgramKeyEl.value.trim() }),
 );
-whisperExeEl.addEventListener("change", () =>
-  persistTx({ whisperExe: whisperExeEl.value.trim() }),
-);
-whisperModelEl.addEventListener("change", () =>
-  persistTx({ whisperModel: whisperModelEl.value.trim() }),
+if (xaiKeyEl) xaiKeyEl.addEventListener("change", () =>
+  persistTx({ xaiApiKey: xaiKeyEl.value.trim() }),
 );
 languageSelect.addEventListener("change", () =>
   persistTx({ language: languageSelect.value }),
 );
-captureMicEl.addEventListener("change", () =>
-  persistTx({ captureMic: captureMicEl.checked }),
-);
-captureSystemEl.addEventListener("change", () =>
-  persistTx({ captureSystem: captureSystemEl.checked }),
-);
+function onTxSourceChange(e) {
+  if (!captureMicEl.checked && !captureSystemEl.checked) {
+    const target = e && e.target;
+    if (target === captureMicEl) captureSystemEl.checked = true;
+    else captureMicEl.checked = true;
+    if (typeof toast === "function") {
+      toast("Keep at least one audio source on", "info");
+    }
+  }
+  persistTx({
+    captureMic: captureMicEl.checked,
+    captureSystem: captureSystemEl.checked,
+  });
+  syncTxSourceUi();
+}
+captureMicEl.addEventListener("change", onTxSourceChange);
+captureSystemEl.addEventListener("change", onTxSourceChange);
 micSelect.addEventListener("change", () =>
   persistTx({ micDeviceId: micSelect.value }),
 );
-if (chunkSecondsRange) {
-  chunkSecondsRange.addEventListener("input", () => setChunkSecondsEverywhere(chunkSecondsRange.value));
-  chunkSecondsRange.addEventListener("change", () => persistTx({ chunkSeconds: chunkSecondsRuntime }));
-}
-
-whisperExeBrowse.addEventListener("click", async () => {
-  const p = await window.api.pickFile("exe");
-  if (p) {
-    whisperExeEl.value = p;
-    persistTx({ whisperExe: p });
-  }
-});
-whisperModelBrowse.addEventListener("click", async () => {
-  const p = await window.api.pickFile("model");
-  if (p) {
-    whisperModelEl.value = p;
-    persistTx({ whisperModel: p });
-  }
-});
 
 async function refreshCaptureUI() {
   capCfg = await window.api.getCaptureConfig();
@@ -1232,10 +1382,9 @@ const HOTKEY_LABELS = {
   moveDown: "Move window down",
   opacityUp: "Opacity up",
   opacityDown: "Opacity down",
-  scrollUp: "Scroll page up",
-  scrollDown: "Scroll page down",
+  scrollUp: "Scroll answers up",
+  scrollDown: "Scroll answers down",
   resetCaptureArea: "Reset capture area (re-pick)",
-  reloadSite: "Reload site",
   toggleStealth: "Toggle stealth",
   toggleRecording: "Start/stop voice or caption",
   toggleMode: "Toggle OCR ↔ Voice mode",
@@ -1245,8 +1394,7 @@ const HOTKEY_LABELS = {
   stickyScrollUp: "Scroll sticky note up",
   stickyScrollDown: "Scroll sticky note down",
   helpRequest: "Send help request (speaker → supporter)",
-  submitPrompt: "Submit prompt in Claude/ChatGPT",
-  screenshotToAI: "Screenshot active screen → paste to AI",
+  submitPrompt: "Get answer (send to selected API)",
   toggleClickThrough: "Toggle click-through (mouse passes through)",
 };
 
@@ -1407,7 +1555,6 @@ window.api.onSelectorClosed(() => {
 });
 
 let interimEl = null;
-let injectedSegment = ""; // chars of the in-progress segment currently in the input
 
 function clearInterimPreview() {
   if (interimEl) {
@@ -1424,27 +1571,42 @@ function showInterimPreview(text) {
   interimEl.textContent = "⟳ " + text;
   logBody.scrollTop = logBody.scrollHeight;
 }
-function commonPrefixLen(a, b) {
-  const n = Math.min(a.length, b.length);
-  let i = 0;
-  while (i < n && a[i] === b[i]) i++;
-  return i;
+const composerInput = document.getElementById("composerInput");
+
+// One-shot append (OCR, prompt-insert): drop text onto the end of the composer.
+function appendToComposer(text) {
+  const t = (text || "").trim();
+  if (!t || !composerInput) return;
+  const cur = composerInput.value;
+  composerInput.value = !cur ? t : (cur.endsWith(" ") ? cur + t : cur + " " + t);
+  composerInput.scrollTop = composerInput.scrollHeight;
+  kickSpeculative(false);
 }
-// Stream the transcript into the AI input word-by-word as you speak. Each update
-// edits only the TAIL that changed: when Deepgram revises a word we delete the
-// wrong tail and retype it, so the box always reflects Deepgram's best current
-// guess and self-corrects — instead of dumping a whole finalized block at once.
+
+// Live word-by-word streaming of the CURRENT speech segment into the composer
+// (like v1.0.0). `liveSeg` is the not-yet-finalized tail at the end of the box;
+// each update replaces just that tail, so revised interim words self-correct
+// instead of dumping a whole 1–2s block when the segment finalizes.
+let liveSeg = "";
+function resetLiveSeg() { liveSeg = ""; }
 function streamSegment(text, isFinal) {
-  const common = commonPrefixLen(injectedSegment, text);
-  const deleteCount = injectedSegment.length - common;
-  const insert = text.slice(common);
-  if (deleteCount > 0 || insert) window.api.webviewEditTail(deleteCount, insert);
-  injectedSegment = text;
+  if (!composerInput) return;
+  const v = composerInput.value;
+  const base = liveSeg && v.endsWith(liveSeg) ? v.slice(0, v.length - liveSeg.length) : v;
+  const needSpace = base && !/\s$/.test(base);
   if (isFinal) {
-    window.api.webviewEditTail(0, " "); // lock the segment with a trailing space
-    injectedSegment = "";
+    composerInput.value = base + (needSpace ? " " : "") + text.trim() + " ";
+    liveSeg = "";
+  } else {
+    composerInput.value = base + (needSpace ? " " : "") + text;
+    liveSeg = (needSpace ? " " : "") + text;
   }
+  composerInput.scrollTop = composerInput.scrollHeight;
+  // Pause-detect only: continuous speech keeps resetting the timer so we
+  // don't abort a half-prefilled request on every Deepgram final.
+  kickSpeculative(false);
 }
+
 // Coalesce the stream of interim hypotheses to a steady ~12fps so the input
 // updates smoothly (like a live caption) instead of stuttering on every packet.
 let pendingInterim = null;
@@ -1465,7 +1627,6 @@ function scheduleInterimFlush() {
 window.api.onTranscriptLive(({ text, isFinal }) => {
   if (!text) return;
   if (isFinal) {
-    // Apply finals immediately; drop any queued interim (the final supersedes it).
     if (interimFlushTimer) { clearTimeout(interimFlushTimer); interimFlushTimer = null; }
     pendingInterim = null;
     streamSegment(text, true);
@@ -1476,21 +1637,19 @@ window.api.onTranscriptLive(({ text, isFinal }) => {
     scheduleInterimFlush();
   }
 });
-// Utterance boundary (vad_events): close out a segment that never got a final so
-// trailing words aren't left hanging, and clear the live preview.
+// Utterance boundary (vad_events): lock any pending live segment so trailing
+// words aren't left dangling, and clear the live preview.
 window.api.onUtteranceEnd(() => {
-  // Apply any queued interim before closing the segment so words aren't lost.
   if (interimFlushTimer) { clearTimeout(interimFlushTimer); interimFlushTimer = null; }
-  if (pendingInterim != null) { streamSegment(pendingInterim, false); pendingInterim = null; }
-  if (injectedSegment) {
-    window.api.webviewEditTail(0, " ");
-    injectedSegment = "";
-  }
+  if (pendingInterim != null) { streamSegment(pendingInterim, true); pendingInterim = null; }
+  else if (liveSeg) { streamSegment(liveSeg, true); }
   clearInterimPreview();
+  // Question is complete — start the answer immediately so send is often a cache hit.
+  kickSpeculative(true);
 });
 window.api.onTranscriptLiveError((msg) => {
-  log("Deepgram error: " + msg, "err");
-  if (recState && recState.deepgram) {
+  log("Transcription error: " + msg, "err");
+  if (recState && recState.streaming) {
     recState = null;
     recBtn.classList.remove("on");
     updateRecTitle();
@@ -1498,7 +1657,14 @@ window.api.onTranscriptLiveError((msg) => {
 });
 
 window.api.onCaptureText((text) => {
+  // Messages starting with '[' are internal status/log lines (e.g. "[sticky sent: ...]"),
+  // not real OCR content — log them but never inject them into the composer.
+  if (text && text.trimStart().startsWith('[')) {
+    log(text);
+    return;
+  }
   log("OCR: " + text);
+  appendToComposer(text);
   window.api.sessionLogAdd({ ts: Date.now(), kind: "ocr", text });
 });
 window.api.onCaptureError((msg) => log("OCR error: " + msg, "err"));
@@ -1507,6 +1673,1130 @@ window.api.onCaptureState((on) => {
   recBtn.classList.toggle("on", captureRunning);
   updateRecTitle();
 });
+
+// ===== Answer panel =====
+const answerHistory = document.getElementById("answerHistory");
+const answerEmpty = document.getElementById("answerEmpty");
+const getAnswerBtn = document.getElementById("getAnswerBtn");
+const answerClearBtn = document.getElementById("answerClearBtn");
+const presetSelect = document.getElementById("presetSelect");
+const answerKeyEl = document.getElementById("answerKey");
+const answerKeyAnthropicEl = document.getElementById("answerKeyAnthropic");
+const answerKeyOpenaiEl = document.getElementById("answerKeyOpenai");
+const answerModelEl = document.getElementById("answerModel");
+const answerModelHeaderEl = document.getElementById("answerModelHeader");
+const answerProviderSelect = document.getElementById("answerProviderSelect");
+const modeSeg = document.getElementById("modeSeg");
+const railModelBtn = document.getElementById("railModelBtn");
+let currentAnswerEl = null;
+let answerCfgCache = { provider: "xai", model: "grok-4.20-0309-non-reasoning", keys: {}, fallbackModels: [] };
+
+function updateRailModelBtn(cfg) {
+  if (!railModelBtn) return;
+  const c = cfg || answerCfgCache;
+  const id = c.model || "";
+  railModelBtn.textContent = c.railAbbr || "M";
+  const prov = (c.providers || []).find((p) => p.id === c.provider);
+  railModelBtn.title = (prov ? prov.label + " · " : "") + id;
+}
+
+function setProviderRadios(provider) {
+  document.querySelectorAll('input[name="answerProvider"]').forEach((el) => {
+    el.checked = el.value === provider;
+  });
+  if (answerProviderSelect && answerProviderSelect.value !== provider) {
+    answerProviderSelect.value = provider;
+  }
+}
+
+// Rail model button — opens native popup menu (provider + models)
+if (railModelBtn && window.api.showModelMenu) {
+  railModelBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const r = railModelBtn.getBoundingClientRect();
+    window.api.showModelMenu({ x: r.left, y: r.top, width: r.width, height: r.height });
+  });
+}
+if (window.api.onModelSelected) {
+  window.api.onModelSelected((id) => {
+    setAnswerModel(id);
+  });
+}
+if (window.api.onAnswerConfigChanged) {
+  window.api.onAnswerConfigChanged((cfg) => applyAnswerConfigUi(cfg));
+}
+
+// Manual mode — default Text; CODE/DIAGRAM force specific output format.
+let manualMode = 'ANSWER';
+if (modeSeg) {
+  modeSeg.addEventListener('click', (e) => {
+    const btn = e.target.closest('.mode-seg-btn');
+    if (!btn) return;
+    manualMode = btn.dataset.mode;
+    modeSeg.querySelectorAll('.mode-seg-btn').forEach(b => b.classList.toggle('mode-seg-btn--active', b === btn));
+    _speculativeText = null;
+    kickSpeculative(true);
+  });
+}
+
+// Clean display names shown in the dropdown instead of raw API IDs.
+const MODEL_DISPLAY = {
+  "grok-4":                           "Grok 4  ⚡ latest",
+  "grok-4-0709":                      "Grok 4 (Jul)  ⚡ latest",
+  "grok-4.6":                         "Grok 4.6  🧠 latest",
+  "grok-4.5":                         "Grok 4.5",
+  "grok-4.3":                         "Grok 4.3  🧠 smartest",
+  "grok-4.20-0309-non-reasoning":     "Grok 4.20 Fast  ⚡ no reasoning",
+  "grok-4.20-0309-reasoning":         "Grok 4.20 Reasoning  🧠 slower",
+  "grok-4.20-multi-agent-0309":       "Grok 4.20 Multi-Agent  🔗",
+  "grok-3":                           "Grok 3",
+  "grok-3-fast":                      "Grok 3 Fast  ⚡",
+  "grok-3-mini":                      "Grok 3 Mini  ⚡ cheap",
+  "grok-3-mini-fast":                 "Grok 3 Mini Fast  ⚡ cheapest",
+  "grok-2-1212":                      "Grok 2  (legacy)",
+  "grok-2-vision-1212":               "Grok 2 Vision  (legacy)",
+  "grok-beta":                        "Grok Beta  (experimental)",
+  "grok-build-0.1":                   "Grok Build  🔧 code",
+  "claude-sonnet-5":                  "Claude Sonnet 5",
+  "claude-opus-5":                    "Claude Opus 5  🧠",
+  "claude-fable-5":                   "Claude Fable 5  🧠 flagship",
+  "claude-haiku-4-5":                 "Claude Haiku 4.5  ⚡ fastest",
+  "claude-sonnet-4-6":                "Claude Sonnet 4.6",
+  "gpt-5.6-sol":                      "GPT-5.6 Sol  🧠 flagship",
+  "gpt-5.6-terra":                    "GPT-5.6 Terra  ⚖ balanced",
+  "gpt-5.6-luna":                     "GPT-5.6 Luna  ⚡ cheap",
+  "gpt-5.4":                          "GPT-5.4",
+  "gpt-4.1":                          "GPT-4.1",
+  "gpt-4o":                           "GPT-4o  ⚡ fastest",
+};
+
+function modelLabel(id) {
+  return MODEL_DISPLAY[id] || id;
+}
+
+const FALLBACK_MODELS = [
+  { id: "grok-4.20-0309-non-reasoning" },
+  { id: "grok-4.3" },
+  { id: "grok-4.6" },
+  { id: "grok-4.20-0309-reasoning" },
+];
+
+function fillKeyFields(cfg) {
+  const keys = cfg.keys || {};
+  const setVal = (el, val) => {
+    if (!el || document.activeElement === el) return;
+    el.value = val || "";
+  };
+  setVal(answerKeyEl, keys.xai || cfg.apiKey || "");
+  setVal(answerKeyAnthropicEl, keys.anthropic || "");
+  setVal(answerKeyOpenaiEl, keys.openai || "");
+}
+
+function fillModelSelects(cfg, liveIds) {
+  const fallback = (cfg.fallbackModels && cfg.fallbackModels.length)
+    ? cfg.fallbackModels.map((id) => ({ id }))
+    : FALLBACK_MODELS.slice();
+  const current = cfg.model || fallback[0].id;
+  let opts;
+  if (Array.isArray(liveIds) && liveIds.length) opts = liveIds.map((id) => ({ id }));
+  else opts = fallback;
+  if (!opts.some((o) => o.id === current)) opts.unshift({ id: current });
+  for (const sel of [answerModelEl, answerModelHeaderEl]) {
+    if (!sel) continue;
+    sel.innerHTML = "";
+    for (const o of opts) {
+      const opt = document.createElement("option");
+      opt.value = o.id;
+      opt.textContent = modelLabel(o.id);
+      sel.appendChild(opt);
+    }
+    sel.value = current;
+    if (sel._cselRefresh) sel._cselRefresh();
+  }
+}
+
+async function applyAnswerConfigUi(cfg, { refreshLive = false } = {}) {
+  if (!cfg) return;
+  answerCfgCache = cfg;
+  setProviderRadios(cfg.provider || "xai");
+  fillKeyFields(cfg);
+  let live = null;
+  if (refreshLive) {
+    try { live = await window.api.listAnswerModels(); } catch {}
+  }
+  fillModelSelects(cfg, live);
+  updateRailModelBtn(cfg);
+}
+
+async function populateModelSelects() {
+  const cfg = await window.api.getAnswerConfig();
+  await applyAnswerConfigUi(cfg, { refreshLive: true });
+}
+
+async function setAnswerProvider(provider) {
+  if (!provider) return;
+  const cfg = await window.api.setAnswerConfig({ provider, keys: collectAnswerKeys() });
+  await applyAnswerConfigUi(cfg || await window.api.getAnswerConfig(), { refreshLive: true });
+}
+
+function setAnswerModel(value) {
+  if (!value) return;
+  window.api.setAnswerConfig({ model: value }).then((cfg) => {
+    if (cfg) {
+      answerCfgCache = cfg;
+      updateRailModelBtn(cfg);
+    }
+  });
+  if (answerModelEl && answerModelEl.value !== value) {
+    answerModelEl.value = value;
+    if (answerModelEl._cselRefresh) answerModelEl._cselRefresh();
+  }
+  if (answerModelHeaderEl && answerModelHeaderEl.value !== value) {
+    answerModelHeaderEl.value = value;
+    if (answerModelHeaderEl._cselRefresh) answerModelHeaderEl._cselRefresh();
+  }
+}
+if (answerModelEl) answerModelEl.addEventListener("change", () => setAnswerModel(answerModelEl.value));
+if (answerModelHeaderEl) answerModelHeaderEl.addEventListener("change", () => setAnswerModel(answerModelHeaderEl.value));
+document.querySelectorAll('input[name="answerProvider"]').forEach((el) => {
+  el.addEventListener("change", () => {
+    if (el.checked) setAnswerProvider(el.value);
+  });
+});
+if (answerProviderSelect) {
+  answerProviderSelect.addEventListener("change", () => setAnswerProvider(answerProviderSelect.value));
+}
+
+// ===== Composer image attachments (multiple screenshots via Alt+A) =====
+const composerImgStrip = document.getElementById("composerImgStrip");
+
+// Array of { base64, mime } — supports multiple images.
+let attachedImages = [];
+// Saved at submit time so onAnswerStart can embed images in the question bubble.
+let pendingBubbleImages = [];
+
+function renderImgStrip() {
+  if (!composerImgStrip) return;
+  composerImgStrip.innerHTML = "";
+  if (attachedImages.length === 0) { composerImgStrip.hidden = true; return; }
+  composerImgStrip.hidden = false;
+  attachedImages.forEach((img, idx) => {
+    const wrap = document.createElement("div");
+    wrap.className = "composer-thumb-wrap";
+    const el = document.createElement("img");
+    el.src = `data:${img.mime};base64,${img.base64}`;
+    el.className = "composer-thumb";
+    el.alt = "screenshot";
+    const rm = document.createElement("button");
+    rm.className = "composer-thumb-rm";
+    rm.textContent = "×";
+    rm.title = "Remove";
+    rm.addEventListener("click", () => {
+      attachedImages.splice(idx, 1);
+      renderImgStrip();
+    });
+    wrap.appendChild(el);
+    wrap.appendChild(rm);
+    composerImgStrip.appendChild(wrap);
+  });
+}
+
+function addAttachedImage(base64, mime) {
+  attachedImages.push({ base64, mime: mime || "image/png" });
+  renderImgStrip();
+}
+
+function clearAttachedImages() {
+  attachedImages = [];
+  renderImgStrip();
+}
+
+// Screenshot via Alt+A hotkey.
+// Captured entirely in the renderer using getUserMedia (chromeMediaSource:'desktop')
+// — the same mechanism used for system-audio capture — so no main-process IPC needed.
+async function doScreenshot() {
+  let stream = null;
+  let video  = null;
+  try {
+    // Get all sources + cursor display index in parallel.
+    let allSources = [], displayIdx = 0;
+    try { allSources  = await window.api.getCursorScreenSourceId(); } catch {}
+    try { displayIdx  = await window.api.getCursorDisplayIndex();   } catch {}
+
+    // Filter to screen-only sources (IDs start with "screen:"), sort by name.
+    const screenSources = (allSources || [])
+      .filter((s) => s.id && s.id.startsWith("screen:"))
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { numeric: true }));
+
+    let sourceId = (screenSources[displayIdx] || screenSources[0])?.id || null;
+    if (!sourceId) {
+      try { sourceId = await window.api.getDesktopSourceId(); } catch {}
+    }
+    if (!sourceId) { log("Screenshot: no desktop source available", "err"); return; }
+
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        mandatory: {
+          chromeMediaSource: "desktop",
+          chromeMediaSourceId: sourceId,
+          maxWidth: 3840,
+          maxHeight: 2160,
+        },
+      },
+    });
+
+    // Attach video to DOM — Chromium requires this to decode desktop capture frames.
+    video = document.createElement("video");
+    video.style.cssText = "position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;top:0;left:0;";
+    video.muted = true;
+    video.playsInline = true;
+    document.body.appendChild(video);
+    video.srcObject = stream;
+
+    await new Promise((resolve, reject) => {
+      video.onloadedmetadata = resolve;
+      video.onerror = (e) => reject(new Error("video error: " + (e.message || e)));
+      setTimeout(() => reject(new Error("metadata timeout")), 5000);
+    });
+    await video.play();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    const canvas = document.createElement("canvas");
+    canvas.width  = video.videoWidth  || 1920;
+    canvas.height = video.videoHeight || 1080;
+    canvas.getContext("2d").drawImage(video, 0, 0);
+
+    // JPEG at 0.82 quality — roughly 10× smaller than PNG, safe to send through IPC
+    // even with multiple screenshots attached.
+    const dataUrl  = canvas.toDataURL("image/jpeg", 0.82);
+    const commaIdx = dataUrl.indexOf(",");
+    const b64      = dataUrl.slice(commaIdx + 1);
+    addAttachedImage(b64, "image/jpeg");
+  } catch (e) {
+    log("Screenshot failed: " + e.message, "err");
+  } finally {
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    if (video && video.parentNode) video.parentNode.removeChild(video);
+  }
+}
+if (window.api.onTriggerScreenshot) window.api.onTriggerScreenshot(doScreenshot);
+
+// Alt+S area-snip result — main captures the region and sends it here.
+if (window.api.onSnipImage) window.api.onSnipImage((img) => {
+  if (img && img.base64) addAttachedImage(img.base64, img.mime || 'image/png');
+});
+
+// ── Latency optimizations ──────────────────────────────────
+// Pre-warm TLS on first activity. Speculate as soon as the composer looks
+// like a question (typing, OCR, or a finished transcript utterance) so the
+// first tokens are often already in flight when the user hits send.
+let _apiConnectionWarmed = false;
+let _speculativeTimer = null;
+let _speculativeText = null;
+const SPECULATE_MIN_CHARS = 6;
+const SPECULATE_DEBOUNCE_MS = 500;
+
+function normQuestion(s) {
+  return String(s || "").replace(/\s+/g, " ").replace(/[.?!\s]+$/g, "").trim().toLowerCase();
+}
+
+function ensureApiWarmed() {
+  if (_apiConnectionWarmed) return;
+  _apiConnectionWarmed = true;
+  if (window.api.warmApiConnection) window.api.warmApiConnection();
+}
+
+function answerIsStreaming() {
+  return !!(currentAnswerEl && currentAnswerEl.classList.contains("streaming"));
+}
+
+function kickSpeculative(immediate) {
+  if (!composerInput) return;
+  if (_optimisticAnswer || answerIsStreaming()) return;
+  ensureApiWarmed();
+  if (_speculativeTimer) { clearTimeout(_speculativeTimer); _speculativeTimer = null; }
+  const text = composerInput.value.trim();
+  if (!text || text.length < SPECULATE_MIN_CHARS) {
+    if (_speculativeText) {
+      _speculativeText = null;
+      if (window.api.speculativeCancel) window.api.speculativeCancel();
+    }
+    return;
+  }
+  const start = () => {
+    _speculativeTimer = null;
+    if (typeof attachedImages !== "undefined" && attachedImages.length > 0) return;
+    const t = composerInput.value.trim();
+    if (!t || t.length < SPECULATE_MIN_CHARS) return;
+    if (normQuestion(_speculativeText) === normQuestion(t)) return;
+    _speculativeText = t;
+    if (window.api.speculativeStart) {
+      window.api.speculativeStart({ question: t, forcedMode: manualMode });
+    }
+  };
+  if (immediate) start();
+  else _speculativeTimer = setTimeout(start, SPECULATE_DEBOUNCE_MS);
+}
+
+if (composerInput) {
+  composerInput.addEventListener("input", () => kickSpeculative(false));
+}
+
+let _optimisticAnswer = false;
+
+function dropEmptyStreamingTurn() {
+  if (!currentAnswerEl || !currentAnswerEl.classList.contains("streaming")) return;
+  const streamContent = currentAnswerEl._streamEl
+    ? currentAnswerEl._streamEl.textContent
+    : currentAnswerEl.textContent;
+  if (!(streamContent || "").trim()) {
+    const oldTurn = currentAnswerEl.parentElement;
+    if (oldTurn && oldTurn.classList.contains("answer-turn")) oldTurn.remove();
+    if (answerHistory && !answerHistory.querySelector(".answer-turn") && answerEmpty) answerEmpty.hidden = false;
+    currentAnswerEl = null;
+  } else {
+    currentAnswerEl.classList.remove("streaming");
+    if (currentAnswerEl._timeEl) currentAnswerEl._timeEl.textContent = fmtTime();
+    currentAnswerEl = null;
+  }
+}
+
+function submitComposer() {
+  if (!composerInput) return;
+  const q = composerInput.value.trim();
+  if (!q && attachedImages.length === 0) return;
+
+  if (_speculativeTimer) { clearTimeout(_speculativeTimer); _speculativeTimer = null; }
+
+  pendingBubbleImages = attachedImages.slice();
+  const hasImages = attachedImages.length > 0;
+
+  dropEmptyStreamingTurn();
+  currentAnswerEl = addAnswerTurn(q || "", pendingBubbleImages.slice(), manualMode);
+  _optimisticAnswer = true;
+
+  const specHit = !hasImages && _speculativeText && normQuestion(_speculativeText) === normQuestion(q);
+  if (specHit && window.api.speculativeCommit) {
+    _speculativeText = null;
+    window.api.speculativeCommit({ question: q, images: null, forcedMode: manualMode });
+  } else {
+    _speculativeText = null;
+    if (window.api.speculativeCancel) window.api.speculativeCancel();
+    window.api.generateAnswer(q, hasImages ? attachedImages : null, manualMode);
+  }
+
+  composerInput.value = "";
+  clearAttachedImages();
+  if (typeof resetLiveSeg === "function") resetLiveSeg();
+}
+
+if (getAnswerBtn) getAnswerBtn.addEventListener("click", submitComposer);
+if (composerInput) {
+  composerInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      submitComposer();
+    }
+  });
+}
+if (answerClearBtn) {
+  answerClearBtn.addEventListener("click", () => {
+    if (answerHistory)
+      answerHistory.querySelectorAll(".answer-turn").forEach((n) => n.remove());
+    if (answerEmpty) answerEmpty.hidden = false;
+    // Reset spacer so first new turn starts flush
+    if (answerSpacer) answerSpacer.style.height = "0px";
+    // Also wipe the remembered answers/code/diagrams used to ground follow-ups.
+    if (window.api.clearAnswerMemory) window.api.clearAnswerMemory();
+  });
+}
+
+// Spacer div pinned at the bottom of answerHistory — always sized to the
+// panel height so there is always room to scroll any turn to the top,
+// even when total content is shorter than the panel.
+let answerSpacer = null;
+function ensureSpacer() {
+  if (!answerHistory) return;
+  if (!answerSpacer) {
+    answerSpacer = document.createElement("div");
+    answerSpacer.className = "answer-spacer";
+    answerHistory.appendChild(answerSpacer);
+  }
+  // Keep spacer = full panel height so any turn can reach the top
+  answerSpacer.style.height = answerHistory.clientHeight + "px";
+}
+
+function fmtTime(ts) {
+  const d = ts ? new Date(ts) : new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function addAnswerTurn(question, imgs, mode, ts) {
+  if (!answerHistory) return null;
+  if (answerEmpty) answerEmpty.hidden = true;
+
+  const turn = document.createElement("div");
+  turn.className = "answer-turn";
+  const q = document.createElement("div");
+  q.className = "answer-q";
+  if (imgs && imgs.length) {
+    const strip = document.createElement("div");
+    strip.className = "answer-q-img-strip";
+    imgs.forEach((imgData) => {
+      const img = document.createElement("img");
+      img.src = `data:${imgData.mime || "image/png"};base64,${imgData.base64}`;
+      img.className = "answer-q-img";
+      img.alt = "screenshot";
+      img.title = "Click to enlarge";
+      img.addEventListener("click", () => openImageOverlay(img.src));
+      strip.appendChild(img);
+    });
+    q.appendChild(strip);
+  }
+  const qText = document.createElement("span");
+  qText.className = "answer-q-text";
+  if (question) qText.textContent = question;
+  q.appendChild(qText);
+
+  // Edit / Resend controls (ChatGPT/Claude-style). Shown on hover.
+  const turnMode = mode || 'ANSWER';
+  const qActions = document.createElement("div");
+  qActions.className = "answer-q-actions";
+  const editBtn = document.createElement("button");
+  editBtn.className = "answer-q-action";
+  editBtn.title = "Edit & resend";
+  editBtn.textContent = "✎";
+  editBtn.addEventListener("click", () => beginInlineEdit(q, question, imgs, turnMode));
+  const resendBtn = document.createElement("button");
+  resendBtn.className = "answer-q-action";
+  resendBtn.title = "Resend (regenerate)";
+  resendBtn.textContent = "↻";
+  resendBtn.addEventListener("click", () => resendTurn(question, imgs));
+  qActions.appendChild(editBtn);
+  qActions.appendChild(resendBtn);
+  q.appendChild(qActions);
+
+  // Timestamp on the question bubble (when the turn was asked).
+  const turnTs = ts || Date.now();
+  const qTime = document.createElement("div");
+  qTime.className = "answer-time answer-time--q";
+  qTime.textContent = fmtTime(turnTs);
+  q.appendChild(qTime);
+
+  const a = document.createElement("div");
+  a.className = "answer-a streaming";
+  a.dataset.mode = turnMode;
+  if (mode && mode !== 'ANSWER') {
+    const badge = document.createElement("span");
+    badge.className = "answer-mode-badge answer-mode-badge--" + mode.toLowerCase();
+    badge.textContent = mode === 'DIAGRAM' ? '⬡ Diagram' : '⌨ Live Code';
+    a.appendChild(badge);
+  }
+  // Streaming text goes into a child div so the badge span is never touched
+  const streamDiv = document.createElement("div");
+  streamDiv.className = "answer-stream";
+  a.appendChild(streamDiv);
+  a._streamEl = streamDiv;
+  // Answer timestamp — filled in when streaming completes.
+  const aTime = document.createElement("div");
+  aTime.className = "answer-time answer-time--a";
+  a.appendChild(aTime);
+  a._timeEl = aTime;
+  // Double-click an answer to push it (text, code, and any diagrams) to the sticky note.
+  a.title = "Double-click to send to sticky note";
+  a.addEventListener("dblclick", () => injectAnswerToSticky(a));
+  turn.appendChild(q);
+  turn.appendChild(a);
+
+  // Ensure the spacer exists and is tall enough, then insert turn before it
+  ensureSpacer();
+  answerHistory.insertBefore(turn, answerSpacer);
+
+  // After layout settles, scroll so the last few lines of the question are
+  // visible at the top of the panel, with the answer starting just below.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const cRect = answerHistory.getBoundingClientRect();
+    const qRect = q.getBoundingClientRect();
+    const qTopInScroll    = answerHistory.scrollTop + (qRect.top  - cRect.top);
+    const qBottomInScroll = answerHistory.scrollTop + (qRect.bottom - cRect.top);
+    // Show up to 72px of the question tail (≈3 lines); if question is shorter show all of it
+    const tail = Math.min(72, qRect.height);
+    answerHistory.scrollTop = qBottomInScroll - tail;
+  }));
+  return a;
+}
+
+// Reflect a mode in the segmented control + manualMode state.
+function setManualMode(mode) {
+  manualMode = mode || 'ANSWER';
+  if (modeSeg) modeSeg.querySelectorAll('.mode-seg-btn').forEach((b) =>
+    b.classList.toggle('mode-seg-btn--active', b.dataset.mode === manualMode));
+}
+
+// Resend (regenerate): re-submit the same question/images as a new turn, in
+// whatever mode is CURRENTLY selected in the Text/Code/Diagram control (not the
+// original turn's mode) — so switching the selector then resending takes effect.
+function resendTurn(question, imgs) {
+  const hasImgs = Array.isArray(imgs) && imgs.length > 0;
+  if (!question && !hasImgs) return;
+  if (typeof persistAnswerKeys === "function") persistAnswerKeys();
+  // Cancel any in-flight speculation, then fire a fresh request.
+  _speculativeText = null;
+  if (window.api.speculativeCancel) window.api.speculativeCancel();
+  // onAnswerStart embeds these into the new question bubble.
+  pendingBubbleImages = hasImgs ? imgs.slice() : [];
+  window.api.generateAnswer(question || "", hasImgs ? imgs : null, manualMode);
+}
+
+// Edit inline in the question bubble (ChatGPT-style): swap the text for a
+// textarea with Send/Cancel. Sending fires a fresh turn with the edited text
+// (same images + mode); the original turn is left untouched.
+function beginInlineEdit(q, question, imgs, mode) {
+  if (!q || q._editing) return;
+  q._editing = true;
+  const qText    = q.querySelector('.answer-q-text');
+  const qActions = q.querySelector('.answer-q-actions');
+  const qTime    = q.querySelector('.answer-time--q');
+  [qText, qActions, qTime].forEach((el) => { if (el) el.style.display = 'none'; });
+
+  const editor = document.createElement('div');
+  editor.className = 'answer-q-editor';
+  const ta = document.createElement('textarea');
+  ta.className = 'answer-q-edit';
+  ta.value = question || '';
+  const row = document.createElement('div');
+  row.className = 'answer-q-edit-row';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'answer-q-action';
+  cancelBtn.textContent = '✕';
+  cancelBtn.title = 'Cancel (Esc)';
+  const sendBtn = document.createElement('button');
+  sendBtn.className = 'answer-q-action answer-q-action--send';
+  sendBtn.textContent = '↵ Send';
+  sendBtn.title = 'Send edited (Ctrl+Enter)';
+  row.appendChild(cancelBtn);
+  row.appendChild(sendBtn);
+  editor.appendChild(ta);
+  editor.appendChild(row);
+  q.appendChild(editor);
+
+  const grow = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+  ta.focus();
+  try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch {}
+  grow();
+  ta.addEventListener('input', grow);
+
+  const finish = () => {
+    if (!q._editing) return;
+    q._editing = false;
+    editor.remove();
+    [qText, qActions, qTime].forEach((el) => { if (el) el.style.display = ''; });
+  };
+  cancelBtn.addEventListener('click', finish);
+  sendBtn.addEventListener('click', () => {
+    const newText = ta.value.trim();
+    finish();
+    if (newText) resendTurn(newText, imgs);
+  });
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); finish(); }
+    else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendBtn.click(); }
+  });
+}
+
+window.api.onAnswerStart((data) => {
+  const question = data && typeof data === "object" ? String(data.question || "") : String(data || "");
+  const answerMode = (data && data.mode) || 'ANSWER';
+  if (_optimisticAnswer && currentAnswerEl) {
+    _optimisticAnswer = false;
+    pendingBubbleImages = [];
+    if (currentAnswerEl.dataset) currentAnswerEl.dataset.mode = answerMode;
+    return;
+  }
+  dropEmptyStreamingTurn();
+  const imgs = pendingBubbleImages.slice();
+  pendingBubbleImages = [];
+  currentAnswerEl = addAnswerTurn(question, imgs, answerMode);
+});
+window.api.onAnswerChunk((delta) => {
+  if (!currentAnswerEl) currentAnswerEl = addAnswerTurn("", null, 'ANSWER');
+  // Stream into the child div so the badge span is never destroyed by textContent=
+  const target = currentAnswerEl._streamEl || currentAnswerEl;
+  target.textContent += delta;
+  // No auto-scroll during streaming — user reads from the top and scrolls manually.
+});
+// Strip any prose before the first code/mermaid block for CODE and DIAGRAM modes.
+// Belt-and-suspenders: works even when the model ignores the no-intro instruction.
+function stripLeadingIntro(text, mode) {
+  if (mode === 'CODE') {
+    const idx = text.indexOf('```');
+    // idx >= 0: marker found — slice from it (idx=0 means already at start, safe)
+    // idx === -1: no code block found — return as-is
+    return idx >= 0 ? text.slice(idx) : text;
+  }
+  if (mode === 'DIAGRAM') {
+    const idx = text.toLowerCase().indexOf('```mermaid');
+    return idx >= 0 ? text.slice(idx) : text;
+  }
+  return text;
+}
+
+window.api.onAnswerDone(() => {
+  _optimisticAnswer = false;
+  if (currentAnswerEl) {
+    currentAnswerEl.classList.remove("streaming");
+    if (currentAnswerEl._timeEl) currentAnswerEl._timeEl.textContent = fmtTime();
+    const answerMode = currentAnswerEl.dataset.mode || 'ANSWER';
+    // Read raw streamed text from the child stream div (keeps badge untouched)
+    const streamEl = currentAnswerEl._streamEl || currentAnswerEl;
+    let rawText = streamEl.textContent || '';
+
+    // Strip intro prose for CODE/DIAGRAM before any further processing
+    if (answerMode === 'CODE' || answerMode === 'DIAGRAM') {
+      const stripped = stripLeadingIntro(rawText, answerMode);
+      rawText = stripped;
+    }
+
+    const stickyMatch = rawText.match(/<sticky>([\s\S]*?)<\/sticky>/i);
+
+    if (stickyMatch) {
+      const script = stickyMatch[1].trim();
+      const md = rawText.replace(/<sticky>[\s\S]*?<\/sticky>/i, '').trimEnd();
+      currentAnswerEl._rawText = md; // raw markdown for double-click → sticky
+      streamEl.textContent = md;
+      renderMermaidInElement(streamEl);
+      if (streamEl.classList.contains('has-diagram')) currentAnswerEl.classList.add('has-diagram');
+      appendScriptToAnswer(currentAnswerEl, script);
+      if (window.api.openSticky) window.api.openSticky();
+      if (window.api.sendStickyText) window.api.sendStickyText(script);
+    } else {
+      currentAnswerEl._rawText = rawText; // raw markdown for double-click → sticky
+      streamEl.textContent = rawText;
+      renderMermaidInElement(streamEl);
+      if (streamEl.classList.contains('has-diagram')) currentAnswerEl.classList.add('has-diagram');
+    }
+
+    // For CODE mode — add Copy + Write to IDE action bar
+    if (answerMode === 'CODE') {
+      appendCodeActions(currentAnswerEl);
+    }
+
+    // Once the main diagram/program is produced, drop back to Text mode so
+    // follow-up questions are answered (grounded on the CV, support material,
+    // and the diagram/code just produced) rather than forced into another
+    // diagram/code block.
+    if ((answerMode === 'DIAGRAM' || answerMode === 'CODE') && manualMode === answerMode) {
+      setManualMode('ANSWER');
+      showStealthToast(answerMode === 'DIAGRAM'
+        ? 'Switched to Text · follow-ups will build on this diagram'
+        : 'Switched to Text · follow-ups will build on this code');
+    }
+  }
+  currentAnswerEl = null;
+});
+
+// Double-click handler: push an answer bubble to the sticky note as rich
+// markdown, so the sticky renders its diagrams and code exactly like the chat.
+function injectAnswerToSticky(answerEl) {
+  if (!answerEl) return;
+  // Clear the word-selection that a double-click leaves behind.
+  try { window.getSelection().removeAllRanges(); } catch {}
+  // Prefer the stored raw markdown (has ```mermaid / code fences); fall back to
+  // the rendered text if it's missing.
+  const md = (answerEl._rawText || (answerEl._streamEl || answerEl).textContent || '').trim();
+  if (!md) return;
+  if (window.api.sendStickyRich) window.api.sendStickyRich(md);
+  else if (window.api.sendStickyText) window.api.sendStickyText(md);
+  if (window.api.openSticky) window.api.openSticky();
+  showStealthToast('Sent to sticky note');
+}
+
+// Subtle, auto-dismissing notice (kept low-key for stealth).
+let _stealthToastTimer = null;
+function showStealthToast(msg) {
+  let el = document.getElementById('stealthToast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'stealthToast';
+    el.className = 'stealth-toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add('stealth-toast--show');
+  if (_stealthToastTimer) clearTimeout(_stealthToastTimer);
+  _stealthToastTimer = setTimeout(() => el.classList.remove('stealth-toast--show'), 3200);
+}
+
+// ── Code action bar: Copy + Write to IDE ─────────────────────────────────────
+function extractCodeFromEl(el) {
+  // Look in the stream child div first, then fall back to the element itself
+  const root = el._streamEl || el;
+  const pre = root.querySelector('pre code') || root.querySelector('pre') || root.querySelector('code');
+  return (pre ? pre.textContent : root.textContent).trim();
+}
+
+// Tracks the status element of the active write-to-IDE session
+let currentIdeStatusEl = null;
+
+function appendCodeActions(el) {
+  const bar = document.createElement('div');
+  bar.className = 'code-action-bar';
+
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'code-action-btn';
+  copyBtn.textContent = 'Copy';
+  copyBtn.addEventListener('click', () => {
+    const code = extractCodeFromEl(el);
+    navigator.clipboard.writeText(code).then(() => {
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1800);
+    });
+  });
+
+  const ideBtn = document.createElement('button');
+  ideBtn.className = 'code-action-btn code-action-btn--ide';
+  ideBtn.textContent = 'Write to IDE';
+  ideBtn.addEventListener('click', () => startWriteToIde(el, ideBtn, stopBtn, statusEl));
+
+  // Live status — shows "Typing…" / "Paused (move mouse)" during a session.
+  const statusEl = document.createElement('span');
+  statusEl.className = 'code-action-status';
+  statusEl.hidden = true;
+
+  // Stop (hard cancel) — hidden until typing is active for this bubble
+  const stopBtn = document.createElement('button');
+  stopBtn.className = 'code-action-btn code-action-btn--stop';
+  stopBtn.textContent = '■ Stop';
+  stopBtn.title = 'Stop typing';
+  stopBtn.hidden = true;
+  stopBtn.addEventListener('click', () => { if (window.api.stopIdeTyping) window.api.stopIdeTyping(); });
+
+  bar.appendChild(copyBtn);
+  bar.appendChild(ideBtn);
+  bar.appendChild(stopBtn);
+  bar.appendChild(statusEl);
+  el.appendChild(bar);
+}
+
+function startWriteToIde(el, btn, stopBtn, statusEl) {
+  const code = extractCodeFromEl(el);
+  if (!code) return;
+
+  const speedFactor = (() => {
+    const s = document.getElementById('ideSpeedSlider');
+    return s ? Number(s.value) : 3;
+  })();
+
+  let count = 3;
+  btn.disabled = true;
+  btn.classList.add('code-action-btn--counting');
+  if (stopBtn) stopBtn.hidden = true;
+  if (statusEl) { statusEl.hidden = true; currentIdeStatusEl = statusEl; }
+
+  const tick = () => {
+    btn.textContent = `Switch to IDE… ${count}`;
+    if (count === 0) {
+      btn.textContent = 'Typing…';
+      if (stopBtn) stopBtn.hidden = false;
+      if (statusEl) { statusEl.hidden = false; statusEl.textContent = 'Typing…'; }
+      window.api.writeToIde(code, speedFactor).then(res => {
+        btn.disabled = false;
+        btn.classList.remove('code-action-btn--counting');
+        btn.textContent = res && res.ok ? 'Done ✓' : (res && res.cancelled ? 'Stopped' : 'Error — try again');
+        setTimeout(() => { btn.textContent = 'Write to IDE'; }, 2500);
+        if (stopBtn) stopBtn.hidden = true;
+        if (statusEl) { statusEl.hidden = true; }
+        if (currentIdeStatusEl === statusEl) currentIdeStatusEl = null;
+      });
+    } else {
+      count--;
+      setTimeout(tick, 1000);
+    }
+  };
+  tick();
+}
+
+// Reflect take-over pause state in the active bubble's status text. Pausing is
+// driven by mouse movement in the main process — move the mouse to pause, hold
+// still ~1.5s to resume.
+if (window.api && window.api.onIdeTypingState) {
+  window.api.onIdeTypingState(({ paused, active }) => {
+    if (!currentIdeStatusEl) return;
+    if (active) currentIdeStatusEl.textContent = paused ? 'Paused — move mouse stopped to resume' : 'Typing…';
+  });
+}
+
+// Render the structured talking-script as a styled block inside the answer bubble.
+function appendScriptToAnswer(el, script) {
+  const SECTIONS = ['OVERVIEW', 'WALKTHROUGH', 'KEY INSIGHT'];
+  const wrapper = document.createElement('div');
+  wrapper.className = 'answer-script';
+
+  const header = document.createElement('div');
+  header.className = 'answer-script-header';
+  header.textContent = '📋 Presenter Script';
+  wrapper.appendChild(header);
+
+  const lines = script.split('\n');
+  let currentSection = null;
+  let bodyLines = [];
+
+  function flushSection() {
+    if (!currentSection) return;
+    const sec = document.createElement('div');
+    sec.className = 'answer-script-section';
+
+    const label = document.createElement('div');
+    label.className = 'answer-script-label';
+    label.textContent = currentSection;
+    sec.appendChild(label);
+
+    const body = bodyLines.join('\n').trim();
+    if (body) {
+      body.split(/\n\n+/).forEach(para => {
+        const p = document.createElement('p');
+        p.className = 'answer-script-body';
+        p.textContent = para.trim();
+        sec.appendChild(p);
+      });
+    }
+    wrapper.appendChild(sec);
+    bodyLines = [];
+    currentSection = null;
+  }
+
+  lines.forEach(line => {
+    const heading = SECTIONS.find(s => line.trim() === s);
+    if (heading) {
+      flushSection();
+      currentSection = heading;
+    } else if (currentSection) {
+      bodyLines.push(line);
+    }
+  });
+  flushSection();
+
+  el.appendChild(wrapper);
+}
+
+// Markdown + Mermaid rendering lives in diagram-shared.js (loaded before this
+// file) so the sticky note renders diagrams/code identically. Here we just add
+// the answer-panel behaviour: click a diagram to open the zoom/pan viewer.
+function renderMermaidInElement(el) {
+  renderDiagramsMarkdown(el, function (svgEl, ph) {
+    ph.classList.add('expandable');
+    ph.title = 'Click to expand';
+    ph.addEventListener('click', () => openDiagramOverlay(svgEl));
+  });
+}
+
+// ── Full-window diagram zoom/pan viewer ──────────────────────────────────────
+const diagramOverlay      = document.getElementById('diagramOverlay');
+const diagramOverlayStage = document.getElementById('diagramOverlayStage');
+const _dov = { scale: 1, tx: 0, ty: 0, vbW: 0, vbH: 0, svg: null, dragging: false, lastX: 0, lastY: 0 };
+
+function _dovApply() {
+  if (!_dov.svg) return;
+  _dov.svg.style.transform = `translate(${_dov.tx}px, ${_dov.ty}px) scale(${_dov.scale})`;
+}
+function _dovFit() {
+  if (!_dov.svg || !diagramOverlayStage) return;
+  const r = diagramOverlayStage.getBoundingClientRect();
+  const s = Math.min(r.width / _dov.vbW, r.height / _dov.vbH) * 0.92;
+  _dov.scale = s > 0 ? s : 1;
+  _dov.tx = (r.width  - _dov.vbW * _dov.scale) / 2;
+  _dov.ty = (r.height - _dov.vbH * _dov.scale) / 2;
+  _dovApply();
+}
+function _dovZoomAt(cx, cy, factor) {
+  const next = Math.max(0.1, Math.min(12, _dov.scale * factor));
+  // Keep the point under the cursor fixed while zooming.
+  _dov.tx = cx - ((cx - _dov.tx) / _dov.scale) * next;
+  _dov.ty = cy - ((cy - _dov.ty) / _dov.scale) * next;
+  _dov.scale = next;
+  _dovApply();
+}
+function openDiagramOverlay(sourceSvg) {
+  if (!diagramOverlay || !diagramOverlayStage || !sourceSvg) return;
+  const vb = (sourceSvg.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
+  _dov.vbW = vb[2] || sourceSvg.getBoundingClientRect().width  || 800;
+  _dov.vbH = vb[3] || sourceSvg.getBoundingClientRect().height || 600;
+
+  const clone = sourceSvg.cloneNode(true);
+  clone.style.width  = _dov.vbW + 'px';
+  clone.style.height = _dov.vbH + 'px';
+  clone.style.maxHeight = 'none';
+  diagramOverlayStage.innerHTML = '';
+  diagramOverlayStage.appendChild(clone);
+  _dov.svg = clone;
+
+  diagramOverlay.hidden = false;
+  // Fit after layout settles so the stage has its real size.
+  requestAnimationFrame(_dovFit);
+}
+// Open an uploaded/captured screenshot in the same zoom/pan viewer.
+function openImageOverlay(src) {
+  if (!diagramOverlay || !diagramOverlayStage || !src) return;
+  const img = new Image();
+  img.onload = () => {
+    _dov.vbW = img.naturalWidth  || 800;
+    _dov.vbH = img.naturalHeight || 600;
+    img.style.width  = _dov.vbW + 'px';
+    img.style.height = _dov.vbH + 'px';
+    diagramOverlayStage.innerHTML = '';
+    diagramOverlayStage.appendChild(img);
+    _dov.svg = img; // viewer transform applies to any element
+    diagramOverlay.hidden = false;
+    requestAnimationFrame(_dovFit);
+  };
+  img.src = src;
+}
+function closeDiagramOverlay() {
+  if (!diagramOverlay) return;
+  diagramOverlay.hidden = true;
+  diagramOverlayStage.innerHTML = '';
+  _dov.svg = null;
+}
+
+if (diagramOverlay) {
+  document.getElementById('diagramOverlayClose').addEventListener('click', closeDiagramOverlay);
+  document.getElementById('diagramZoomFit').addEventListener('click', _dovFit);
+  document.getElementById('diagramZoomIn').addEventListener('click', () => {
+    const r = diagramOverlayStage.getBoundingClientRect();
+    _dovZoomAt(r.width / 2, r.height / 2, 1.25);
+  });
+  document.getElementById('diagramZoomOut').addEventListener('click', () => {
+    const r = diagramOverlayStage.getBoundingClientRect();
+    _dovZoomAt(r.width / 2, r.height / 2, 0.8);
+  });
+  // Wheel zoom centred on the cursor
+  diagramOverlayStage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const r = diagramOverlayStage.getBoundingClientRect();
+    _dovZoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 0.89);
+  }, { passive: false });
+  // Drag to pan
+  diagramOverlayStage.addEventListener('mousedown', (e) => {
+    _dov.dragging = true; _dov.lastX = e.clientX; _dov.lastY = e.clientY;
+    diagramOverlayStage.classList.add('dragging');
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!_dov.dragging) return;
+    _dov.tx += e.clientX - _dov.lastX;
+    _dov.ty += e.clientY - _dov.lastY;
+    _dov.lastX = e.clientX; _dov.lastY = e.clientY;
+    _dovApply();
+  });
+  window.addEventListener('mouseup', () => {
+    _dov.dragging = false;
+    diagramOverlayStage.classList.remove('dragging');
+  });
+  // Double-click resets to fit; click on empty backdrop closes
+  diagramOverlayStage.addEventListener('dblclick', _dovFit);
+  diagramOverlay.addEventListener('mousedown', (e) => { if (e.target === diagramOverlay) closeDiagramOverlay(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && diagramOverlay && !diagramOverlay.hidden) closeDiagramOverlay();
+  });
+}
+
+window.api.onAnswerError((msg) => {
+  _optimisticAnswer = false;
+  if (currentAnswerEl) {
+    currentAnswerEl.classList.remove("streaming");
+    const target = currentAnswerEl._streamEl || currentAnswerEl;
+    target.textContent += (target.textContent ? "\n\n" : "") + "[error] " + msg;
+    currentAnswerEl = null;
+  } else {
+    log("Answer error: " + msg, "err");
+  }
+});
+
+// Global "Get answer" hotkey (Ctrl+Enter) routed from main.
+if (window.api.onTriggerGetAnswer) window.api.onTriggerGetAnswer(() => submitComposer());
+// Scroll-answer hotkeys (Ctrl+Up / Ctrl+Down) scroll the answer history.
+if (window.api.onScrollAnswer) window.api.onScrollAnswer((dir) => {
+  if (answerHistory) answerHistory.scrollTop += (dir || 0) * 120;
+});
+// Prompt-insert rail menu (✎) drops a saved prompt into the composer.
+if (window.api.onInsertPromptText) window.api.onInsertPromptText((text) => appendToComposer(text));
+
+// ---- Preset bar + answer settings (reuse the saved prompt store) ----
+const setupPresetSelect = document.getElementById("setupPresetSelect");
+
+async function refreshPresetSelect() {
+  const cfg = await window.api.getAnswerConfig();
+  const prompts = await window.api.getPrompts();
+  const fallbackId = (prompts[0] && prompts[0].id) || "";
+  const activeId = (cfg.activePromptId && prompts.some((p) => p.id === cfg.activePromptId))
+    ? cfg.activePromptId
+    : fallbackId;
+
+  for (const sel of [presetSelect, setupPresetSelect]) {
+    if (!sel) continue;
+    sel.innerHTML = "";
+    for (const p of prompts) {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.title || "(untitled)";
+      sel.appendChild(opt);
+    }
+    sel.value = activeId;
+    if (sel._cselRefresh) sel._cselRefresh();
+  }
+
+  await applyAnswerConfigUi(cfg, { refreshLive: true });
+}
+
+function onPresetChange(sourceSelect) {
+  const id = sourceSelect.value || null;
+  if (!id) return;
+  window.api.setAnswerConfig({ activePromptId: id });
+  for (const sel of [presetSelect, setupPresetSelect]) {
+    if (sel && sel !== sourceSelect) sel.value = id;
+  }
+}
+
+if (presetSelect) presetSelect.addEventListener("change", () => onPresetChange(presetSelect));
+if (setupPresetSelect) setupPresetSelect.addEventListener("change", () => onPresetChange(setupPresetSelect));
+function collectAnswerKeys() {
+  return {
+    xai: answerKeyEl ? answerKeyEl.value.trim() : "",
+    anthropic: answerKeyAnthropicEl ? answerKeyAnthropicEl.value.trim() : "",
+    openai: answerKeyOpenaiEl ? answerKeyOpenaiEl.value.trim() : "",
+  };
+}
+
+function persistAnswerKeys() {
+  return window.api.setAnswerConfig({ keys: collectAnswerKeys() });
+}
+
+function persistAnswerKey(providerId, value) {
+  const keys = collectAnswerKeys();
+  keys[providerId] = value;
+  window.api.setAnswerConfig({ keys }).then(() => populateModelSelects());
+}
+
+function bindAnswerKeyField(el, providerId) {
+  if (!el) return;
+  let timer = null;
+  const save = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    persistAnswerKey(providerId, el.value.trim());
+  };
+  el.addEventListener("change", save);
+  el.addEventListener("paste", () => setTimeout(save, 0));
+  el.addEventListener("input", () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(save, 400);
+  });
+}
+
+bindAnswerKeyField(answerKeyEl, "xai");
+bindAnswerKeyField(answerKeyAnthropicEl, "anthropic");
+bindAnswerKeyField(answerKeyOpenaiEl, "openai");
+refreshPresetSelect();
 
 async function refreshMicList() {
   try {
@@ -1578,16 +2868,23 @@ async function startVoice() {
   if (recState) return;
   txCfg = await window.api.getTranscriptionConfig();
 
-  if (txCfg.engine === "deepgram") {
-    if (!txCfg.deepgramApiKey) {
-      log("Deepgram API key not set", "err");
+  if (txCfg.engine === "deepgram" || txCfg.engine === "xai") {
+    const isXai = txCfg.engine === "xai";
+    const apiKey = isXai ? txCfg.xaiApiKey : txCfg.deepgramApiKey;
+    const label = isXai ? "xAI" : "Deepgram";
+    if (!apiKey) {
+      log(`${label} API key not set`, "err");
+      return;
+    }
+    if (txCfg.captureMic === false && txCfg.captureSystem === false) {
+      log("No audio source selected — enable Microphone or System audio in Settings → Transcription", "err");
       return;
     }
 
-    await window.api.startDeepgramStream({
-      apiKey: txCfg.deepgramApiKey,
-      language: txCfg.language || "auto",
-    });
+    const startStream = isXai
+      ? window.api.startXaiStream
+      : window.api.startDeepgramStream;
+    await startStream({ apiKey, language: txCfg.language || "auto" });
 
     const ctx = new AudioContext({ sampleRate: 16000 });
     const dest = ctx.createMediaStreamDestination();
@@ -1687,156 +2984,33 @@ async function startVoice() {
       window.api.sendAudioChunk(e.data);
     };
 
-    recState = { ctx, streams, processor, deepgram: true };
+    recState = { ctx, streams, processor, streaming: true, xai: isXai };
     recBtn.classList.add("on");
     updateRecTitle();
-    log("Voice transcription started (Deepgram live)", "info");
+    const sources = [
+      txCfg.captureMic !== false ? "mic" : null,
+      txCfg.captureSystem !== false ? "system audio" : null,
+    ].filter(Boolean).join(" + ");
+    log(`Voice transcription started (${label} live, ${sources})`, "info");
     return;
   }
 
-  return startVoiceChunked();
-}
-
-async function startVoiceChunked() {
-  const ctx = new AudioContext();
-  const dest = ctx.createMediaStreamDestination();
-  const streams = [];
-  const sources = [];
-
-  if (txCfg.captureMic !== false) {
-    try {
-      const constraints = {
-        audio: txCfg.micDeviceId
-          ? {
-              deviceId: { exact: txCfg.micDeviceId },
-              echoCancellation: true,
-              noiseSuppression: true,
-            }
-          : { echoCancellation: true, noiseSuppression: true },
-      };
-      const mic = await navigator.mediaDevices.getUserMedia(constraints);
-      streams.push(mic);
-      const src = ctx.createMediaStreamSource(mic);
-      const g = ctx.createGain();
-      g.gain.value = 1.0;
-      src.connect(g).connect(dest);
-      sources.push(src);
-      log("Mic capture started", "info");
-    } catch (e) {
-      log("Mic capture failed: " + e.message, "err");
-    }
-  }
-
-  if (txCfg.captureSystem !== false) {
-    try {
-      const sys = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: true,
-      });
-      sys.getVideoTracks().forEach((t) => t.stop());
-      const audioOnly = new MediaStream(sys.getAudioTracks());
-      if (audioOnly.getAudioTracks().length === 0) {
-        log("System loopback returned no audio track", "err");
-      } else {
-        streams.push(sys);
-        const src = ctx.createMediaStreamSource(audioOnly);
-        const g = ctx.createGain();
-        g.gain.value = 1.0;
-        src.connect(g).connect(dest);
-        sources.push(src);
-        log("System loopback started", "info");
-      }
-    } catch (e) {
-      log("System loopback failed: " + e.message, "err");
-    }
-  }
-
-  if (sources.length === 0) {
-    log("No audio sources — aborting", "err");
-    ctx.close();
-    return;
-  }
-
-  const sampleRate = ctx.sampleRate;
-  try {
-    await ctx.audioWorklet.addModule("audio-capture-worklet.js");
-  } catch (e) {
-    log("AudioWorklet load failed: " + e.message, "err");
-    streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
-    try { await ctx.close(); } catch {}
-    return;
-  }
-  const processor = new AudioWorkletNode(ctx, "capture-processor", {
-    numberOfInputs: 1,
-    numberOfOutputs: 1,
-    outputChannelCount: [1],
-    processorOptions: {
-      format: "float32",
-      batchSize: Math.max(128, Math.round(sampleRate * 0.1)),
-    },
-  });
-  const mixSource = ctx.createMediaStreamSource(dest.stream);
-  mixSource.connect(processor);
-  const sink = ctx.createGain();
-  sink.gain.value = 0;
-  processor.connect(sink).connect(ctx.destination);
-
-  let buffered = [];
-  let bufferedLen = 0;
-  const initialCs = Math.max(1, Math.min(10, parseFloat(txCfg.chunkSeconds) || 3));
-  chunkSecondsRuntime = initialCs;
-
-  processor.port.onmessage = (e) => {
-    const data = new Float32Array(e.data);
-    buffered.push(data);
-    bufferedLen += data.length;
-    const targetSamples = sampleRate * chunkSecondsRuntime;
-    if (bufferedLen >= targetSamples) {
-      const samples = flatten(buffered, bufferedLen);
-      buffered = [];
-      bufferedLen = 0;
-      const mono16k = downsampleTo16k(samples, sampleRate);
-      if (!isSilent(mono16k)) {
-        const wav = encodeWav(mono16k, 16000);
-        runTranscription(wav).catch((err) =>
-          log("Transcribe error: " + err.message, "err"),
-        );
-      }
-    }
-  };
-
-  recState = { ctx, streams, processor };
-  recBtn.classList.add("on");
-  updateRecTitle();
-  log("Voice transcription started (engine: " + txCfg.engine + ")", "info");
+  log("Unknown transcription engine: " + txCfg.engine, "err");
 }
 
 async function stopVoice() {
   if (!recState) return;
-  if (recState.deepgram) {
-    try {
-      recState.processor.disconnect();
-    } catch {}
-    recState.streams.forEach((s) =>
-      s.getTracks ? s.getTracks().forEach((t) => t.stop()) : null,
-    );
-    try {
-      await recState.ctx.close();
-    } catch {}
-    await window.api.stopDeepgramStream();
-    recState = null;
-    recBtn.classList.remove("on");
-    updateRecTitle();
-    log("Voice transcription stopped", "info");
-    return;
-  }
   try {
     recState.processor.disconnect();
   } catch {}
-  recState.streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+  recState.streams.forEach((s) =>
+    s.getTracks ? s.getTracks().forEach((t) => t.stop()) : null,
+  );
   try {
     await recState.ctx.close();
   } catch {}
+  if (recState.xai) await window.api.stopXaiStream();
+  else await window.api.stopDeepgramStream();
   recState = null;
   recBtn.classList.remove("on");
   updateRecTitle();
@@ -1882,46 +3056,6 @@ recBtn.addEventListener("click", async () => {
   }
 });
 
-async function runTranscription(wavBuf) {
-  const text = await window.api.transcribe(wavBuf);
-  if (text && text.trim()) {
-    log(text);
-    await window.api.injectToWebview(text + " ");
-  }
-}
-
-function flatten(chunks, total) {
-  const out = new Float32Array(total);
-  let off = 0;
-  for (const c of chunks) {
-    out.set(c, off);
-    off += c.length;
-  }
-  return out;
-}
-
-function downsampleTo16k(samples, sourceRate) {
-  if (sourceRate === 16000) return samples;
-  const ratio = sourceRate / 16000;
-  const newLength = Math.floor(samples.length / ratio);
-  const result = new Float32Array(newLength);
-  for (let i = 0; i < newLength; i++) {
-    const idx = i * ratio;
-    const i0 = Math.floor(idx);
-    const i1 = Math.min(i0 + 1, samples.length - 1);
-    const frac = idx - i0;
-    result[i] = samples[i0] * (1 - frac) + samples[i1] * frac;
-  }
-  return result;
-}
-
-function isSilent(samples) {
-  let sum = 0;
-  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
-  const rms = Math.sqrt(sum / samples.length);
-  return rms < 0.005;
-}
-
 let netCfg = null;
 
 (async () => {
@@ -1941,7 +3075,7 @@ async function refreshNetworkUI() {
   netAddressEl.value = netCfg.address || "";
   const port = parsePort(netCfg.address) || 2000;
   if (netPortEl) netPortEl.value = port;
-  maxSupportersEl.value = netCfg.maxSupporters || 1;
+  maxSupportersEl.value = netCfg.maxSupporters || 5;
   if (twoWayEl) twoWayEl.checked = true;
   const v = Math.round((netCfg.incomingVolume ?? 1) * 100);
   incomingVolumeEl.value = v;
@@ -2119,7 +3253,7 @@ netActionBtn.addEventListener("click", async () => {
   await persistNet({ address: addr });
   const msg =
     role === "speaker"
-      ? `Start hosting on ${addr}?\n\nThis will:\n  • Bind a WebSocket server on the port\n  • Capture your microphone + system audio when a supporter connects\n  • Stream audio to up to ${netCfg.maxSupporters || 1} supporter(s)`
+      ? `Start hosting on ${addr}?\n\nThis will:\n  • Bind a WebSocket server on the port\n  • Capture your microphone + system audio when a supporter connects\n  • Stream audio to up to ${netCfg.maxSupporters || 5} supporter(s)`
       : `Connect to ${addr}?\n\nThis will:\n  • Open a WebSocket connection to the speaker\n  • Receive their microphone + system audio\n  • Auto-reconnect every 5s if dropped`;
   if (!window.confirm(msg)) return;
   if (role === "supporter") netActionBtn.dataset.connecting = "1";
@@ -2681,34 +3815,6 @@ window.api.onSignaling((msg) => {
     log("Network: connected as supporter (peer id " + msg.id + ")", "info");
   }
 });
-
-function encodeWav(samples, sampleRate) {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
-  const view = new DataView(buffer);
-  const writeStr = (off, s) => {
-    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
-  };
-  writeStr(0, "RIFF");
-  view.setUint32(4, 36 + samples.length * 2, true);
-  writeStr(8, "WAVE");
-  writeStr(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeStr(36, "data");
-  view.setUint32(40, samples.length * 2, true);
-  let off = 44;
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-    off += 2;
-  }
-  return buffer;
-}
 
 const chatMainEl = document.getElementById("chatMain");
 const chatHistoryEl = document.getElementById("chatHistory");

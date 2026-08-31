@@ -1,7 +1,7 @@
 {
-  "name": "ACE",
-  "version": "1.1.1",
-  "description": "Answer Coaching Engine(what it literally is), Ace the interview(what the user achieves), Ace up your sleeve(what it secretly is)",
+  "name": "RemoteDevJobAce",
+  "version": "2.1.2",
+  "description": "Answer Coaching Engine",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -12,11 +12,12 @@
   },
   "build": {
     "appId": "com.stealthsupport.app",
-    "productName": "ACE",
+    "productName": "RemoteDevJobAce",
     "files": [
       "main.js",
-      "preload.js",
-      "preload-selector.js",
+      "llm-providers.js",
+      "defaults/**/*",
+      "preload*.js",
       "renderer/**/*",
       "build/icon.png",
       "build/icon.ico",
@@ -54,6 +55,7 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.3",
+    "officeparser": "^5.2.2",
     "simple-peer": "^9.11.1",
     "ws": "^8.20.0"
   },

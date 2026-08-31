@@ -1,0 +1,56 @@
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; height: 100%;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  user-select: none;
+}
+body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+.info-header {
+  -webkit-app-region: drag;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 8px 6px 10px;
+  background: #1e293b;
+  border-bottom: 1px solid #334155;
+}
+.info-loc { font-size: 12px; font-weight: 600; color: #f1f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.info-header-btns { -webkit-app-region: no-drag; display: flex; gap: 4px; }
+.info-btn {
+  -webkit-app-region: no-drag;   /* required so clicks aren't eaten by the drag header */
+  width: 24px; height: 24px;
+  border: none; border-radius: 5px;
+  background: transparent; color: #cbd5e1;
+  font-size: 15px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.info-btn:hover { background: #334155; color: #fff; }
+
+/* Everything below the header scrolls if content is taller than the window */
+.info-scroll { flex: 1; overflow-y: auto; }
+
+.info-clock { text-align: center; padding: 12px 8px 8px; }
+.info-time { font-size: 34px; font-weight: 700; letter-spacing: 0.5px; line-height: 1; font-variant-numeric: tabular-nums; }
+.info-date { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+.info-tz { font-size: 10px; color: #64748b; margin-top: 2px; }
+
+.info-block { padding: 8px 12px; border-top: 1px solid #1e293b; }
+.info-block-label {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;
+  color: #64748b; margin-bottom: 5px;
+}
+.info-weather { display: flex; align-items: center; gap: 10px; }
+.info-weather-temp { font-size: 22px; font-weight: 700; }
+.info-weather-desc { font-size: 12px; color: #cbd5e1; line-height: 1.35; }
+.info-weather-emoji { font-size: 24px; }
+
+.info-holidays { font-size: 12px; line-height: 1.5; }
+.info-holiday { display: flex; gap: 8px; }
+.info-holiday-date { color: #94a3b8; flex-shrink: 0; min-width: 52px; font-variant-numeric: tabular-nums; }
+.info-holiday-name { color: #e2e8f0; }
+.info-holiday--soon .info-holiday-name { color: #fde047; font-weight: 600; }
+.info-holiday--past { opacity: 0.5; }
+
+.info-dim { color: #64748b; font-style: italic; font-size: 12px; }

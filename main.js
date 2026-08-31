@@ -1,5 +1,5 @@
 const {
-  app, BrowserWindow, WebContentsView, ipcMain, globalShortcut, Menu,
+  app, BrowserWindow, ipcMain, globalShortcut, Menu,
   session, desktopCapturer, dialog, clipboard, screen, net,
 } = require('electron');
 const path = require('path');
@@ -7,8 +7,15 @@ const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
+const {
+  PROVIDERS, getProvider, providerList,
+  streamChat, completeChat, listModels,
+  friendlyAnswerError, modelAbbr,
+} = require('./llm-providers');
 let autoUpdater = null;
 try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
+let officeParser = null;
+try { officeParser = require('officeparser'); } catch {}
 
 // CalculateNativeWinOcclusion: stop Windows from marking this always-on-top
 // overlay "occluded" and PAUSING its paint — that's what makes navigating /
@@ -57,24 +64,22 @@ const HOTKEY_DEFAULTS = {
   helpRequest: 'Super+Shift+/',
   submitPrompt: 'CommandOrControl+Return',
   screenshotToAI: 'Alt+A',
+  areaSnip: 'Alt+S',
   toggleClickThrough: 'Alt+Q',
 };
 
 const DEFAULT_STATE = {
   x: null, y: null, width: 400, height: 700,
   opacity: 1.0, stealth: true, clickThrough: false,
-  urls: [], currentUrlIndex: 0,
-  mode: 'caption',
+  mode: 'voice',
   transcription: {
     engine: 'deepgram',
     deepgramApiKey: '',
-    whisperExe: '',
-    whisperModel: '',
+    xaiApiKey: '',
     language: 'auto',
     micDeviceId: '',
     captureSystem: true,
     captureMic: true,
-    chunkSeconds: 3,
   },
   capture: {
     rect: null,
@@ -92,9 +97,33 @@ const DEFAULT_STATE = {
     outgoingVolume: 1.0,
     virtualCableId: '',
     listenDeviceId: '',
+    maxSupporters: 5,
   },
   welcomeSeen: false,
   prompts: [],
+  // Uploaded base-knowledge documents (extracted text), per category.
+  knowledge: { cv: [], jd: [], support: [], meetings: [] },
+  // Answer generation: provider + per-provider keys/models. `apiKey` is the
+  // legacy xAI key (kept so older state.json files still load).
+  answer: {
+    provider: 'xai',
+    apiKey: '',
+    model: 'grok-4.20-0309-non-reasoning',
+    keys: { xai: '', anthropic: '', openai: '' },
+    models: {
+      xai: 'grok-4.20-0309-non-reasoning',
+      anthropic: 'claude-haiku-4-5',
+      openai: 'gpt-4o',
+    },
+    activePromptId: null,
+  },
+  avoidPhrases: '',   // filled from defaults/avoid.txt on seed
+  promptDefaultsVersion: 0,
+  // Remembered personal profile, pre-filled into the New-session form.
+  profile: { name: '', city: '', country: '', timezone: '' },
+  // Named, switchable profiles for the New-session form.
+  profiles: [],            // [{ id, label, name, city, country, timezone }]
+  activeProfileId: null,
   stickyAnchor: null,
   stickySize: null,
   hotkeys: { ...HOTKEY_DEFAULTS },
@@ -104,18 +133,15 @@ const MIN_OPACITY = 0.05;
 const MOVE_STEP_X = 40;
 const MOVE_STEP_Y = 20;
 const OPACITY_STEP = 0.05;
-const SCROLL_STEP = 50;
-const HEADER_H = 28;
-const URL_BAR_H = 30;
-const RAIL_W = 0;
-const RIGHT_RAIL_W = 30;
 
 let win;
-let webView;
 let selectorWin = null;
 let stickyWin = null;
 let stickyWantOpen = false;
 let stickyReady = false;
+let infoWin = null;
+let infoProfile = null;          // profile currently shown in the info window
+let _nagerCountries = null;      // cached [{countryCode, name}] from date.nager.at
 let chatHistory = [];
 const CHAT_HISTORY_MAX = 200;
 let captureOverlayWin = null;
@@ -329,21 +355,123 @@ function loadState() {
       transcription: { ...DEFAULT_STATE.transcription, ...(raw.transcription || {}) },
       capture: { ...DEFAULT_STATE.capture, ...(raw.capture || {}) },
       network: { ...DEFAULT_STATE.network, ...(raw.network || {}) },
+      answer: { ...DEFAULT_STATE.answer, ...(raw.answer || {}) },
+      knowledge: { ...DEFAULT_STATE.knowledge, ...(raw.knowledge || {}) },
       hotkeys: { ...HOTKEY_DEFAULTS, ...(raw.hotkeys || {}) },
     };
     for (const k of Object.keys(HOTKEY_DEFAULTS)) {
       if (!state.hotkeys[k] && HOTKEY_DEFAULTS[k]) state.hotkeys[k] = HOTKEY_DEFAULTS[k];
     }
     state.network.role = '';
+    // Migrate any retired engine value (e.g. the removed local whisper) to deepgram.
+    if (state.transcription.engine !== 'deepgram' && state.transcription.engine !== 'xai') {
+      state.transcription.engine = 'deepgram';
+    }
   } catch {
     state = {
       ...DEFAULT_STATE,
       transcription: { ...DEFAULT_STATE.transcription },
       capture: { ...DEFAULT_STATE.capture },
       network: { ...DEFAULT_STATE.network },
+      answer: { ...DEFAULT_STATE.answer },
       hotkeys: { ...HOTKEY_DEFAULTS },
     };
   }
+  migrateAnswerConfig();
+  seedDefaultPromptsIfNeeded();
+  migrateProfilesIfNeeded();
+}
+
+function migrateAnswerConfig() {
+  if (!state.answer) state.answer = { ...DEFAULT_STATE.answer };
+  const a = state.answer;
+  const prevKeys = { ...(a.keys || {}) };
+  if (a.keys) delete a.keys.gemini;
+  if (a.models) delete a.models.gemini;
+  a.keys = { ...DEFAULT_STATE.answer.keys, ...(a.keys || {}) };
+  a.models = { ...DEFAULT_STATE.answer.models, ...(a.models || {}) };
+
+  if (!a.provider || !PROVIDERS[a.provider]) {
+    const withKey = ['openai', 'anthropic', 'xai'].find((id) => String((prevKeys[id] || a.keys[id] || '')).trim());
+    a.provider = withKey || 'xai';
+  }
+
+  if (!a.keys.xai && a.apiKey) a.keys.xai = a.apiKey;
+  if (!a.apiKey && a.keys.xai) a.apiKey = a.keys.xai;
+
+  // Stock defaults that were slower — move to the fast model unless the
+  // user already picked something else.
+  const oldSlow = {
+    xai: ['grok-4.6', 'grok-4.5'],
+    anthropic: ['claude-sonnet-5'],
+    openai: ['gpt-5.6-terra'],
+  };
+  const stored = a.models[a.provider] || a.model;
+  if (oldSlow[a.provider] && oldSlow[a.provider].includes(stored)) {
+    a.model = getProvider(a.provider).defaultModel;
+    a.models[a.provider] = a.model;
+  } else if (a.model && PROVIDERS[a.provider]) {
+    a.models[a.provider] = a.model;
+  } else {
+    a.model = a.models[a.provider] || getProvider(a.provider).defaultModel;
+  }
+}
+
+// One-time migration: fold the single remembered profile into the named list.
+function migrateProfilesIfNeeded() {
+  if (!Array.isArray(state.profiles)) state.profiles = [];
+  if (state.profiles.length === 0) {
+    const p = state.profile || {};
+    if (p.name || p.city || p.country || p.timezone) {
+      const id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+      state.profiles.push({ id, label: p.name || 'Default', name: p.name || '', city: p.city || '', country: p.country || '', timezone: p.timezone || '' });
+      state.activeProfileId = id;
+    }
+  }
+}
+
+const DEFAULT_PROMPT_ID = 'preset-general';
+const DEFAULT_PROMPT_TITLE = 'General';
+const PROMPT_DEFAULTS_VERSION = 3;
+
+function loadBundledText(filename) {
+  const dirs = [
+    path.join(__dirname, '.claude'),
+    path.join(__dirname, 'defaults'),
+  ];
+  for (const dir of dirs) {
+    const p = path.join(dir, filename);
+    try {
+      if (fs.existsSync(p)) {
+        return fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').trim();
+      }
+    } catch {}
+  }
+  return '';
+}
+
+function builtinPromptDefaults() {
+  return {
+    prompt: loadBundledText('prompt.txt'),
+    avoid: loadBundledText('avoid.txt'),
+  };
+}
+
+// Replace the old multi-preset seed with the bundled general prompt + avoid list.
+function seedDefaultPromptsIfNeeded() {
+  if (state.promptDefaultsVersion === PROMPT_DEFAULTS_VERSION && state.promptsSeeded) return;
+  const bundled = builtinPromptDefaults();
+  state.prompts = [{
+    id: DEFAULT_PROMPT_ID,
+    title: DEFAULT_PROMPT_TITLE,
+    text: bundled.prompt,
+  }];
+  if (!state.answer) state.answer = { ...DEFAULT_STATE.answer };
+  state.answer.activePromptId = DEFAULT_PROMPT_ID;
+  state.avoidPhrases = bundled.avoid;
+  state.promptsSeeded = true;
+  state.promptDefaultsVersion = PROMPT_DEFAULTS_VERSION;
+  try { saveState(); } catch {}
 }
 
 function saveState() {
@@ -357,140 +485,6 @@ function saveState() {
   try {
     fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
     fs.writeFileSync(STATE_FILE, JSON.stringify(state));
-  } catch {}
-}
-
-function layoutWebView() {
-  if (!win || !webView) return;
-  const [w, h] = win.getContentSize();
-  const top = HEADER_H + URL_BAR_H;
-  webView.setBounds({
-    x: RAIL_W,
-    y: top,
-    width: Math.max(0, w - RAIL_W - RIGHT_RAIL_W),
-    height: Math.max(0, h - top),
-  });
-}
-
-function placeholderUrl() {
-  const html = `<!doctype html><html><head><style>
-    body { font-family: -apple-system, "Segoe UI", sans-serif; color: #71717a;
-      display: flex; align-items: center; justify-content: center;
-      height: 100vh; margin: 0; background: #fff; font-size: 13px; text-align: center; padding: 20px; }
-  </style></head><body>No URLs yet.<br>Open settings (gear icon on the left) to add one.</body></html>`;
-  return 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
-}
-
-function loadCurrentUrl() {
-  if (!webView) return;
-  const url = state.urls[state.currentUrlIndex];
-  webView.webContents.loadURL(url || placeholderUrl());
-}
-
-function ensureWebView() {
-  if (webView || !win) return;
-  webView = new WebContentsView({
-    webPreferences: { backgroundThrottling: false },
-  });
-  webView.setBackgroundColor('#ffffff');
-  const wc = webView.webContents;
-  // Never throttle the loaded site when this overlay isn't the focused window —
-  // otherwise Chromium drops it to ~1fps and pages load and render slowly.
-  try { wc.setBackgroundThrottling(false); } catch {}
-  // Present a clean, current Chrome UA: strip BOTH the app token (e.g. "ACE/1.1.1")
-  // and the "Electron/x.y" token. Leaving either is a giveaway to bot detection
-  // and triggers the slow human-verification redirects.
-  try {
-    const appToken = new RegExp(
-      '\\s?' + app.getName().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\/\\S+', 'i'
-    );
-    const cleanUA = wc.getUserAgent().replace(appToken, '').replace(/\s?Electron\/\S+/i, '');
-    wc.setUserAgent(cleanUA);
-  } catch {}
-  win.contentView.addChildView(webView);
-  webView.setVisible(false);
-  wc.on('did-navigate', () => sendWebviewUrl());
-  wc.on('did-navigate-in-page', () => sendWebviewUrl());
-  wc.on('page-title-updated', () => sendWebviewUrl());
-  // Load timing — so a slow page shows up in the Log with where the time went.
-  let webviewLoadStart = 0;
-  const sendLoading = (on) => {
-    if (win && !win.isDestroyed()) win.webContents.send('webview-loading', on);
-  };
-  wc.on('did-start-loading', () => { webviewLoadStart = Date.now(); sendLoading(true); });
-  wc.on('did-stop-loading', () => {
-    if (webviewLoadStart) appendLogLine(`[webview] loaded in ${Date.now() - webviewLoadStart}ms`);
-    sendLoading(false);
-  });
-  wc.on('did-fail-load', (_e, code, desc, url) => {
-    if (code === -3) return; // ERR_ABORTED (normal during redirects)
-    appendLogLine(`[webview] load failed ${code} ${desc} ${url}`);
-  });
-  layoutWebView();
-  loadCurrentUrl();
-}
-
-function webviewNavInfo() {
-  const info = { url: '', canBack: false, canForward: false };
-  if (!webView) return info;
-  const wc = webView.webContents;
-  try { info.url = wc.getURL() || ''; } catch {}
-  try {
-    const nh = wc.navigationHistory;
-    if (nh && typeof nh.canGoBack === 'function') {
-      info.canBack = nh.canGoBack();
-      info.canForward = nh.canGoForward();
-    } else {
-      info.canBack = wc.canGoBack();
-      info.canForward = wc.canGoForward();
-    }
-  } catch {}
-  return info;
-}
-
-function sendWebviewUrl() {
-  if (win && !win.isDestroyed()) win.webContents.send('webview-url-changed', webviewNavInfo());
-}
-
-// Load an arbitrary address typed into the URL bar. Bare hostnames get https://,
-// free text becomes a Google search, so users can escape a verification page.
-function navigateToUrl(rawUrl) {
-  if (!webView) return;
-  let url = String(rawUrl || '').trim();
-  if (!url) return;
-  if (!/^[a-z]+:\/\//i.test(url)) {
-    if (/\s/.test(url) || !/\.[a-z]{2,}/i.test(url)) {
-      url = 'https://www.google.com/search?q=' + encodeURIComponent(url);
-    } else {
-      url = 'https://' + url;
-    }
-  }
-  webView.setVisible(true);
-  layoutWebView();
-  webView.webContents.loadURL(url).catch(() => {});
-}
-
-function webviewGoBack() {
-  if (!webView) return;
-  webView.setVisible(true);
-  layoutWebView();
-  const wc = webView.webContents;
-  try {
-    const nh = wc.navigationHistory;
-    if (nh && typeof nh.goBack === 'function') { if (nh.canGoBack()) nh.goBack(); }
-    else if (wc.canGoBack()) wc.goBack();
-  } catch {}
-}
-
-function webviewGoForward() {
-  if (!webView) return;
-  webView.setVisible(true);
-  layoutWebView();
-  const wc = webView.webContents;
-  try {
-    const nh = wc.navigationHistory;
-    if (nh && typeof nh.goForward === 'function') { if (nh.canGoForward()) nh.goForward(); }
-    else if (wc.canGoForward()) wc.goForward();
   } catch {}
 }
 
@@ -551,19 +545,20 @@ function createWindow() {
   if (state.clickThrough) try { win.setIgnoreMouseEvents(true, { forward: true }); } catch {}
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  // Start loading the site immediately, in parallel with the UI, so it's warm by
-  // the time the user needs it (instead of waiting until the window paints).
-  ensureWebView();
+  // Embedded web AI removed — answers come from the selected provider API
+  // into the in-app Answer panel, so we no longer create the WebContentsView.
   win.once('ready-to-show', () => {
     win.show();
+    // Pre-warm the xAI connection so first real request skips TLS handshake.
+    setTimeout(() => startWarmLoop(), 400);
   });
 
   win.on('move', () => { saveState(); syncStickyPosition(); });
-  win.on('resize', () => { layoutWebView(); saveState(); syncStickyPosition(); });
+  win.on('resize', () => { saveState(); syncStickyPosition(); });
   win.on('show', () => applyStickyState());
   win.on('hide', () => applyStickyState());
   win.on('closed', () => {
-    win = null; webView = null;
+    win = null;
     if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.close(); } catch {} }
   });
 }
@@ -593,6 +588,7 @@ function setStealth(value) {
   state.stealth = !!value;
   win.setContentProtection(state.stealth);
   if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.setContentProtection(state.stealth); } catch {} }
+  if (infoWin && !infoWin.isDestroyed()) { try { infoWin.setContentProtection(state.stealth); } catch {} }
   saveState();
   win.webContents.send('stealth-changed', state.stealth);
 }
@@ -601,17 +597,18 @@ function computeDefaultStickyAnchor(mainW, mainH, stickyW, stickyH) {
   const [mx, my] = win.getPosition();
   const display = screen.getDisplayMatching(win.getBounds());
   const work = display.workArea;
-  const gap = 6;
+  const gap = 8;
+  // Always prefer side-by-side (right or left) — never above/below which
+  // causes the sticky to land off-screen or at the top-left corner.
   if (mx + mainW + gap + stickyW <= work.x + work.width) {
     return { xMode: 'rightOf', xGap: gap, yMode: 'alignTop', yOffset: 0 };
   }
   if (mx - gap - stickyW >= work.x) {
     return { xMode: 'leftOf', xGap: gap, yMode: 'alignTop', yOffset: 0 };
   }
-  if (my + mainH + gap + stickyH <= work.y + work.height) {
-    return { xMode: 'alignLeft', xOffset: 0, yMode: 'belowOf', yGap: gap };
-  }
-  return { xMode: 'alignLeft', xOffset: 0, yMode: 'aboveOf', yGap: gap };
+  // No room on either side — force right and let syncStickyPosition clamp
+  // it to the work area rather than falling back to above/below.
+  return { xMode: 'rightOf', xGap: gap, yMode: 'alignTop', yOffset: 0 };
 }
 
 function computeStickyXY(anchor, mainX, mainY, mainW, mainH, stickyW, stickyH) {
@@ -672,8 +669,13 @@ function syncStickyPosition(force) {
   }
   const [mx, my] = win.getPosition();
   const { sx, sy } = computeStickyXY(state.stickyAnchor, mx, my, mainW, mainH, stickyW, stickyH);
+  // Clamp to work area so the sticky is never off-screen or at 0,0.
+  const display = screen.getDisplayMatching(win.getBounds());
+  const work = display.workArea;
+  const cx = Math.max(work.x, Math.min(sx, work.x + work.width  - stickyW));
+  const cy = Math.max(work.y, Math.min(sy, work.y + work.height - stickyH));
   stickyMovingProgrammatically++;
-  try { stickyWin.setBounds({ x: sx, y: sy, width: stickyW, height: stickyH }); } catch {}
+  try { stickyWin.setBounds({ x: cx, y: cy, width: stickyW, height: stickyH }); } catch {}
   setTimeout(() => { stickyMovingProgrammatically = Math.max(0, stickyMovingProgrammatically - 1); }, 50);
 }
 
@@ -758,10 +760,222 @@ function createStickyWindow() {
   });
 }
 
-function openStickyWindow() {
+// ── Info window (local time / weather / holidays) ─────────────────────────────
+function createInfoWindow() {
+  if (infoWin && !infoWin.isDestroyed()) return;
+  if (!win) return;
+  infoAcc = null; // fresh window — let the fallback-fetch guard work
+  const disp = screen.getPrimaryDisplay().workArea;
+  infoWin = new BrowserWindow({
+    width: 280, height: 600,
+    x: disp.x + disp.width - 300, y: disp.y + 20,
+    minWidth: 220, minHeight: 280,
+    frame: false, backgroundColor: '#0f172a',
+    skipTaskbar: true, alwaysOnTop: true, resizable: true, show: false,
+    icon: path.join(__dirname, 'build', 'icon.png'),
+    webPreferences: { preload: path.join(__dirname, 'preload-info.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  infoWin.setContentProtection(state.stealth);
+  infoWin.setAlwaysOnTop(true, 'screen-saver');
+  infoWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  infoWin.setMenuBarVisibility(false);
+  infoWin.loadFile(path.join(__dirname, 'renderer', 'info.html'));
+  infoWin.on('closed', () => { infoWin = null; });
+  infoWin.once('ready-to-show', () => { if (infoWin && !infoWin.isDestroyed()) infoWin.showInactive(); });
+  // The fetch is normally kicked off by the renderer's 'info-ready' handshake.
+  // Fallback: also start it shortly after load in case the handshake is missed
+  // (e.g. preload issue) — refreshInfoData no-ops if a fetch is already running
+  // for this profile, so a duplicate is harmless.
+  infoWin.webContents.once('did-finish-load', () => {
+    setTimeout(() => { if (infoWin && !infoWin.isDestroyed() && infoAcc === null) refreshInfoData(); }, 800);
+  });
+}
+
+function openInfoWindow(profile) {
+  infoProfile = profile || infoProfile || {};
+  if (!infoWin || infoWin.isDestroyed()) { createInfoWindow(); return; }
+  infoWin.showInactive();
+  refreshInfoData();
+}
+
+function closeInfoWindow() {
+  if (infoWin && !infoWin.isDestroyed()) { try { infoWin.close(); } catch {} }
+  infoWin = null;
+  infoAcc = null; // so the next window's fallback-fetch guard works
+}
+
+// Map a free-text country name to an ISO-2 code via date.nager.at's country list.
+// fetch with an abort timeout so a slow/keyless endpoint can't hang the widget.
+async function tfetch(url, opts, ms) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms || 6000);
+  try { return await fetch(url, Object.assign({ signal: ac.signal }, opts || {})); }
+  finally { clearTimeout(t); }
+}
+
+async function countryNameToCode(name) {
+  const n = String(name || '').trim();
+  if (!n) return null;
+  if (/^[A-Za-z]{2}$/.test(n)) return n.toUpperCase(); // already a code
+  try {
+    if (!_nagerCountries) {
+      const r = await tfetch('https://date.nager.at/api/v3/AvailableCountries');
+      if (r.ok) _nagerCountries = await r.json();
+    }
+    if (_nagerCountries) {
+      const low = n.toLowerCase();
+      let hit = _nagerCountries.find(c => c.name.toLowerCase() === low);
+      if (!hit) hit = _nagerCountries.find(c => c.name.toLowerCase().startsWith(low) || low.startsWith(c.name.toLowerCase()));
+      if (hit) return hit.countryCode;
+    }
+  } catch {}
+  return null;
+}
+
+// Deeper special events via Wikimedia's keyless "on this day → holidays &
+// observances" feed. Scans the next `days` calendar days and keeps entries whose
+// text mentions any of the country name variants. English, no API key.
+async function fetchSpecialEvents(nameVariants, days) {
+  const names = (nameVariants || []).map(s => String(s || '').toLowerCase()).filter(Boolean);
+  if (!names.length) return [];
+  const today = new Date();
+  const dates = [];
+  for (let i = 0; i < (days || 10); i++) { const d = new Date(today); d.setDate(today.getDate() + i); dates.push(d); }
+  const results = [];
+  await Promise.all(dates.map(async (d) => {
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    try {
+      const r = await tfetch('https://en.wikipedia.org/api/rest_v1/feed/onthisday/holidays/' + mm + '/' + dd,
+        { headers: { 'User-Agent': 'AceInterview/1.0 (interview assistant)', 'Accept': 'application/json' } }, 5000);
+      if (!r.ok) return;
+      const j = await r.json();
+      const iso = d.getFullYear() + '-' + mm + '-' + dd;
+      (j.holidays || []).forEach((h) => {
+        const text = (h.text || '').trim();
+        if (text && names.some(n => text.toLowerCase().includes(n))) results.push({ date: iso, text });
+      });
+    } catch {}
+  }));
+  const seen = new Set();
+  return results
+    .filter(e => { const k = e.date + '|' + e.text; if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// Weather via wttr.in (keyless JSON). Returns the current-condition or null.
+async function fetchWeather(city, country) {
+  const q = [city, country].filter(Boolean).join(',');
+  if (!q) return null;
+  try {
+    const r = await tfetch('https://wttr.in/' + encodeURIComponent(q) + '?format=j1',
+      { headers: { 'User-Agent': 'curl/8' } }, 7000); // curl-like UA → clean JSON
+    if (!r.ok) return null;
+    const j = await r.json();
+    const cur = j.current_condition && j.current_condition[0];
+    if (!cur) return null;
+    return {
+      tempC: Number(cur.temp_C), feelsC: Number(cur.FeelsLikeC),
+      humidity: Number(cur.humidity),
+      desc: (cur.weatherDesc && cur.weatherDesc[0] && cur.weatherDesc[0].value) || '',
+    };
+  } catch { return null; }
+}
+
+// Public holidays (full year) + the country name variants for event matching.
+async function fetchHolidays(country) {
+  const nameVariants = country ? [country] : [];
+  if (!country) return { holidays: null, nameVariants };
+  try {
+    const code = await countryNameToCode(country);
+    if (!code) return { holidays: null, nameVariants };
+    const canonical = (_nagerCountries || []).find(c => c.countryCode === code);
+    if (canonical && canonical.name) nameVariants.push(canonical.name);
+    const year = new Date().getFullYear();
+    const r = await tfetch('https://date.nager.at/api/v3/PublicHolidays/' + year + '/' + code);
+    if (!r.ok) return { holidays: null, nameVariants };
+    const all = await r.json();
+    const holidays = all
+      .map(h => ({ date: h.date, name: h.name, localName: h.localName, types: h.types || [], global: h.global }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    return { holidays, nameVariants };
+  } catch { return { holidays: null, nameVariants }; }
+}
+
+// Fetch weather / holidays / events CONCURRENTLY and push each to the widget the
+// moment it resolves, so one slow endpoint never blocks the others.
+// Field convention: undefined = still loading, null = done-but-empty, value = data.
+let infoAcc = null;        // latest accumulator (also (re)sent on the ready handshake)
+let infoWatchdog = null;
+function sendInfoData() {
+  if (infoWin && !infoWin.isDestroyed() && infoAcc) infoWin.webContents.send('info-data', infoAcc);
+}
+async function refreshInfoData() {
+  if (!infoWin || infoWin.isDestroyed()) return;
+  const profile = infoProfile || {};
+  const city = (profile.city || '').trim();
+  const country = (profile.country || '').trim();
+  const acc = { profile, weather: undefined, holidays: undefined, events: undefined };
+  infoAcc = acc;
+  sendInfoData(); // clock + "Loading…" immediately
+
+  // Watchdog: never sit on "Loading…" forever — after 18s, mark unresolved
+  // sections as empty so they read "Unavailable / None".
+  if (infoWatchdog) clearTimeout(infoWatchdog);
+  infoWatchdog = setTimeout(() => {
+    if (infoAcc !== acc) return;
+    if (acc.weather === undefined) acc.weather = null;
+    if (acc.holidays === undefined) acc.holidays = null;
+    if (acc.events === undefined) acc.events = null;
+    sendInfoData();
+  }, 18000);
+
+  // ── Phase 1: weather + holidays (the important data) — concurrently ──
+  let nameVariants = country ? [country] : [];
+  const phase1 = [];
+  if (city || country) {
+    phase1.push(fetchWeather(city, country).then(w => { if (infoAcc === acc) { acc.weather = w || null; sendInfoData(); } }));
+  } else acc.weather = null;
+  if (country) {
+    phase1.push(fetchHolidays(country).then(res => {
+      if (infoAcc !== acc) return;
+      acc.holidays = res.holidays || null;
+      nameVariants = res.nameVariants && res.nameVariants.length ? res.nameVariants : nameVariants;
+      sendInfoData();
+    }));
+  } else { acc.holidays = null; acc.events = null; }
+  await Promise.allSettled(phase1);
+  if (infoAcc !== acc) return;
+
+  // ── Phase 2: special events — only AFTER weather + holidays are shown, so the
+  // 10-request Wikimedia scan never competes with the data above. ──
+  if (country) {
+    let ev = null;
+    try { ev = await fetchSpecialEvents(nameVariants, 10); } catch {}
+    if (infoAcc === acc) { acc.events = ev || null; sendInfoData(); }
+  }
+}
+
+ipcMain.handle('info-open', (_e, profile) => { openInfoWindow(profile); return true; });
+ipcMain.handle('info-close', () => { closeInfoWindow(); return true; });
+ipcMain.handle('info-refresh', () => { refreshInfoData(); return true; });
+// Renderer handshake: it's listening now — (re)send current data and fetch fresh.
+ipcMain.handle('info-ready', () => { sendInfoData(); refreshInfoData(); return true; });
+
+function openStickyWindow(beside = false) {
   stickyWantOpen = true;
-  if (!stickyWin || stickyWin.isDestroyed()) createStickyWindow();
+  if (beside) state.stickyAnchor = null;
+  const wasNew = !stickyWin || stickyWin.isDestroyed();
+  if (wasNew) createStickyWindow();
   applyStickyState();
+  if (beside) {
+    // For a freshly-created window the initial setBounds may fire before the
+    // OS assigns the final frame, so re-sync after a short delay.
+    const delay = wasNew ? 300 : 0;
+    setTimeout(() => {
+      if (stickyWin && !stickyWin.isDestroyed()) syncStickyPosition(true);
+    }, delay);
+  }
 }
 
 function closeStickyWindow() {
@@ -796,53 +1010,6 @@ function pushChatToSticky(msg) {
   pushHistoryToStickyDom();
 }
 
-function reloadWebView() {
-  if (!webView) return;
-  webView.setVisible(true);
-  layoutWebView();
-  webView.webContents.reload();
-}
-
-function scrollWebview(dy) {
-  if (!webView) return;
-  const code = `(function(dy){
-    function findScrollable(){
-      let best=null,bestSize=0;
-      const all=document.querySelectorAll('*');
-      for(const el of all){
-        const cs=getComputedStyle(el);
-        if((cs.overflowY==='auto'||cs.overflowY==='scroll')&&el.scrollHeight>el.clientHeight+4){
-          const size=el.clientWidth*el.clientHeight;
-          if(size>bestSize){best=el;bestSize=size;}
-        }
-      }
-      return best;
-    }
-    const t=findScrollable()||document.scrollingElement||document.documentElement;
-    t.scrollBy({top:dy,behavior:'smooth'});
-  })(${dy});`;
-  webView.webContents.executeJavaScript(code).catch(() => {});
-}
-
-function showUrlMenu() {
-  if (!win) return;
-  const items = state.urls.length === 0
-    ? [{ label: 'No URLs — open settings to add', enabled: false }]
-    : state.urls.map((url, i) => ({
-        label: url.length > 60 ? url.slice(0, 57) + '...' : url,
-        type: 'checkbox',
-        checked: i === state.currentUrlIndex,
-        click: () => {
-          state.currentUrlIndex = i;
-          if (webView) { webView.setVisible(true); layoutWebView(); }
-          loadCurrentUrl();
-          saveState();
-        },
-      }));
-  const [winW] = win.getContentSize();
-  Menu.buildFromTemplate(items).popup({ window: win, x: Math.max(0, winW - RIGHT_RAIL_W - 180), y: HEADER_H + 2 });
-}
-
 let pasteQueue = Promise.resolve();
 function pasteToForeground(text) {
   if (!text || !text.trim()) return Promise.resolve();
@@ -856,141 +1023,6 @@ function pasteToForeground(text) {
     ps.on('error', () => resolve());
   }));
   return pasteQueue;
-}
-
-let lastInjectError = '';
-async function injectIntoChat(text) {
-  if (!webView) {
-    if (lastInjectError !== 'no-webview' && win) {
-      win.webContents.send('capture-error', 'No webview to inject into');
-      lastInjectError = 'no-webview';
-    }
-    return false;
-  }
-  if (!text) return false;
-  const code = `(function(text){
-    const selectors=[
-      '#prompt-textarea',
-      'div[contenteditable="true"][role="textbox"]',
-      'div.ProseMirror[contenteditable="true"]',
-      'div[contenteditable="true"][data-testid*="input"]',
-      'textarea[data-testid*="input"]',
-      'textarea[autofocus]',
-      'main textarea',
-      'textarea',
-      '[contenteditable="true"]'
-    ];
-    let el=null;
-    for(const sel of selectors){
-      const c=document.querySelector(sel);
-      if(c&&c.offsetParent!==null){el=c;break;}
-    }
-    if(!el)return 'no-input';
-    el.focus();
-    if(el.tagName==='TEXTAREA'||el.tagName==='INPUT'){
-      const proto=el.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype;
-      const setter=Object.getOwnPropertyDescriptor(proto,'value').set;
-      const newVal=(el.value||'')+text;
-      setter.call(el,newVal);
-      el.dispatchEvent(new InputEvent('input',{bubbles:true,data:text,inputType:'insertText'}));
-      try{el.selectionStart=el.selectionEnd=newVal.length;}catch(e){}
-      return 'textarea';
-    } else {
-      const sel=window.getSelection();
-      const r=document.createRange();
-      r.selectNodeContents(el);
-      r.collapse(false);
-      sel.removeAllRanges();
-      sel.addRange(r);
-      document.execCommand('insertText',false,text);
-      return 'editable';
-    }
-  })(${JSON.stringify(text)});`;
-  try {
-    const r = await webView.webContents.executeJavaScript(code);
-    if (r === 'no-input') {
-      const msg = 'No chat input found. Load ChatGPT/Claude and make sure the chat input is in view.';
-      if (lastInjectError !== msg && win) {
-        win.webContents.send('capture-error', msg);
-        lastInjectError = msg;
-      }
-      return false;
-    }
-    if (lastInjectError) lastInjectError = '';
-    return true;
-  } catch (e) {
-    const msg = 'Inject error: ' + e.message;
-    if (lastInjectError !== msg && win) {
-      win.webContents.send('capture-error', msg);
-      lastInjectError = msg;
-    }
-    return false;
-  }
-}
-
-// Live word-by-word injection. Deletes the last `deleteCount` characters from the
-// chat input (to undo revised interim words) then inserts `insertText`. Serialized
-// so rapid streaming edits apply in order.
-let webviewEditQueue = Promise.resolve();
-function webviewEditTail(deleteCount, insertText) {
-  webviewEditQueue = webviewEditQueue.then(() => doWebviewEditTail(deleteCount, insertText));
-  return webviewEditQueue;
-}
-function doWebviewEditTail(deleteCount, insertText) {
-  if (!webView) return Promise.resolve(false);
-  if (!deleteCount && !insertText) return Promise.resolve(true);
-  const code = `(function(del, ins){
-    const selectors=[
-      '#prompt-textarea',
-      'div[contenteditable="true"][role="textbox"]',
-      'div.ProseMirror[contenteditable="true"]',
-      'div[contenteditable="true"][data-testid*="input"]',
-      'textarea[data-testid*="input"]',
-      'textarea[autofocus]',
-      'main textarea',
-      'textarea',
-      '[contenteditable="true"]'
-    ];
-    let el=null;
-    for(const sel of selectors){ const c=document.querySelector(sel); if(c&&c.offsetParent!==null){el=c;break;} }
-    if(!el)return 'no-input';
-    el.focus();
-    if(el.tagName==='TEXTAREA'||el.tagName==='INPUT'){
-      const proto=el.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype;
-      const setter=Object.getOwnPropertyDescriptor(proto,'value').set;
-      const v=el.value||'';
-      const cut=Math.max(0, v.length - del);
-      const nv=v.slice(0,cut)+ins;
-      setter.call(el,nv);
-      el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}));
-      try{el.selectionStart=el.selectionEnd=nv.length;}catch(e){}
-      return 'textarea';
-    } else {
-      const sel=window.getSelection();
-      const r=document.createRange();
-      r.selectNodeContents(el); r.collapse(false); // caret at end
-      sel.removeAllRanges(); sel.addRange(r);
-      // Select the changed tail by extending the selection backward, then
-      // replace it in ONE atomic edit — no per-character delete flicker.
-      for(let i=0;i<del;i++){ try{sel.modify('extend','backward','character');}catch(e){} }
-      if(ins){ document.execCommand('insertText',false,ins); }
-      else if(del>0){ document.execCommand('delete',false); }
-      return 'editable';
-    }
-  })(${deleteCount|0}, ${JSON.stringify(insertText || '')});`;
-  return webView.webContents.executeJavaScript(code).then((r) => {
-    if (r === 'no-input') {
-      const msg = 'No chat input found. Load ChatGPT/Claude and make sure the chat input is in view.';
-      if (lastInjectError !== msg && win) { win.webContents.send('capture-error', msg); lastInjectError = msg; }
-      return false;
-    }
-    if (lastInjectError) lastInjectError = '';
-    return true;
-  }).catch((e) => {
-    const msg = 'Inject error: ' + e.message;
-    if (lastInjectError !== msg && win) { win.webContents.send('capture-error', msg); lastInjectError = msg; }
-    return false;
-  });
 }
 
 async function transcribeDeepgram(wavBuffer, cfg) {
@@ -1018,48 +1050,10 @@ async function transcribeDeepgram(wavBuffer, cfg) {
   return transcript.trim();
 }
 
-async function transcribeLocal(wavBuffer, cfg) {
-  if (!cfg.whisperExe) throw new Error('whisper.exe path not set');
-  if (!cfg.whisperModel) throw new Error('whisper model path not set');
-  const tmpBase = path.join(os.tmpdir(), `stealth-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-  const wavPath = tmpBase + '.wav';
-  const outBase = tmpBase;
-  const outTxt = outBase + '.txt';
-  await fs.promises.writeFile(wavPath, Buffer.from(wavBuffer));
-  const args = [
-    '-m', cfg.whisperModel,
-    '-f', wavPath,
-    '-otxt', '-of', outBase,
-    '-nt', '--no-prints',
-  ];
-  if (cfg.language && cfg.language !== 'auto') args.push('-l', cfg.language);
-  return new Promise((resolve, reject) => {
-    const p = spawn(cfg.whisperExe, args, { windowsHide: true });
-    let stderr = '';
-    p.stderr.on('data', (d) => { stderr += d.toString(); });
-    p.on('error', (e) => reject(e));
-    p.on('exit', async (code) => {
-      try {
-        if (code !== 0) {
-          await fs.promises.unlink(wavPath).catch(() => {});
-          return reject(new Error(`whisper exit ${code}: ${stderr.slice(-200)}`));
-        }
-        const txt = await fs.promises.readFile(outTxt, 'utf8').catch(() => '');
-        await fs.promises.unlink(wavPath).catch(() => {});
-        await fs.promises.unlink(outTxt).catch(() => {});
-        resolve(txt.trim());
-      } catch (e) { reject(e); }
-    });
-  });
-}
-
 let transcribeQueue = Promise.resolve('');
 function enqueueTranscribe(wavBuffer) {
   const cfg = state.transcription;
-  transcribeQueue = transcribeQueue.then(async () => {
-    if (cfg.engine === 'local') return transcribeLocal(wavBuffer, cfg);
-    return transcribeDeepgram(wavBuffer, cfg);
-  });
+  transcribeQueue = transcribeQueue.then(async () => transcribeDeepgram(wavBuffer, cfg));
   return transcribeQueue;
 }
 
@@ -1112,7 +1106,7 @@ async function captureTick() {
     const newPart = smartDiff(text);
     const trimmed = newPart.trim();
     if (trimmed) {
-      await injectIntoChat(newPart);
+      // OCR text now flows to the in-app question composer (renderer), not a webview.
       if (win) win.webContents.send('capture-text', trimmed);
     }
   } catch (e) {
@@ -1131,7 +1125,6 @@ function startCaptureLoop() {
   resetSmartDiffState();
   firstOcrLogged = false;
   lastOcrEmptyAt = 0;
-  lastInjectError = '';
   const period = Math.max(200, state.capture.pollMs || 700);
   captureLoop = setInterval(captureTick, period);
   captureTick();
@@ -1157,7 +1150,6 @@ function stopCaptureLoop() {
     pendingIdleFrames = 0;
     pastedHistory.push(flush);
     pastedHistory = pastedHistory.slice(-MAX_HISTORY_WORDS);
-    injectIntoChat(' ' + flush).catch(() => {});
     if (win) win.webContents.send('capture-text', flush);
   }
   if (win) win.webContents.send('capture-state', false);
@@ -1237,16 +1229,81 @@ function openAreaSelector() {
     selectorWin.on('closed', () => {
       selectorWin = null;
       if (wasVisible && win) win.show();
-      if (webView) {
-        webView.setVisible(true);
-        layoutWebView();
-      }
       if (win) win.webContents.send('selector-closed');
     });
   }, 150);
 }
 
+// ── Alt+S area-snip: drag-select a screen region → attach it as an image ──────
+// Reuses the selector window. The selector is content-protected while stealth
+// is on, and the main window is hidden during selection + capture, so neither
+// appears in the captured region or in any screen recording.
+let snipMode = false;
+let snipPrevVisible = true;
+function openSnipSelector() {
+  if (selectorWin || snipMode) return;
+  if (!win) return;
+  snipMode = true;
+  snipPrevVisible = win.isVisible();
+  win.hide();
+  setTimeout(() => {
+    const cursor = screen.getCursorScreenPoint();
+    const display = screen.getDisplayNearestPoint(cursor);
+    selectorWin = new BrowserWindow({
+      x: display.bounds.x, y: display.bounds.y,
+      width: display.bounds.width, height: display.bounds.height,
+      frame: false, transparent: true, alwaysOnTop: true, skipTaskbar: true,
+      resizable: false, movable: false, hasShadow: false, fullscreenable: false,
+      webPreferences: { preload: path.join(__dirname, 'preload-selector.js'), contextIsolation: true, nodeIntegration: false },
+    });
+    selectorWin.setAlwaysOnTop(true, 'screen-saver');
+    try { selectorWin.setContentProtection(state.stealth); } catch {}
+    selectorWin.loadFile(path.join(__dirname, 'renderer', 'selector.html'));
+    selectorWin.once('ready-to-show', () => selectorWin.show());
+    selectorWin.on('closed', () => { selectorWin = null; });
+  }, 150);
+}
+
+function pickSourceForDisplay(sources, display) {
+  const byId = sources.find(s => s.display_id && String(s.display_id) === String(display.id));
+  if (byId) return byId;
+  const displays = screen.getAllDisplays();
+  const idx = displays.findIndex(d => d.id === display.id);
+  return sources[idx] || sources[0];
+}
+
+async function handleSnipDone(rect) {
+  const display = selectorWin
+    ? screen.getDisplayMatching(selectorWin.getBounds())
+    : screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const sf = display.scaleFactor || 1;
+  const x = Math.min(rect.x1, rect.x2), y = Math.min(rect.y1, rect.y2);
+  const w = Math.abs(rect.x2 - rect.x1), h = Math.abs(rect.y2 - rect.y1);
+  if (selectorWin) { try { selectorWin.close(); } catch {} selectorWin = null; }
+  // Let the selector vanish before grabbing pixels.
+  await new Promise(r => setTimeout(r, 180));
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: Math.round(display.size.width * sf), height: Math.round(display.size.height * sf) },
+    });
+    const src = pickSourceForDisplay(sources, display);
+    const cropped = src.thumbnail.crop({
+      x: Math.round(x * sf), y: Math.round(y * sf),
+      width: Math.max(1, Math.round(w * sf)), height: Math.max(1, Math.round(h * sf)),
+    });
+    const dataUrl = cropped.toDataURL();
+    const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+    if (win && !win.isDestroyed()) win.webContents.send('snip-image', { base64: b64, mime: 'image/png' });
+  } catch (e) {
+    appendLogLine('[snip] capture failed: ' + e.message);
+  }
+  snipMode = false;
+  if (snipPrevVisible && win) win.show();
+}
+
 ipcMain.on('selector-done', (_e, rect) => {
+  if (snipMode) { handleSnipDone(rect || {}); return; }
   if (rect && selectorWin) {
     const [winX, winY] = selectorWin.getPosition();
     const display = screen.getDisplayMatching(selectorWin.getBounds());
@@ -1269,6 +1326,12 @@ ipcMain.on('selector-done', (_e, rect) => {
 });
 
 ipcMain.on('selector-cancel', () => {
+  if (snipMode) {
+    snipMode = false;
+    if (selectorWin) { try { selectorWin.close(); } catch {} selectorWin = null; }
+    if (snipPrevVisible && win) win.show();
+    return;
+  }
   if (selectorWin) selectorWin.close();
   if (pendingRestart) {
     pendingRestart = false;
@@ -1284,10 +1347,9 @@ const HOTKEY_HANDLERS = {
   moveDown: () => nudge(0, MOVE_STEP_Y),
   opacityUp: () => setOpacity((win?.getOpacity() ?? 1) + OPACITY_STEP),
   opacityDown: () => setOpacity((win?.getOpacity() ?? 1) - OPACITY_STEP),
-  scrollUp: () => scrollWebview(-SCROLL_STEP),
-  scrollDown: () => scrollWebview(SCROLL_STEP),
+  scrollUp: () => { if (win && !win.isDestroyed()) win.webContents.send('scroll-answer', -1); },
+  scrollDown: () => { if (win && !win.isDestroyed()) win.webContents.send('scroll-answer', 1); },
   resetCaptureArea: () => triggerResetCaptureArea(),
-  reloadSite: () => reloadWebView(),
   toggleStealth: () => setStealth(!state.stealth),
   toggleRecording: () => { if (win) win.webContents.send('toggle-recording'); },
   toggleMode: () => { if (win) win.webContents.send('toggle-mode'); },
@@ -1297,66 +1359,11 @@ const HOTKEY_HANDLERS = {
   stickyScrollUp: () => scrollSticky(-1),
   stickyScrollDown: () => scrollSticky(1),
   helpRequest: () => sendHelpRequest(),
-  submitPrompt: () => submitWebviewPrompt(),
-  screenshotToAI: () => captureCursorScreenToAI().catch((e) => { if (win) win.webContents.send('capture-error', 'screenshot: ' + e.message); }),
+  submitPrompt: () => { if (win && !win.isDestroyed()) win.webContents.send('trigger-get-answer'); },
+  screenshotToAI: () => { if (win && !win.isDestroyed()) win.webContents.send('trigger-screenshot'); },
+  areaSnip: () => openSnipSelector(),
   toggleClickThrough: () => setClickThrough(!state.clickThrough),
 };
-
-function submitWebviewPrompt() {
-  if (!webView) {
-    if (win) win.webContents.send('capture-error', 'submit: no webview');
-    return;
-  }
-  const code = `(function(){
-    const sels=['#prompt-textarea','div[contenteditable="true"][role="textbox"]','div.ProseMirror[contenteditable="true"]','div[contenteditable="true"][data-testid*="input"]','textarea[data-testid*="input"]','main textarea','textarea','[contenteditable="true"]'];
-    let el=null;
-    for(const s of sels){const c=document.querySelector(s);if(c&&c.offsetParent!==null){el=c;break;}}
-    if(!el)return 'no-input';
-    el.focus();
-    const btnSels=['button[data-testid="send-button"]','button[aria-label*="Send" i]','button[data-testid="fruitjuice-send-button"]','form button[type="submit"]'];
-    for(const s of btnSels){const b=document.querySelector(s);if(b&&!b.disabled){b.click();return 'clicked:'+s;}}
-    const opts={key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true};
-    el.dispatchEvent(new KeyboardEvent('keydown',opts));
-    el.dispatchEvent(new KeyboardEvent('keypress',opts));
-    el.dispatchEvent(new KeyboardEvent('keyup',opts));
-    return 'enter';
-  })()`;
-  webView.webContents.executeJavaScript(code).catch((e) => {
-    if (win) win.webContents.send('capture-error', 'submit failed: ' + e.message);
-  });
-}
-
-async function captureCursorScreenToAI() {
-  if (!webView) throw new Error('no webview');
-  const cursor = screen.getCursorScreenPoint();
-  const display = screen.getDisplayNearestPoint(cursor);
-  const sf = display.scaleFactor || 1;
-  const tw = Math.round(display.size.width * sf);
-  const th = Math.round(display.size.height * sf);
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: { width: tw, height: th },
-  });
-  let source = sources.find((s) => String(s.display_id) === String(display.id));
-  if (!source) source = sources[0];
-  if (!source) throw new Error('no display source');
-  const img = source.thumbnail;
-  if (!img || img.isEmpty()) throw new Error('empty capture');
-  clipboard.writeImage(img);
-  const focusCode = `(function(){
-    const sels=['#prompt-textarea','div[contenteditable="true"][role="textbox"]','div.ProseMirror[contenteditable="true"]','div[contenteditable="true"][data-testid*="input"]','textarea[data-testid*="input"]','main textarea','textarea','[contenteditable="true"]'];
-    let el=null;
-    for(const s of sels){const c=document.querySelector(s);if(c&&c.offsetParent!==null){el=c;break;}}
-    if(!el)return 'no-input';
-    el.focus();
-    return 'focused';
-  })()`;
-  await webView.webContents.executeJavaScript(focusCode).catch(() => {});
-  webView.webContents.focus();
-  await new Promise((r) => setTimeout(r, 80));
-  try { webView.webContents.paste(); } catch {}
-  if (win) win.webContents.send('capture-text', `[screenshot ${display.size.width}x${display.size.height} pasted to AI]`);
-}
 
 function setClickThrough(value) {
   state.clickThrough = !!value;
@@ -1415,7 +1422,7 @@ function broadcastNetworkStatus() {
     bound: !!wsServer,
     connected: wsClient ? wsClient.readyState === WebSocket.OPEN : false,
     supporters: supporterListSnapshot(),
-    maxSupporters: 1,
+    maxSupporters: state.network.maxSupporters || 5,
   };
   win.webContents.send('network-status', status);
 }
@@ -1755,18 +1762,6 @@ ipcMain.handle('set-click-through', (_e, value) => setClickThrough(value));
 ipcMain.handle('get-click-through', () => state.clickThrough);
 ipcMain.handle('hide', () => win?.hide());
 ipcMain.handle('quit', () => app.quit());
-ipcMain.handle('get-urls', () => ({ urls: state.urls.slice(), currentIndex: state.currentUrlIndex }));
-ipcMain.handle('set-urls', (_e, urls) => {
-  state.urls = Array.isArray(urls) ? urls.filter(u => typeof u === 'string' && u.trim()) : [];
-  if (state.currentUrlIndex >= state.urls.length) state.currentUrlIndex = 0;
-  saveState();
-  loadCurrentUrl();
-});
-ipcMain.handle('show-url-menu', () => showUrlMenu());
-ipcMain.handle('reload-webview', () => reloadWebView());
-ipcMain.handle('set-webview-visible', (_e, visible) => {
-  if (webView) webView.setVisible(!!visible);
-});
 ipcMain.handle('get-desktop-source-id', async () => {
   try {
     const sources = await desktopCapturer.getSources({ types: ['screen'] });
@@ -1775,10 +1770,36 @@ ipcMain.handle('get-desktop-source-id', async () => {
     return null;
   }
 });
-ipcMain.handle('navigate-url', (_e, url) => navigateToUrl(url));
-ipcMain.handle('webview-back', () => webviewGoBack());
-ipcMain.handle('webview-forward', () => webviewGoForward());
-ipcMain.handle('get-webview-url', () => webviewNavInfo());
+
+// Returns the sorted index of the display the cursor is on (no desktopCapturer needed).
+ipcMain.handle('get-cursor-display-index', () => {
+  try {
+    const point   = screen.getCursorScreenPoint();
+    const display = screen.getDisplayNearestPoint(point);
+    const sorted  = screen.getAllDisplays()
+      .slice()
+      .sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
+    const idx = sorted.findIndex((d) => d.id === display.id);
+    return idx >= 0 ? idx : 0;
+  } catch { return 0; }
+});
+
+// Returns all screen source IDs sorted by name (Screen 1, Screen 2 …).
+ipcMain.handle('get-all-screen-source-ids', async () => {
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen'] });
+    return sources
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+      .map((s) => s.id);
+  } catch { return []; }
+});
+
+ipcMain.handle('get-cursor-screen-source-id', async () => {
+  const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] });
+  // Return only serializable fields — skip NativeImage thumbnails.
+  return sources.map((s) => ({ id: s.id, name: s.name, display_id: s.display_id }));
+});
 
 ipcMain.handle('get-mode', () => state.mode);
 ipcMain.handle('set-mode', (_e, mode) => {
@@ -1916,6 +1937,128 @@ function friendlyDeepgramError(status, detail) {
   }
 }
 
+// ---- xAI (Grok) Speech-to-Text streaming — mirrors the Deepgram path above.
+// Protocol: connect wss://api.x.ai/v1/stt, wait for {type:'transcript.created'},
+// stream raw PCM16 binary frames, receive {type:'transcript.partial'|'transcript.done'}
+// with is_final/speech_final, then send {type:'audio.done'} to finish. ----
+let xaiWs = null;
+let xaiActive = false;
+let xaiAuth = null;
+let xaiReady = false;             // server sent transcript.created -> ok to send audio
+let xaiReconnectTimer = null;
+let xaiReconnectAttempts = 0;
+
+function clearXaiTimers() {
+  if (xaiReconnectTimer) { clearTimeout(xaiReconnectTimer); xaiReconnectTimer = null; }
+}
+
+function scheduleXaiReconnect() {
+  if (!xaiActive || xaiReconnectTimer || xaiWs) return;
+  const delay = Math.min(5000, 800 * Math.pow(2, xaiReconnectAttempts));
+  xaiReconnectAttempts++;
+  appendLogLine(`[xai] connection lost — reconnecting in ${delay}ms`);
+  xaiReconnectTimer = setTimeout(() => {
+    xaiReconnectTimer = null;
+    if (xaiActive && !xaiWs && xaiAuth) startXaiWs(xaiAuth.apiKey, xaiAuth.language);
+  }, delay);
+}
+
+function friendlyXaiError(status, detail) {
+  const tail = detail ? ` — ${detail}` : '';
+  switch (status) {
+    case 400: return `xAI rejected the request (400). Try a specific language in Settings → Voice.${tail}`;
+    case 401:
+    case 403: return `xAI rejected your API key (${status}). Check the key in Settings → Voice.${tail}`;
+    case 429: return `xAI rate limit / quota (429). Try again shortly.${tail}`;
+    default:  return `xAI connection failed (${status || 'unknown'}).${tail}`;
+  }
+}
+
+function startXaiWs(apiKey, language) {
+  if (xaiWs) return;
+  xaiReady = false;
+  const params = new URLSearchParams({
+    sample_rate: '16000', encoding: 'pcm',
+    interim_results: 'true', endpointing: '300',
+  });
+  if (language && language !== 'auto') params.set('language', language);
+
+  xaiWs = new WebSocket(`wss://api.x.ai/v1/stt?${params}`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  let handshakeFailed = false;
+  xaiWs.on('open', () => {
+    appendLogLine('[xai] connected');
+    xaiReconnectAttempts = 0;
+  });
+  xaiWs.on('message', (raw) => {
+    try {
+      const msg = JSON.parse(raw.toString());
+      if (msg.type === 'transcript.created') { xaiReady = true; return; }
+      if (msg.type === 'error') {
+        const m = msg.message || msg.error || '';
+        appendLogLine('[xai] error: ' + m);
+        if (win && !win.isDestroyed()) win.webContents.send('transcript-live-error', 'xAI: ' + (m || 'error'));
+        return;
+      }
+      if (msg.type === 'transcript.partial' || msg.type === 'transcript.done') {
+        const text = (msg.text || '').trim();
+        const isFinal = msg.type === 'transcript.done' || !!msg.is_final;
+        if (text) {
+          if (isFinal) sessionLog.push({ ts: Date.now(), kind: 'voice', text });
+          if (win && !win.isDestroyed()) win.webContents.send('transcript-live', { text, isFinal });
+        }
+        // speech_final marks an utterance boundary — same role as Deepgram's UtteranceEnd.
+        if (msg.speech_final && win && !win.isDestroyed()) win.webContents.send('transcript-utterance-end');
+      }
+    } catch {}
+  });
+  xaiWs.on('unexpected-response', (_req, res) => {
+    handshakeFailed = true;
+    let body = '';
+    res.on('data', (d) => { body += d.toString(); });
+    res.on('end', () => {
+      let detail = '';
+      try { const j = JSON.parse(body); detail = j.error || j.message || j.reason || ''; } catch {}
+      const msg = friendlyXaiError(res.statusCode, detail);
+      appendLogLine(`[xai] handshake ${res.statusCode}: ${body.slice(0, 200)}`);
+      if (win && !win.isDestroyed()) win.webContents.send('transcript-live-error', msg);
+      xaiActive = false;
+      clearXaiTimers();
+      try { if (xaiWs) xaiWs.terminate(); } catch {}
+      xaiWs = null;
+      xaiReady = false;
+    });
+  });
+  xaiWs.on('error', (e) => {
+    if (handshakeFailed) return;
+    appendLogLine('[xai] error: ' + e.message);
+  });
+  xaiWs.on('close', () => {
+    xaiWs = null;
+    xaiReady = false;
+    if (xaiActive && !handshakeFailed) scheduleXaiReconnect();
+  });
+}
+
+ipcMain.handle('start-xai-stream', (_e, { apiKey, language }) => {
+  xaiActive = true;
+  xaiAuth = { apiKey, language };
+  xaiReconnectAttempts = 0;
+  clearXaiTimers();
+  startXaiWs(apiKey, language);
+});
+ipcMain.handle('stop-xai-stream', () => {
+  xaiActive = false;
+  clearXaiTimers();
+  if (xaiWs) {
+    try { xaiWs.send(JSON.stringify({ type: 'audio.done' })); } catch {}
+    try { xaiWs.close(); } catch {}
+    xaiWs = null;
+  }
+  xaiReady = false;
+});
+
 ipcMain.handle('start-deepgram-stream', (_e, { apiKey, language }) => {
   deepgramActive = true;
   deepgramAuth = { apiKey, language };
@@ -1934,19 +2077,23 @@ ipcMain.handle('stop-deepgram-stream', () => {
 });
 ipcMain.on('audio-chunk', (_e, buf) => {
   if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) deepgramWs.send(buf);
+  else if (xaiWs && xaiWs.readyState === WebSocket.OPEN && xaiReady) xaiWs.send(buf);
 });
 ipcMain.on('session-log-add', (_e, entry) => { sessionLog.push(entry); });
 ipcMain.handle('clear-session-log', () => { sessionLog = []; });
-ipcMain.handle('save-session-log', async () => {
+ipcMain.handle('save-session-log', async (_e, suggestedName) => {
   if (sessionLog.length === 0) return null;
   const lines = sessionLog.map(e => {
     const d = new Date(e.ts);
     const t = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
     return `[${t}] [${e.kind.toUpperCase()}] ${e.text}`;
   }).join('\n');
+  // Sanitize the suggested filename (from the session title); fall back to a date.
+  const safe = String(suggestedName || '').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
+  const fileBase = safe || `session-${new Date().toISOString().slice(0, 10)}`;
   const r = await dialog.showSaveDialog(win, {
     title: 'Save session transcript',
-    defaultPath: path.join(app.getPath('desktop'), `session-${new Date().toISOString().slice(0,10)}.txt`),
+    defaultPath: path.join(app.getPath('desktop'), `${fileBase}.txt`),
     filters: [{ name: 'Text', extensions: ['txt'] }],
   });
   if (!r.canceled && r.filePath) {
@@ -1957,81 +2104,958 @@ ipcMain.handle('save-session-log', async () => {
   return null;
 });
 
-ipcMain.handle('paste-text', (_e, text) => pasteToForeground(text));
-ipcMain.handle('inject-to-webview', (_e, text) => injectIntoChat(text));
-ipcMain.handle('webview-edit-tail', (_e, { deleteCount, insert }) => webviewEditTail(deleteCount || 0, insert || ''));
-
-// ---- Session cookie export / import (portable across machines) ----
-// cookies.get() returns DECRYPTED values and cookies.set() re-encrypts with the
-// local machine's key, so the exported JSON restores the session on a different
-// computer/account (unlike copying the raw, DPAPI-bound Cookies file).
-async function serializeCookies() {
-  const cookies = await session.defaultSession.cookies.get({});
-  return cookies.map((c) => ({
-    name: c.name, value: c.value, domain: c.domain, path: c.path,
-    secure: c.secure, httpOnly: c.httpOnly,
-    expirationDate: c.expirationDate, sameSite: c.sameSite, hostOnly: c.hostOnly,
-  }));
-}
-
-async function applyCookies(list) {
-  const now = Date.now() / 1000;
-  let imported = 0, skipped = 0;
-  for (const c of (Array.isArray(list) ? list : [])) {
-    if (!c || !c.name || !c.domain) { skipped++; continue; }
-    if (c.expirationDate && c.expirationDate < now) { skipped++; continue; } // expired
-    const host = String(c.domain).replace(/^\./, '');
-    const details = {
-      url: (c.secure ? 'https://' : 'http://') + host + (c.path || '/'),
-      name: c.name,
-      value: c.value || '',
-      path: c.path || '/',
-      secure: !!c.secure,
-      httpOnly: !!c.httpOnly,
-    };
-    // host-only and __Host- cookies must NOT carry an explicit domain.
-    if (!c.hostOnly && !/^__Host-/.test(c.name)) details.domain = c.domain;
-    if (c.expirationDate) details.expirationDate = c.expirationDate;
-    if (c.sameSite) details.sameSite = c.sameSite;
-    try { await session.defaultSession.cookies.set(details); imported++; }
-    catch { skipped++; }
+// Set the current session's title from company/position (+ today's date) at
+// end-of-session. Returns the composed title (also used for the .txt filename).
+ipcMain.handle('session-finalize', (_e, { company, position } = {}) => {
+  const s = currentSession();
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, '0');
+  const dateStr = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+  const title = [String(company || '').trim(), String(position || '').trim(), dateStr].filter(Boolean).join(' · ');
+  if (s) {
+    s.company = String(company || '').trim();
+    s.position = String(position || '').trim();
+    s.name = title;
+    s.updatedAt = Date.now();
+    saveSessions();
   }
-  return { imported, skipped };
-}
-
-ipcMain.handle('cookies-export', async () => {
-  try {
-    const cookies = await serializeCookies();
-    const r = await dialog.showSaveDialog(win, {
-      title: 'Export session cookies',
-      defaultPath: path.join(app.getPath('desktop'), `ace-session-${new Date().toISOString().slice(0, 10)}.json`),
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
-    if (r.canceled || !r.filePath) return { ok: false, canceled: true };
-    await fs.promises.writeFile(r.filePath, JSON.stringify(cookies, null, 2), 'utf8');
-    return { ok: true, count: cookies.length, path: r.filePath };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
+  return title;
 });
 
-ipcMain.handle('cookies-import', async () => {
-  try {
-    const r = await dialog.showOpenDialog(win, {
-      title: 'Import session cookies',
-      properties: ['openFile'],
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
-    if (r.canceled || !r.filePaths || !r.filePaths[0]) return { ok: false, canceled: true };
-    const raw = await fs.promises.readFile(r.filePaths[0], 'utf8');
-    let list;
-    try { list = JSON.parse(raw); } catch { return { ok: false, error: 'Not a valid cookie JSON file' }; }
-    const { imported, skipped } = await applyCookies(list);
-    reloadWebView(); // let the loaded site adopt the restored session
-    return { ok: true, imported, skipped };
-  } catch (e) {
-    return { ok: false, error: e.message };
+ipcMain.handle('paste-text', (_e, text) => pasteToForeground(text));
+
+// ---------------------------------------------------------------------------
+// Answer generation. Builds the interview prompt, then streams a reply from
+// the selected provider (xAI / Anthropic / OpenAI) into the Answer
+// panel. Keys and last-used models are stored per provider.
+// ---------------------------------------------------------------------------
+let answerAbort = null;
+// Speculative answer state
+let speculativeAbort = null;
+// ── IDE Typing session state ─────────────────────────────────────────────────
+let ideTypingActive = false;
+let ideTypingPaused = false;   // manual pause
+let ideFocusPaused = false;    // auto-pause when our window gains focus
+let ideUserPaused = false;     // take-over auto-pause when the user moves the mouse
+let ideTypingProc = null;
+let ideTypingCancelled = false;
+function notifyTypingState() {
+  const payload = { paused: ideTypingPaused || ideFocusPaused || ideUserPaused, active: ideTypingActive };
+  if (win && !win.isDestroyed()) win.webContents.send('ide-typing-state', payload);
+}
+// Hard stop: cancel the loop and kill the PowerShell session immediately.
+function stopIdeTyping() {
+  if (!ideTypingActive && !ideTypingProc) return;
+  ideTypingCancelled = true;
+  ideTypingPaused = false;
+  if (ideTypingProc) { try { ideTypingProc.kill(); } catch {} ideTypingProc = null; }
+  notifyTypingState();
+}
+
+// ── Cursor take-over auto-pause ───────────────────────────────────────────────
+// The bot types with SendKeys (keyboard only) and never moves the mouse, so ANY
+// mouse movement is unambiguously the user "taking over". We only OBSERVE the
+// cursor (no input injected, no focus change), so this can't disturb typing.
+//   • mouse moves      → pause
+//   • mouse idle ~1.5s → auto-resume
+let cursorPollTimer = null;
+let _lastCursorPt = null;
+let _lastMoveAt = 0;
+const CURSOR_MOVE_THRESHOLD = 6;   // px per poll to count as "moving"
+const CURSOR_IDLE_RESUME_MS = 1500;
+function startCursorTakeover() {
+  stopCursorTakeover();
+  ideUserPaused = false;
+  try { _lastCursorPt = screen.getCursorScreenPoint(); } catch { _lastCursorPt = null; }
+  _lastMoveAt = 0;
+  cursorPollTimer = setInterval(() => {
+    if (!ideTypingActive) return;
+    let pt; try { pt = screen.getCursorScreenPoint(); } catch { return; }
+    if (_lastCursorPt) {
+      const moved = Math.abs(pt.x - _lastCursorPt.x) + Math.abs(pt.y - _lastCursorPt.y) > CURSOR_MOVE_THRESHOLD;
+      if (moved) {
+        _lastMoveAt = Date.now();
+        if (!ideUserPaused) { ideUserPaused = true; notifyTypingState(); }
+      } else if (ideUserPaused && Date.now() - _lastMoveAt > CURSOR_IDLE_RESUME_MS) {
+        ideUserPaused = false; notifyTypingState();
+      }
+    }
+    _lastCursorPt = pt;
+  }, 120);
+}
+function stopCursorTakeover() {
+  if (cursorPollTimer) { clearInterval(cursorPollTimer); cursorPollTimer = null; }
+  ideUserPaused = false;
+}
+let speculativeQuestion = null;
+let speculativeActive = false;
+let speculativeCommitted = false; // true after commit — stream pipes directly to renderer
+
+// ── Conversation memory ───────────────────────────────────────────────────────
+// Everything the assistant has produced this session (answers, code, diagrams)
+// is remembered and fed back as context so follow-up questions build on the CV,
+// support material AND the diagrams/code already generated.
+let convoHistory = []; // [{ user, assistant, mode }]
+const CONVO_CHAR_BUDGET = 6000; // recent turns only — long history inflates prefill/TTFT
+const ANSWER_CONV_FALLBACK = 'ace-' + Date.now().toString(36);
+
+function answerConvId() {
+  return currentSessionId || ANSWER_CONV_FALLBACK;
+}
+
+function maxTokensForMode(mode) {
+  if (mode === 'CODE') return 8192;
+  if (mode === 'DIAGRAM') return 8192;
+  return 2048; // spoken answers ~90s still fit; 700 was cutting the ending
+}
+
+function classifyQuestionLocal(q) {
+  const s = String(q || '').toLowerCase();
+  if (!s) return 'ANSWER';
+  const wantsCode = /\b(implement|leetcode|pseudocode|write (a |the )?(function|class|method|script|code)|code (a |the )?\w)/.test(s);
+  const wantsDiagram = /\b(draw|sketch|visualize|diagram|flowchart|sequence diagram|architecture diagram|mermaid|\buml\b)/.test(s);
+  if (wantsCode && !wantsDiagram) return 'CODE';
+  if (wantsDiagram && !wantsCode) return 'DIAGRAM';
+  return 'ANSWER';
+}
+
+function resolveAnswerMode(forcedMode, q) {
+  if (forcedMode && forcedMode !== 'AUTO') return forcedMode;
+  return classifyQuestionLocal(q);
+}
+
+// Record a completed, user-visible turn. Strips the <sticky> presenter block
+// (redundant with the diagram + explanation) to save context budget.
+function recordTurn(user, assistant, mode, images) {
+  const a = String(assistant || '').replace(/<sticky>[\s\S]*?<\/sticky>/gi, '').trim();
+  const u = String(user || '').trim();
+  if (!a) return;
+  convoHistory.push({ user: u, assistant: a, mode: mode || 'ANSWER' });
+
+  // Persist into the current saved session (creating one if none is active).
+  let s = currentSession();
+  if (!s) {
+    s = { id: genSessionId(), name: '', createdAt: Date.now(), updatedAt: Date.now(), turns: [] };
+    sessions.push(s);
+    currentSessionId = s.id;
   }
+  const imgs = Array.isArray(images) ? images.map(i => ({ base64: i.base64, mime: i.mime || 'image/png' })) : [];
+  s.turns.push({ ts: Date.now(), q: u, a, mode: mode || 'ANSWER', images: imgs });
+  if (!s.name) {
+    const d = new Date(s.createdAt || Date.now());
+    const p = (n) => String(n).padStart(2, '0');
+    const stamp = `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    s.name = `${stamp} · ${(u || '[image question]').slice(0, 40)}`;
+  }
+  s.updatedAt = Date.now();
+  saveSessions();
+}
+
+// Prior turns as chat messages (user/assistant pairs), newest kept, oldest
+// pairs dropped once the char budget is exceeded.
+function conversationContextMessages(budget) {
+  const cap = budget || CONVO_CHAR_BUDGET;
+  const msgs = [];
+  let total = 0;
+  for (let i = convoHistory.length - 1; i >= 0; i--) {
+    const t = convoHistory[i];
+    const len = (t.user || '').length + (t.assistant || '').length;
+    if (total + len > cap && msgs.length) break;
+    msgs.unshift({ role: 'assistant', content: t.assistant });
+    msgs.unshift({ role: 'user', content: t.user || '[image/screenshot question]' });
+    total += len;
+  }
+  return msgs;
+}
+
+// ── Saved sessions ────────────────────────────────────────────────────────────
+// Persisted to userData/sessions.json. Each session keeps its full turn list
+// (question, answer, mode, screenshots) so the user can continue it later and
+// see it rendered live, with the conversation re-grounding follow-up answers.
+const SESSIONS_FILE = path.join(app.getPath('userData'), 'sessions.json');
+let sessions = [];
+let currentSessionId = null;
+let _sessionsSaveQueue = Promise.resolve();
+
+function loadSessions() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    sessions = Array.isArray(raw && raw.sessions) ? raw.sessions : [];
+  } catch { sessions = []; }
+}
+function saveSessions() {
+  _sessionsSaveQueue = _sessionsSaveQueue.then(() =>
+    fs.promises.writeFile(SESSIONS_FILE, JSON.stringify({ sessions }), 'utf8').catch(() => {}));
+  return _sessionsSaveQueue;
+}
+function currentSession() { return sessions.find(s => s.id === currentSessionId) || null; }
+function genSessionId() { return 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+loadSessions();
+
+// Profile (name/location) of the active session — folded into the answer context.
+let activeProfile = {};
+const KB_KIND_LIST = ['cv', 'jd', 'support', 'meetings'];
+// Deep snapshot of the current knowledge base so a session keeps its own copy.
+function snapshotKnowledge() {
+  const k = state.knowledge || {};
+  const out = {};
+  for (const kind of KB_KIND_LIST) out[kind] = (k[kind] || []).map(i => ({ name: i.name, text: i.text, chars: i.chars }));
+  return out;
+}
+// Just the file names per kind, for the continue-session preview.
+function knowledgeMeta(k) {
+  k = k || {};
+  const out = {};
+  for (const kind of KB_KIND_LIST) out[kind] = (k[kind] || []).map(i => i.name);
+  return out;
+}
+// Per-kind items with sizes, for editable chips on the continue page.
+function knowledgeItems(k) {
+  k = k || {};
+  const out = {};
+  for (const kind of KB_KIND_LIST) out[kind] = (k[kind] || []).map(i => ({ name: i.name, chars: i.chars || (i.text ? i.text.length : 0) }));
+  return out;
+}
+
+// Lightweight list for the picker (no turn bodies/images/knowledge text).
+ipcMain.handle('session-list', () =>
+  sessions
+    .map(s => ({ id: s.id, name: s.name || '(untitled)', createdAt: s.createdAt, updatedAt: s.updatedAt, turnCount: (s.turns || []).length, profile: s.profile || {} }))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+);
+// Preview metadata for one session — no side effects (doesn't switch current).
+ipcMain.handle('session-meta', (_e, id) => {
+  const s = sessions.find(x => x.id === id);
+  if (!s) return null;
+  return {
+    id: s.id, name: s.name, turnCount: (s.turns || []).length,
+    createdAt: s.createdAt, updatedAt: s.updatedAt,
+    profile: s.profile || {}, knowledgeMeta: knowledgeMeta(s.knowledge),
+  };
+});
+ipcMain.handle('session-new', (_e, meta) => {
+  const p = (meta && meta.profile) || {};
+  const s = {
+    id: genSessionId(), name: '', createdAt: Date.now(), updatedAt: Date.now(), turns: [],
+    profile: { name: p.name || '', city: p.city || '', country: p.country || '', timezone: p.timezone || '' },
+    knowledge: snapshotKnowledge(), // freeze the materials attached for this session
+  };
+  sessions.push(s);
+  currentSessionId = s.id;
+  convoHistory = [];
+  activeProfile = s.profile;
+  state.profile = { ...s.profile }; // remember as the default for next time
+  saveState();
+  saveSessions();
+  schedulePromptCacheWarm();
+  return s.id;
+});
+// Remembered personal profile, pre-filled into the New-session form.
+ipcMain.handle('get-default-profile', () => ({ ...(state.profile || {}) }));
+
+// ── Named profiles (switchable presets for the New-session form) ──────────────
+function genProfileId() { return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+function cleanProfile(p) {
+  p = p || {};
+  return { name: String(p.name || '').trim(), city: String(p.city || '').trim(), country: String(p.country || '').trim(), timezone: String(p.timezone || '').trim() };
+}
+ipcMain.handle('profiles-list', () => ({
+  profiles: (state.profiles || []).map(p => ({ ...p })),
+  activeProfileId: state.activeProfileId || null,
+}));
+ipcMain.handle('profile-save-new', (_e, { label, profile } = {}) => {
+  const id = genProfileId();
+  const entry = { id, label: String(label || '').trim() || 'Profile', ...cleanProfile(profile) };
+  if (!Array.isArray(state.profiles)) state.profiles = [];
+  state.profiles.push(entry);
+  state.activeProfileId = id;
+  saveState();
+  return id;
+});
+ipcMain.handle('profile-update', (_e, { id, label, profile } = {}) => {
+  const p = (state.profiles || []).find(x => x.id === id);
+  if (!p) return false;
+  if (label != null) p.label = String(label).trim() || p.label;
+  Object.assign(p, cleanProfile(profile));
+  saveState();
+  return true;
+});
+ipcMain.handle('profile-delete', (_e, id) => {
+  state.profiles = (state.profiles || []).filter(p => p.id !== id);
+  if (state.activeProfileId === id) state.activeProfileId = (state.profiles[0] && state.profiles[0].id) || null;
+  saveState();
+  return true;
+});
+ipcMain.handle('profile-set-active', (_e, id) => {
+  if ((state.profiles || []).some(p => p.id === id)) { state.activeProfileId = id; saveState(); return true; }
+  return false;
+});
+// Update the active/continued session's profile (from the continue page edits).
+ipcMain.handle('session-update-profile', (_e, { id, profile } = {}) => {
+  const s = sessions.find(x => x.id === id) || currentSession();
+  if (!s) return false;
+  s.profile = {
+    name: (profile && profile.name) || '', city: (profile && profile.city) || '',
+    country: (profile && profile.country) || '', timezone: (profile && profile.timezone) || '',
+  };
+  s.updatedAt = Date.now();
+  if (s.id === currentSessionId) activeProfile = s.profile;
+  state.profile = { ...s.profile }; // remember as the default for next time
+  saveState();
+  saveSessions();
+  return true;
+});
+ipcMain.handle('session-load', (_e, id) => {
+  const s = sessions.find(x => x.id === id);
+  if (!s) return null;
+  currentSessionId = id;
+  // Rebuild grounding context from the saved turns.
+  convoHistory = (s.turns || []).map(t => ({ user: t.q || '', assistant: t.a || '', mode: t.mode || 'ANSWER' }));
+  // Restore the session's own materials + profile (in-memory; global save untouched).
+  if (s.knowledge) state.knowledge = JSON.parse(JSON.stringify(s.knowledge));
+  activeProfile = s.profile || {};
+  schedulePromptCacheWarm();
+  return { id: s.id, name: s.name, turns: s.turns || [], profile: s.profile || {}, knowledgeMeta: knowledgeMeta(s.knowledge) };
+});
+ipcMain.handle('session-delete', (_e, id) => {
+  sessions = sessions.filter(s => s.id !== id);
+  if (currentSessionId === id) { currentSessionId = null; convoHistory = []; }
+  saveSessions();
+  return true;
+});
+
+// ── Per-session knowledge editing (continue page upload zones) ────────────────
+ipcMain.handle('session-kb-get', (_e, id) => {
+  const s = sessions.find(x => x.id === id);
+  return s ? knowledgeItems(s.knowledge) : null;
+});
+ipcMain.handle('session-kb-add', async (_e, { id, kind, name, data } = {}) => {
+  if (!KB_KIND_LIST.includes(kind)) return { ok: false, error: 'bad kind' };
+  const s = sessions.find(x => x.id === id);
+  if (!s) return { ok: false, error: 'no session' };
+  let text = '';
+  try { text = await extractDocText(data, name); }
+  catch (e) { return { ok: false, error: 'Could not read ' + name + ' (' + e.message + ')', name }; }
+  if (!s.knowledge) s.knowledge = {};
+  if (!s.knowledge[kind]) s.knowledge[kind] = [];
+  const item = { name, text, chars: text.length };
+  // CV and JD are single-document; support/meetings accumulate.
+  if (kind === 'cv' || kind === 'jd') s.knowledge[kind] = [item];
+  else s.knowledge[kind].push(item);
+  if (s.id === currentSessionId) state.knowledge = JSON.parse(JSON.stringify(s.knowledge));
+  s.updatedAt = Date.now();
+  saveSessions();
+  return { ok: true, name, chars: text.length };
+});
+ipcMain.handle('session-kb-remove', (_e, { id, kind, index } = {}) => {
+  const s = sessions.find(x => x.id === id);
+  if (!s || !s.knowledge || !s.knowledge[kind]) return { ok: false };
+  s.knowledge[kind].splice(index, 1);
+  if (s.id === currentSessionId) state.knowledge = JSON.parse(JSON.stringify(s.knowledge));
+  s.updatedAt = Date.now();
+  saveSessions();
+  return { ok: true };
+});
+
+const KB_KINDS = ['cv', 'jd', 'support', 'meetings'];
+
+// Extract plain text from an uploaded document buffer (any common format).
+async function extractDocText(arrayBuffer, name) {
+  const ext = String(name || '').split('.').pop().toLowerCase();
+  const buf = Buffer.from(arrayBuffer);
+  const textExts = ['txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'log', 'xml', 'yaml', 'yml', 'rtf'];
+  if (textExts.includes(ext)) return buf.toString('utf8');
+  if (ext === 'html' || ext === 'htm') {
+    return buf.toString('utf8')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  const officeExts = ['pdf', 'docx', 'pptx', 'xlsx', 'odt', 'odp', 'ods', 'doc', 'ppt', 'xls'];
+  if (officeExts.includes(ext)) {
+    if (!officeParser) throw new Error('Document parser unavailable');
+    return String(await officeParser.parseOfficeAsync(buf)).trim();
+  }
+  // Unknown extension — best effort as UTF-8 text.
+  return buf.toString('utf8');
+}
+
+function clipText(s, n) {
+  s = String(s || '');
+  if (s.length <= n) return s;
+  return s.slice(0, n) + '\n[truncated]';
+}
+
+// Spoken answers need a small prompt so the first token isn't 2–3s of prefill.
+// CODE/DIAGRAM keep more material.
+function buildKnowledgeContext(mode) {
+  const compact = !mode || mode === 'ANSWER';
+  const k = state.knowledge || {};
+  const join = (arr) => (arr || []).map((i) => i.text).filter(Boolean).join('\n\n');
+  const p = activeProfile || {};
+  const loc = [p.city, p.country].filter(Boolean).join(', ');
+  const profileParts = [];
+  if (p.name) profileParts.push(`Name: ${p.name}`);
+  if (loc) profileParts.push(`Location: ${loc}`);
+  // Timezone only — a live clock here would bust prompt-cache on every minute.
+  if (p.timezone) profileParts.push(`Timezone: ${p.timezone}`);
+  const sections = [
+    ['CANDIDATE PROFILE', profileParts.join('\n')],
+    ['CANDIDATE RESUME / CV', clipText(join(k.cv), compact ? 5000 : 16000)],
+    ['JOB DESCRIPTION', clipText(join(k.jd), compact ? 2200 : 12000)],
+    ['SUPPORTING MATERIAL', clipText(join(k.support), compact ? 1200 : 12000)],
+    ['PREVIOUS MEETING RECORDS', clipText(join(k.meetings), compact ? 0 : 8000)],
+  ];
+  return sections
+    .filter(([, body]) => body)
+    .map(([title, body]) => `${title}:\n${body}`)
+    .join('\n\n----\n\n');
+}
+
+ipcMain.handle('kb-add', async (_e, { kind, name, data }) => {
+  if (!KB_KINDS.includes(kind)) return { ok: false, error: 'bad kind' };
+  let text = '';
+  try {
+    text = await extractDocText(data, name);
+  } catch (e) {
+    appendLogLine(`[kb] extract failed for ${name}: ${e.message}`);
+    return { ok: false, error: 'Could not read ' + name + ' (' + e.message + ')', name };
+  }
+  if (!state.knowledge[kind]) state.knowledge[kind] = [];
+  const item = { name, text, chars: text.length };
+  // CV and JD are single-document; support/meetings accumulate.
+  if (kind === 'cv' || kind === 'jd') state.knowledge[kind] = [item];
+  else state.knowledge[kind].push(item);
+  saveState();
+  schedulePromptCacheWarm();
+  return { ok: true, name, chars: text.length };
+});
+
+ipcMain.handle('kb-remove', (_e, { kind, index }) => {
+  if (state.knowledge[kind]) state.knowledge[kind].splice(index, 1);
+  saveState();
+  schedulePromptCacheWarm();
+  return { ok: true };
+});
+
+// Empty the global knowledge base — used when starting a New session so its
+// upload zones start fresh (materials don't carry over from a prior session).
+ipcMain.handle('kb-clear', () => {
+  state.knowledge = { cv: [], jd: [], support: [], meetings: [] };
+  saveState();
+  schedulePromptCacheWarm();
+  return { ok: true };
+});
+
+ipcMain.handle('kb-get', () => {
+  const out = {};
+  for (const k of KB_KINDS) {
+    out[k] = (state.knowledge[k] || []).map((i) => ({ name: i.name, chars: i.chars || (i.text ? i.text.length : 0) }));
+  }
+  return out;
+});
+
+function getAnswerProvider() {
+  return getProvider(state.answer && state.answer.provider);
+}
+
+function getAnswerApiKey(providerId) {
+  const id = providerId || getAnswerProvider().id;
+  const keys = (state.answer && state.answer.keys) || {};
+  const fromKeys = String(keys[id] || '').trim();
+  if (fromKeys) return fromKeys;
+  if (id === 'xai') {
+    return String((state.answer && state.answer.apiKey) || '').trim()
+      || String((state.transcription && state.transcription.xaiApiKey) || '').trim();
+  }
+  return '';
+}
+
+function getAnswerModel(providerId) {
+  const id = providerId || getAnswerProvider().id;
+  const currentProvider = (state.answer && state.answer.provider) || 'xai';
+  if (id === currentProvider && state.answer && state.answer.model) {
+    return state.answer.model;
+  }
+  const models = (state.answer && state.answer.models) || {};
+  if (models[id]) return models[id];
+  return getProvider(id).defaultModel;
+}
+
+function publicAnswerConfig() {
+  const provider = getAnswerProvider();
+  const keys = { ...DEFAULT_STATE.answer.keys, ...((state.answer && state.answer.keys) || {}) };
+  const models = { ...DEFAULT_STATE.answer.models, ...((state.answer && state.answer.models) || {}) };
+  return {
+    provider: provider.id,
+    model: getAnswerModel(provider.id),
+    activePromptId: (state.answer && state.answer.activePromptId) || null,
+    apiKey: keys.xai || ((state.answer && state.answer.apiKey) || ''),
+    keys,
+    models,
+    providers: providerList(),
+    fallbackModels: provider.fallbackModels.slice(),
+    railAbbr: modelAbbr(provider.id, getAnswerModel(provider.id)),
+  };
+}
+
+function applyAnswerConfig(cfg) {
+  if (!cfg || typeof cfg !== 'object') return publicAnswerConfig();
+  const prev = state.answer || { ...DEFAULT_STATE.answer };
+  const next = { ...prev };
+  if (cfg.keys && typeof cfg.keys === 'object') {
+    next.keys = { ...(prev.keys || {}), ...cfg.keys };
+  }
+  if (cfg.models && typeof cfg.models === 'object') {
+    next.models = { ...(prev.models || {}), ...cfg.models };
+  }
+  if (cfg.apiKey !== undefined) {
+    next.apiKey = String(cfg.apiKey || '');
+    next.keys = { ...(next.keys || {}), xai: next.apiKey };
+  }
+  if (next.keys && next.keys.xai !== undefined) next.apiKey = next.keys.xai;
+  if (cfg.activePromptId !== undefined) next.activePromptId = cfg.activePromptId;
+
+  const nextProvider = (cfg.provider && PROVIDERS[cfg.provider]) ? cfg.provider : (next.provider || 'xai');
+  if (nextProvider !== (prev.provider || 'xai')) {
+    const oldId = prev.provider || 'xai';
+    next.models = { ...(next.models || {}), [oldId]: prev.model || getAnswerModel(oldId) };
+    next.provider = nextProvider;
+    next.model = (next.models && next.models[nextProvider]) || getProvider(nextProvider).defaultModel;
+    next.models[nextProvider] = next.model;
+  } else {
+    next.provider = nextProvider;
+  }
+
+  if (cfg.model) {
+    next.model = cfg.model;
+    next.models = { ...(next.models || {}), [next.provider]: cfg.model };
+  }
+
+  state.answer = next;
+  saveState();
+  schedulePromptCacheWarm();
+  return publicAnswerConfig();
+}
+
+function activePromptText() {
+  const id = state.answer && state.answer.activePromptId;
+  const p = (state.prompts || []).find((q) => q.id === id);
+  return p ? p.text : '';
+}
+
+function assembleStaticSystem(mode) {
+  const sys = activePromptText();
+  const staticParts = [];
+  const kb = buildKnowledgeContext(mode);
+  if (kb) {
+    staticParts.push('REFERENCE MATERIAL (facts only — do NOT copy its tone, phrasing, or style into your answer):\n\n' + kb);
+  }
+
+  if (sys && mode === 'ANSWER') {
+    staticParts.push(`PRIMARY DIRECTIVE — this overrides all previous instructions for style, tone, persona, and format. Follow it exactly and completely:\n\n${sys}`);
+  } else if (sys) {
+    staticParts.push(`PERSONA & CONTENT GUIDANCE — apply this only to WORDING and technical choices. It must NOT change the required output format below, and must NOT make you introduce yourself or describe your experience when a diagram or code is requested:\n\n${sys}`);
+  }
+
+  if (mode !== 'ANSWER') {
+    staticParts.push('When the user asks for a diagram, chart, flowchart, sequence diagram, or any visual structure, output it as a Mermaid code block (```mermaid ... ```) so it can be rendered graphically. Rules for valid Mermaid: (1) No HTML tags inside node labels — plain text only. (2) Use only rectangle brackets [text] for node shapes — do NOT use [/text] or [/text/] trapezoid syntax. (3) No "color:" in style directives. (4) Keep node IDs simple alphanumeric. (5) Do NOT use ASCII art. (6) READABILITY FIRST: keep each diagram graspable at a glance — aim for at most ~12-15 nodes. If the system is complex, do NOT cram everything into one diagram. Instead output a high-level OVERVIEW diagram first (major components only), then one or more SEPARATE ```mermaid blocks that each zoom into a single subsystem. (7) Group related nodes with subgraphs, and choose a direction that reads well (graph LR for wide pipelines, graph TD for hierarchies). (8) NEVER reuse one identifier for both a subgraph and a node — every subgraph id must be unique and distinct from all node ids (reusing an id causes a render cycle error).');
+    staticParts.push('Whenever your answer contains a diagram (Mermaid block) or a code block, append a presenter talking-script at the very end of your response using exactly this format:\n<sticky>\nOVERVIEW\n[One sentence: what this diagram/code shows and why it matters.]\n\nWALKTHROUGH\n[Narrate each major step, node, or code section as if explaining to someone who cannot see the screen. Write in full sentences. Cover every significant part. Aim for 60-90 seconds of speaking.]\n\nKEY INSIGHT\n[One sentence: the single most important takeaway or design decision.]\n</sticky>\nUse plain text only inside the sticky tags — no markdown, no asterisks, no bullet points.');
+  }
+
+  const avoidRaw = (state.avoidPhrases || '').trim();
+  if (avoidRaw) {
+    const list = avoidRaw.split('\n').map(l => l.trim()).filter(Boolean);
+    if (list.length) {
+      staticParts.push(`BANNED PHRASES: never output these or close paraphrases of them:\n${list.map(p => `- "${p}"`).join('\n')}`);
+    }
+  }
+
+  if (mode === 'ANSWER') {
+    staticParts.push('SPOKEN OUTPUT: Talk like a native American engineer in a real standup or 1:1. Short sentences. Contractions. Start naturally with So or Yeah so when it fits. Never output an em dash, en dash, or --. Use a new sentence, a comma, or the words so / and / which instead. No resume voice. No blog voice. Only paragraphs someone can say out loud.');
+  }
+
+  if (mode === 'DIAGRAM') {
+    staticParts.push('OUTPUT FORMAT — DIAGRAM MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above, INCLUDING the persona/content guidance. Draw a diagram of the system described in the USER MESSAGE below. Your VERY FIRST characters must be ```mermaid — no introduction, no greeting, no self-description, no "Sure!", no "Here is...", no preamble whatsoever. Do NOT introduce yourself or talk about your experience. Start the mermaid block immediately. Keep it readable at a glance: for a complex system, output a high-level overview diagram first, then separate ```mermaid blocks that drill into individual subsystems, rather than one dense diagram. After the closing ``` of EACH diagram, write a thorough explanation of THAT diagram in prose: (a) what every major component/node does, (b) why it is necessary — the specific role it plays and what would break without it, (c) how the parts connect (the data and control flow between them). Then, after the final diagram, add a "Workflow" section that walks through the end-to-end flow step by step, and a "Why this solves the problem" section that explicitly maps the design back to the original requirements — which requirement each major part satisfies and the key trade-offs. Be substantive and concrete; do not pad with filler.');
+  } else if (mode === 'CODE') {
+    staticParts.push('OUTPUT FORMAT — LIVE CODING MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above, INCLUDING the persona/content guidance. Write code that solves the USER MESSAGE below. Your VERY FIRST characters must be ``` opening a code block — no introduction, no greeting, no self-description, no "Sure!", no "Here is...", no preamble of any kind. Do NOT introduce yourself or talk about your experience. Write clean, complete, runnable code with NO comments or docstrings of any kind — no inline comments, no block comments, no triple-quoted docstrings; output only executable code. After the closing ``` you may add a brief explanation only.');
+  }
+
+  return staticParts.join('\n\n');
+}
+
+function buildAnswerMessages(q, imgs, mode) {
+  const messages = [];
+  const staticText = assembleStaticSystem(mode);
+  if (staticText) messages.push({ role: 'system', content: staticText });
+  const convoBudget = mode === 'ANSWER' ? 2000 : CONVO_CHAR_BUDGET;
+  for (const m of conversationContextMessages(convoBudget)) messages.push(m);
+
+  if (imgs) {
+    const userContent = [];
+    if (q) userContent.push({ type: 'text', text: q });
+    imgs.forEach(({ base64, mime }) => {
+      userContent.push({ type: 'image_url', image_url: { url: `data:${mime || 'image/png'};base64,${base64}` } });
+    });
+    messages.push({ role: 'user', content: userContent });
+  } else {
+    messages.push({ role: 'user', content: q });
+  }
+  return messages;
+}
+
+function spokenSanitize(text, mode) {
+  let s = String(text || '');
+  if (!s) return s;
+  const spoken = !mode || mode === 'ANSWER';
+  s = s.replace(/\u2014|\u2013|\u2015|\u2212/g, spoken ? ', ' : '-');
+  if (spoken) {
+    s = s.replace(/\s*--+\s*/g, ', ');
+    s = s.replace(/\s+,/g, ',');
+    s = s.replace(/,(?=\S)/g, ', ');
+    s = s.replace(/[ \t]{2,}/g, ' ');
+  }
+  return s;
+}
+
+async function generateAnswer(question, images, forcedMode) {
+  // images: array of { base64, mime } or null/undefined
+  // forcedMode: 'AUTO'|'CODE'|'DIAGRAM'|'ANSWER' — from the manual mode selector
+  const imgs = Array.isArray(images) && images.length ? images : null;
+  const q = String(question || '').trim();
+  if (!q && !imgs) return;
+  const provider = getAnswerProvider();
+  const apiKey = getAnswerApiKey(provider.id);
+  if (!apiKey) {
+    if (win && !win.isDestroyed()) win.webContents.send('answer-error', `No ${provider.label} API key set (Settings → API keys → Answer generation).`);
+    return;
+  }
+  abortPromptCacheWarm();
+  if (answerAbort) { try { answerAbort.abort(); } catch {} answerAbort = null; }
+  const ac = new AbortController();
+  answerAbort = ac;
+
+  const model = getAnswerModel(provider.id);
+  const mode = resolveAnswerMode(forcedMode, q);
+
+  const displayQ = q || (imgs ? `[${imgs.length} image${imgs.length > 1 ? 's' : ''}]` : '');
+  // Show the bubble before we build/send the prompt so Send never looks idle.
+  if (win && !win.isDestroyed()) win.webContents.send('answer-start', { question: displayQ, hasImage: !!imgs, mode });
+
+  const messages = buildAnswerMessages(q, imgs, mode);
+  const sys = activePromptText();
+  const promptChars = messages.reduce((n, m) => n + (typeof m.content === 'string' ? m.content.length : 0), 0);
+  appendLogLine(`[answer] provider=${provider.id} model=${model} mode=${mode} forced=${forcedMode || '-'} sysLen=${sys.length} promptChars=${promptChars} q="${q.slice(0, 80)}" sysMsgs=${messages.filter(m => m.role === 'system').length}`);
+
+  let full = '';
+  const t0 = Date.now();
+  let firstToken = true;
+  try {
+    await streamChat({
+      provider,
+      apiKey,
+      model,
+      messages,
+      signal: ac.signal,
+      convId: answerConvId(),
+      maxTokens: maxTokensForMode(mode),
+      onDelta: (delta) => {
+        const piece = spokenSanitize(delta, mode);
+        if (!piece) return;
+        if (firstToken) {
+          firstToken = false;
+          appendLogLine(`[answer] first-token ${Date.now() - t0}ms provider=${provider.id} model=${model}`);
+        }
+        full += piece;
+        if (win && !win.isDestroyed()) win.webContents.send('answer-chunk', piece);
+      },
+    });
+  } catch (e) {
+    if (e.name !== 'AbortError' && win && !win.isDestroyed()) {
+      if (e.status) {
+        appendLogLine(`[${provider.id}] ${e.status}: ${(e.body || e.message || '').slice(0, 200)}`);
+        win.webContents.send('answer-error', friendlyAnswerError(provider, e.status, e.body));
+      } else {
+        win.webContents.send('answer-error', `${provider.label} request failed: ` + e.message);
+      }
+    }
+    answerAbort = null;
+    return;
+  }
+  answerAbort = null;
+  if (full.trim()) {
+    sessionLog.push({ ts: Date.now(), kind: 'question', text: q || `[${(imgs && imgs.length) || 0} image${imgs && imgs.length > 1 ? 's' : ''}]` });
+    sessionLog.push({ ts: Date.now(), kind: 'answer', text: full.trim() });
+    recordTurn(q, full, mode, imgs);
+  }
+  if (win && !win.isDestroyed()) win.webContents.send('answer-done', { text: full });
+}
+
+ipcMain.handle('generate-answer', (_e, { question, images, forcedMode } = {}) => {
+  generateAnswer(question, images, forcedMode);
+});
+
+// ── Warm-up: pre-establish TLS to the active provider so the first real
+// request skips the ~300-600 ms handshake cost.
+async function warmApiConnection() {
+  const provider = getAnswerProvider();
+  const apiKey = getAnswerApiKey(provider.id);
+  if (!apiKey || !provider.warmUrl) return;
+  try {
+    const ac = new AbortController();
+    setTimeout(() => { try { ac.abort(); } catch {} }, 4000);
+    const headers = { };
+    if (provider.style === 'anthropic') {
+      headers['x-api-key'] = apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+    } else {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+    await fetch(provider.warmUrl, { headers, signal: ac.signal });
+  } catch {}
+  prefetchModelList(provider);
+}
+let warmLoopTimer = null;
+function startWarmLoop() {
+  warmApiConnection().catch(() => {});
+  schedulePromptCacheWarm();
+  if (warmLoopTimer) return;
+  warmLoopTimer = setInterval(() => warmApiConnection().catch(() => {}), 20000);
+}
+ipcMain.handle('warm-api-connection', () => warmApiConnection());
+
+// Write the static system prefix into the provider's prompt cache so the next
+// real question only prefills the user turn (hundreds of ms, not 2–3s).
+let _warmCacheTimer = null;
+let _warmCacheKey = '';
+let promptCacheWarmAbort = null;
+function schedulePromptCacheWarm() {
+  if (_warmCacheTimer) clearTimeout(_warmCacheTimer);
+  _warmCacheTimer = setTimeout(() => { _warmCacheTimer = null; warmPromptCache().catch(() => {}); }, 250);
+}
+function abortPromptCacheWarm() {
+  if (promptCacheWarmAbort) { try { promptCacheWarmAbort.abort(); } catch {} promptCacheWarmAbort = null; }
+}
+async function warmPromptCache() {
+  if (answerAbort || speculativeCommitted) return;
+  const provider = getAnswerProvider();
+  const apiKey = getAnswerApiKey(provider.id);
+  if (!apiKey) return;
+  const sys = assembleStaticSystem('ANSWER');
+  if (!sys) return;
+  const key = [provider.id, getAnswerModel(provider.id), answerConvId(), sys.length, sys.slice(0, 48), sys.slice(-48)].join('|');
+  if (key === _warmCacheKey) return;
+  abortPromptCacheWarm();
+  const ac = new AbortController();
+  promptCacheWarmAbort = ac;
+  setTimeout(() => { try { ac.abort(); } catch {} }, 8000);
+  try {
+    await completeChat({
+      provider,
+      apiKey,
+      model: getAnswerModel(provider.id),
+      messages: [
+        { role: 'system', content: sys },
+        { role: 'user', content: 'Ready.' },
+      ],
+      maxTokens: 1,
+      convId: answerConvId(),
+      signal: ac.signal,
+    });
+    if (promptCacheWarmAbort === ac) {
+      _warmCacheKey = key;
+      promptCacheWarmAbort = null;
+      appendLogLine(`[answer] prompt-cache warmed provider=${provider.id} sysLen=${sys.length}`);
+    }
+  } catch {
+    if (promptCacheWarmAbort === ac) promptCacheWarmAbort = null;
+  }
+}
+
+// ── Speculative answer: start streaming before the user hits send.
+// Shares the same message-building logic as generateAnswer but is abortable.
+async function startSpeculative(question, forcedMode) {
+  // Never kill a live, user-visible stream to prefetch the next question.
+  if (speculativeCommitted || answerAbort) return;
+  if (speculativeAbort) { try { speculativeAbort.abort(); } catch {} speculativeAbort = null; }
+  speculativeActive = false;
+  const q = (question || '').trim();
+  if (!q) return;
+  const provider = getAnswerProvider();
+  const apiKey = getAnswerApiKey(provider.id);
+  if (!apiKey) return;
+
+  abortPromptCacheWarm();
+  speculativeQuestion = q;
+  speculativeActive = true;
+  const ac = new AbortController();
+  speculativeAbort = ac;
+  ac._buffer = '';
+  ac._flushed = false;
+
+  const model = getAnswerModel(provider.id);
+
+  const specMode = resolveAnswerMode(forcedMode, q);
+  ac._mode = specMode; // stash so commitSpeculative can read it
+
+  const messages = buildAnswerMessages(q, null, specMode);
+  // Do NOT send answer-start yet — we buffer silently and only show the UI
+  // when the user actually commits (or the text matches on submit).
+
+  let speculativeBuffer = '';
+  try {
+    await streamChat({
+      provider,
+      apiKey,
+      model,
+      messages,
+      signal: ac.signal,
+      convId: answerConvId(),
+      maxTokens: maxTokensForMode(specMode),
+      onDelta: (delta) => {
+        const piece = spokenSanitize(delta, specMode);
+        if (!piece) return;
+        speculativeBuffer += piece;
+        ac._buffer = speculativeBuffer;
+        if (speculativeCommitted && ac._flushed && win && !win.isDestroyed()) {
+          win.webContents.send('answer-chunk', piece);
+        }
+      },
+    });
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      if (speculativeCommitted && win && !win.isDestroyed()) {
+        win.webContents.send('answer-done', { text: speculativeBuffer });
+      }
+      speculativeCommitted = false;
+      return;
+    }
+    speculativeCommitted = false; speculativeActive = false; speculativeAbort = null;
+    return;
+  }
+
+  // Stream finished
+  if (speculativeCommitted) {
+    // We were already piping — send done signal
+    speculativeAbort = null;
+    speculativeCommitted = false;
+    speculativeActive = false;
+    speculativeQuestion = null;
+    if (speculativeBuffer.trim()) {
+      if (q) sessionLog.push({ ts: Date.now(), kind: 'question', text: q });
+      sessionLog.push({ ts: Date.now(), kind: 'answer', text: speculativeBuffer.trim() });
+      recordTurn(q, speculativeBuffer, specMode);
+    }
+    if (win && !win.isDestroyed()) win.webContents.send('answer-done', { text: speculativeBuffer });
+  } else {
+    // Stream finished BEFORE the user committed. Stash the full buffer on `ac`
+    // and KEEP speculativeAbort pointing at it so commitSpeculative can read
+    // ac._buffer / ac._mode / ac._done. (Previously speculativeAbort was nulled
+    // unconditionally above, making the buffered answer and its mode unreachable
+    // on commit — the renderer then got an empty answer with mode reset to
+    // ANSWER, so follow-up questions appeared unanswered / stuck on the old
+    // diagram's presenter sticky.)
+    ac._buffer = speculativeBuffer;
+    ac._done = true;
+  }
+}
+
+function normQuestion(s) {
+  return String(s || '').replace(/\s+/g, ' ').replace(/[.?!\s]+$/g, '').trim().toLowerCase();
+}
+
+function commitSpeculative(question, images, forcedMode) {
+  const q = (question || '').trim();
+  const hasImages = Array.isArray(images) && images.length > 0;
+
+  // Only adopt a live or finished stream. If speculation failed (abort
+  // cleared, not active), fall through and start a real request.
+  if (!hasImages && speculativeQuestion && normQuestion(speculativeQuestion) === normQuestion(q) && (speculativeAbort || speculativeActive)) {
+    const ac = speculativeAbort; // null if stream already finished naturally
+    const streamDone = (ac && ac._done) || !ac;
+
+    if (win && !win.isDestroyed()) {
+      const specModeCommit = (ac && ac._mode) || 'ANSWER';
+      if (!streamDone) speculativeCommitted = true;
+      win.webContents.send('answer-start', { question: q, hasImage: false, mode: specModeCommit });
+      const buffered = (ac && ac._buffer) || '';
+      const clean = buffered ? spokenSanitize(buffered, specModeCommit) : '';
+      if (clean) win.webContents.send('answer-chunk', clean);
+      if (ac) ac._flushed = true;
+      if (streamDone) {
+        // Stream already finished — flush everything and close
+        win.webContents.send('answer-done', { text: clean });
+        if (clean.trim()) {
+          if (q) sessionLog.push({ ts: Date.now(), kind: 'question', text: q });
+          sessionLog.push({ ts: Date.now(), kind: 'answer', text: clean.trim() });
+          recordTurn(q, clean, specModeCommit);
+        }
+        speculativeActive = false;
+        speculativeQuestion = null;
+        speculativeAbort = null;
+        speculativeCommitted = false;
+      }
+      // else: already marked committed so further deltas pipe live
+    } else {
+      // No window — just abort cleanly
+      if (ac) { try { ac.abort(); } catch {} }
+      speculativeActive = false; speculativeQuestion = null; speculativeAbort = null; speculativeCommitted = false;
+    }
+    return;
+  }
+
+  // Text changed or has images — discard speculation, start fresh.
+  // Pass forcedMode through so the manual DIAGRAM/CODE selection is preserved.
+  if (speculativeAbort) { try { speculativeAbort.abort(); } catch {} speculativeAbort = null; }
+  speculativeActive = false;
+  speculativeQuestion = null;
+  speculativeCommitted = false;
+  generateAnswer(question, images, forcedMode);
+}
+
+ipcMain.handle('speculative-start', (_e, { question, forcedMode }) => {
+  startSpeculative(question, forcedMode);
+});
+ipcMain.handle('speculative-commit', (_e, { question, images, forcedMode } = {}) => commitSpeculative(question, images, forcedMode));
+ipcMain.handle('speculative-cancel', () => {
+  if (speculativeCommitted) return;
+  if (speculativeAbort) { try { speculativeAbort.abort(); } catch {} speculativeAbort = null; }
+  speculativeActive = false;
+  speculativeQuestion = null;
+  speculativeCommitted = false;
+});
+
+
+ipcMain.handle('stop-answer', () => {
+  if (answerAbort) { try { answerAbort.abort(); } catch {} answerAbort = null; }
+});
+// Clear the remembered answers/code/diagrams used to ground follow-ups.
+ipcMain.handle('clear-answer-memory', () => {
+  convoHistory = [];
+  const s = currentSession();
+  if (s) { s.turns = []; s.updatedAt = Date.now(); saveSessions(); }
+  return true;
+});
+async function listAnswerModels() {
+  const provider = getAnswerProvider();
+  const apiKey = getAnswerApiKey(provider.id);
+  const ids = await listModels({ provider, apiKey });
+  if (Array.isArray(ids) && ids.length) modelListCache[provider.id] = ids;
+  return ids;
+}
+ipcMain.handle('list-xai-models', () => listAnswerModels());
+ipcMain.handle('list-answer-models', () => listAnswerModels());
+ipcMain.handle('get-answer-config', () => publicAnswerConfig());
+ipcMain.handle('set-answer-config', (_e, cfg) => applyAnswerConfig(cfg));
+
+// ---- Avoid-phrases list ----
+ipcMain.handle('get-avoid-phrases', () => state.avoidPhrases || '');
+ipcMain.handle('set-avoid-phrases', (_e, text) => {
+  state.avoidPhrases = String(text || '').trim();
+  saveState();
+  return true;
 });
 
 // ---- Prompt library: saved prompt snippets, persisted in state.json ----
@@ -2056,7 +3080,15 @@ ipcMain.handle('save-prompt', (_e, prompt) => {
 });
 ipcMain.handle('delete-prompt', (_e, id) => {
   state.prompts = (state.prompts || []).filter((p) => p.id !== id);
-  saveState();
+  if (!state.prompts.length) {
+    state.promptDefaultsVersion = 0;
+    seedDefaultPromptsIfNeeded();
+  } else if (state.answer && state.answer.activePromptId === id) {
+    state.answer.activePromptId = state.prompts[0].id;
+    saveState();
+  } else {
+    saveState();
+  }
   return state.prompts.slice();
 });
 ipcMain.handle('copy-text', (_e, text) => {
@@ -2070,11 +3102,83 @@ function showPromptMenu() {
     ? [{ label: 'No saved prompts — add in Settings → Prompts', enabled: false }]
     : list.map((p) => ({
         label: p.title.length > 50 ? p.title.slice(0, 47) + '…' : p.title,
-        click: () => injectIntoChat(p.text),
+        click: () => { if (win && !win.isDestroyed()) win.webContents.send('insert-prompt-text', p.text); },
       }));
   Menu.buildFromTemplate(items).popup({ window: win });
 }
 ipcMain.handle('show-prompt-menu', () => showPromptMenu());
+
+function emitAnswerConfig() {
+  if (win && !win.isDestroyed()) win.webContents.send('answer-config-changed', publicAnswerConfig());
+}
+
+const modelListCache = Object.create(null);
+
+function cachedModelIds(provider) {
+  const current = getAnswerModel(provider.id);
+  const cached = modelListCache[provider.id];
+  let ids = (Array.isArray(cached) && cached.length) ? cached.slice() : provider.fallbackModels.slice();
+  if (current && !ids.includes(current)) ids.unshift(current);
+  return ids;
+}
+
+function prefetchModelList(provider) {
+  const p = provider || getAnswerProvider();
+  const apiKey = getAnswerApiKey(p.id);
+  if (!apiKey) return;
+  listModels({ provider: p, apiKey }).then((ids) => {
+    if (Array.isArray(ids) && ids.length) modelListCache[p.id] = ids;
+  }).catch(() => {});
+}
+
+function popupNearAnchor(menu, anchor) {
+  const opts = { window: win };
+  if (anchor && Number.isFinite(Number(anchor.x)) && Number.isFinite(Number(anchor.y))) {
+    const zoom = (win.webContents && win.webContents.getZoomFactor()) || 1;
+    const left = Number(anchor.x) * zoom;
+    const top = Number(anchor.y) * zoom;
+    const btnW = Number(anchor.width) || 26;
+    // Rail sits on the right edge; open the list immediately to the left of the button.
+    const menuW = 260;
+    opts.x = Math.max(0, Math.round(left + btnW - menuW));
+    opts.y = Math.round(top);
+  }
+  menu.popup(opts);
+}
+
+function showModelMenu(anchor) {
+  if (!win) return;
+  const provider = getAnswerProvider();
+  const current = getAnswerModel(provider.id);
+  const ids = cachedModelIds(provider);
+  prefetchModelList(provider);
+
+  const items = [
+    { label: 'Provider', enabled: false },
+    ...providerList().map((p) => ({
+      label: (p.id === provider.id ? '• ' : '  ') + p.label,
+      click: () => {
+        applyAnswerConfig({ provider: p.id });
+        emitAnswerConfig();
+        prefetchModelList(getAnswerProvider());
+      },
+    })),
+    { type: 'separator' },
+    { label: `${provider.short} models`, enabled: false },
+    ...ids.map((id) => ({
+      label: (id === current ? '• ' : '  ') + id,
+      click: () => {
+        applyAnswerConfig({ model: id });
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('model-selected', id);
+          emitAnswerConfig();
+        }
+      },
+    })),
+  ];
+  popupNearAnchor(Menu.buildFromTemplate(items), anchor);
+}
+ipcMain.handle('show-model-menu', (_e, anchor) => showModelMenu(anchor));
 
 function importPromptsList(list) {
   if (!Array.isArray(state.prompts)) state.prompts = [];
@@ -2125,16 +3229,6 @@ ipcMain.handle('prompts-import', async () => {
     return { ok: false, error: e.message };
   }
 });
-ipcMain.handle('pick-file', async (_e, kind) => {
-  const filters = kind === 'exe'
-    ? [{ name: 'Executable', extensions: ['exe'] }]
-    : kind === 'model'
-      ? [{ name: 'Whisper model', extensions: ['bin', 'gguf', 'ggml'] }, { name: 'All', extensions: ['*'] }]
-      : [{ name: 'All', extensions: ['*'] }];
-  const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters });
-  return r.canceled ? null : r.filePaths[0];
-});
-
 ipcMain.handle('get-capture-config', () => ({ ...state.capture }));
 ipcMain.handle('set-capture-config', (_e, cfg) => {
   state.capture = { ...state.capture, ...(cfg || {}) };
@@ -2170,7 +3264,7 @@ ipcMain.handle('reset-all-hotkeys', () => {
   registerHotkeys();
 });
 
-ipcMain.handle('sticky-open', () => openStickyWindow());
+ipcMain.handle('sticky-open', () => openStickyWindow(true));
 ipcMain.handle('sticky-close', () => closeStickyWindow());
 ipcMain.handle('sticky-clear', () => {
   chatHistory = [];
@@ -2191,11 +3285,227 @@ ipcMain.handle('sticky-clear', () => {
   return true;
 });
 
+ipcMain.handle('stop-ide-typing',   () => { stopIdeTyping(); });
+
+// ── Write-to-IDE ──────────────────────────────────────────────────────────────
+// Drives a persistent PowerShell stdin session from a Node.js async loop.
+// Delays live in Node.js (not PS Sleep), so we can pause/resume without
+// killing the process:  pause = stop advancing the loop;  resume = continue.
+// Focus events: our app gaining focus → auto-pause; losing focus → auto-resume.
+ipcMain.handle('write-to-ide', async (_e, { code, speedFactor, stripIndent } = {}) => {
+  const text = String(code || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (!text) return { ok: false, error: 'No code provided' };
+  const doStripIndent = stripIndent !== false; // default ON
+
+  // Cancel any still-running session
+  ideTypingCancelled = true;
+  if (ideTypingProc) { try { ideTypingProc.kill(); } catch {} ideTypingProc = null; }
+  await new Promise(r => setTimeout(r, 80));
+
+  ideTypingActive    = true;
+  ideTypingCancelled = false;
+  ideTypingPaused    = false;
+  ideFocusPaused     = false;
+
+  // Speed slider 1-5 → delay multiplier
+  const SPEED_TABLE = [2.0, 1.4, 1.0, 0.6, 0.35];
+  const sf = SPEED_TABLE[Math.max(0, Math.min(4, Math.round(Number(speedFactor) || 3) - 1))];
+
+  // Attach focus/blur listeners for this session only
+  const onWinFocus = () => { if (!ideTypingActive) return; ideFocusPaused = true;  notifyTypingState(); };
+  const onWinBlur  = () => { if (!ideTypingActive) return; if (ideFocusPaused) { ideFocusPaused = false; notifyTypingState(); } };
+  if (win) { win.on('focus', onWinFocus); win.on('blur', onWinBlur); }
+
+  // Pause automatically whenever the user moves the mouse (take-over).
+  startCursorTakeover();
+
+  // Persistent PS session — reads stdin line-by-line, executes immediately
+  const proc = spawn('powershell.exe',
+    ['-NonInteractive', '-ExecutionPolicy', 'Bypass', '-NoProfile', '-Command', '-'],
+    { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] }
+  );
+  ideTypingProc = proc;
+
+  const psWrite = (line) => new Promise(res => {
+    if (proc.killed || proc.stdin.destroyed) return res();
+    proc.stdin.write(line + '\n', () => res());
+  });
+  // Node.js delay scaled by speed factor
+  const nd = (lo, hi) => new Promise(r =>
+    setTimeout(r, Math.max(10, Math.round((lo + Math.random() * (hi - lo)) * sf)))
+  );
+  // Spin while paused (manual or focus-based), 80 ms poll
+  const waitPause = async () => {
+    while ((ideTypingPaused || ideFocusPaused || ideUserPaused) && !ideTypingCancelled)
+      await new Promise(r => setTimeout(r, 80));
+  };
+
+  // Init WScript.Shell and wait for sentinel so first SendKeys fires only after init
+  await psWrite('Add-Type -AssemblyName System.Windows.Forms; $wsh = New-Object -ComObject WScript.Shell; Write-Host "ACE_READY"');
+  await new Promise(resolve => {
+    const onData = d => { if (String(d).includes('ACE_READY')) { proc.stdout.off('data', onData); resolve(); } };
+    proc.stdout.on('data', onData);
+    setTimeout(resolve, 2000); // fallback
+  });
+
+  // ── Key helpers ───────────────────────────────────────────────────────────
+  const SENDKEY_MAP = {
+    '\n':'{ENTER}','{':'{{}'  ,'}':'{}}'  ,
+    '+':'{+}'     ,'^':'{^}'  ,'%':'{%}'  ,'~':'{~}',
+    '(': '{(}', ')': '{)}',
+  };
+  const toToken = ch => SENDKEY_MAP[ch] || ch;
+  const ADJ = {
+    a:'sq',b:'vgn',c:'xdv',d:'sfe',e:'wrd',f:'dge',g:'fht',h:'gjy',i:'uko',
+    j:'hkn',k:'jlm',l:'kop',m:'nk', n:'bmh',o:'ilp',p:'ol', q:'wa', r:'eft',
+    s:'adwz',t:'rgy',u:'yhi',v:'bcf',w:'qse',x:'zcs',y:'tuh',z:'xs',
+    '0':'9','1':'2','2':'13','3':'24','4':'35','5':'46','6':'57','7':'68','8':'79','9':'80',
+  };
+  const nearbyKey = ch => { const a = ADJ[ch.toLowerCase()]; return a ? a[Math.floor(Math.random() * a.length)] : null; };
+  const isWordChar = ch => /[a-zA-Z0-9_]/.test(ch);
+
+  const sendKey = async (ch, lo, hi) => {
+    await psWrite(`$wsh.SendKeys('${toToken(ch).replace(/'/g, "''")}')`);
+    await nd(lo, hi);
+  };
+  const sendBS = async () => { await psWrite(`$wsh.SendKeys('{BACKSPACE}')`); await nd(55, 105); };
+  const sendArrow = async (dir, n) => {                  // dir: 'LEFT' | 'RIGHT'
+    for (let i = 0; i < n; i++) { await psWrite(`$wsh.SendKeys('{${dir}}')`); await nd(40, 85); }
+  };
+  // Neutralize editor auto-indent (VS Code etc.): after a newline the editor may
+  // insert leading whitespace. We select the whole new line back to column 0
+  // (Home, then Shift+End) so the FIRST character we type overtypes/replaces it.
+  // This is correct whether the editor auto-indented or not (empty selection if
+  // not), so our literal indentation is always authoritative — no double-indent.
+  const clearAutoIndent = async () => {
+    if (!doStripIndent) return;
+    await psWrite(`$wsh.SendKeys('{HOME}')`); await nd(25, 55);
+    await psWrite(`$wsh.SendKeys('+{END}')`); await nd(25, 55); // +{END} = Shift+End (select to line end)
+  };
+
+  // ── Typing loop ───────────────────────────────────────────────────────────
+  let pendingFix = null;   // { correct: char, suffix: char[] }
+  let tokenCount = 0, inWord = false;
+  let burstTarget = Math.random() < 0.5 ? 2 : 4;
+
+  // Fix a typo the way a developer does: arrow-key back to the wrong character,
+  // correct it in place, then arrow back to the end — instead of deleting and
+  // retyping everything after it.
+  //
+  // Layout when a fix is pending (cursor '|' at the end):
+  //   …[correct prefix][WRONG][s0 s1 … s(n-1)]|
+  // Steps:
+  //   1. LEFT × n  → cursor sits right after WRONG, before s0
+  //   2. BACKSPACE → delete WRONG; type the correct char in its place
+  //   3. RIGHT × n → return the cursor to the end (suffix untouched)
+  const flushFix = async () => {
+    if (!pendingFix) return;
+    const { correct, suffix } = pendingFix;
+    pendingFix = null;
+    const n = suffix.length;
+    await nd(120, 240);            // notice the mistake
+    await sendArrow('LEFT', n);    // navigate back to the typo
+    await nd(60, 140);             // small pause before correcting
+    await sendBS();                // delete the wrong char
+    await sendKey(correct, 55, 95);// type the right one in place
+    await nd(40, 90);
+    await sendArrow('RIGHT', n);   // return to where typing left off
+  };
+
+  const doPause = async () => {
+    await flushFix();
+    await nd(800, 1000);
+    await waitPause();
+    tokenCount = 0;
+    burstTarget = Math.random() < 0.5 ? 2 : 4;
+  };
+
+  for (const ch of [...text]) {
+    if (ideTypingCancelled) break;
+    await waitPause();           // honor pause on every keystroke (responsive)
+    if (ideTypingCancelled) break;
+    const wasInWord = inWord;
+    inWord = isWordChar(ch);
+    if (inWord && !wasInWord) { tokenCount++; if (tokenCount > burstTarget) await doPause(); }
+    if (ideTypingCancelled) break;
+
+    if (ch === '\n') {
+      await flushFix();        // must fix BEFORE Enter — arrow nav can't cross lines
+      await sendKey(ch, 10, 30);
+      await nd(800, 1000);
+      await waitPause();
+      // Select any auto-inserted indent so the next char/Enter overtypes it.
+      await clearAutoIndent();
+      tokenCount = 0; burstTarget = Math.random() < 0.5 ? 2 : 4;
+      continue;
+    }
+    if (!isWordChar(ch)) {
+      await sendKey(ch, ch === ' ' ? 60 : 50, ch === ' ' ? 130 : 110);
+      if (pendingFix) pendingFix.suffix.push(ch);
+      continue;
+    }
+    // Word char — 1.5 % typo, one per burst
+    const wrong = (!pendingFix && Math.random() < 0.015) ? nearbyKey(ch) : null;
+    if (wrong) {
+      await sendKey(wrong, 65, 105);
+      pendingFix = { correct: ch, suffix: [] };
+    } else {
+      await sendKey(ch, 65, 105);
+      if (pendingFix) pendingFix.suffix.push(ch);
+    }
+  }
+
+  if (!ideTypingCancelled) await flushFix();
+
+  // ── Teardown ──────────────────────────────────────────────────────────────
+  if (win) { win.off('focus', onWinFocus); win.off('blur', onWinBlur); }
+  ideTypingActive = false; ideTypingPaused = false; ideFocusPaused = false;
+  stopCursorTakeover();
+  notifyTypingState();
+  try { proc.stdin.end(); } catch {}
+  ideTypingProc = null;
+  return { ok: !ideTypingCancelled, cancelled: ideTypingCancelled };
+});
+
+// Resize the sticky to fit ALL accumulated messages (they append, never
+// replace), capped at 80% screen height — beyond that the body scrolls.
+function resizeStickyToContent() {
+  if (!stickyWin || stickyWin.isDestroyed()) return;
+  let lines = 0;
+  for (const m of chatHistory) {
+    if (m.type === 'chat-rich' && m.markdown) {
+      lines += Math.ceil(m.markdown.length / 45) + m.markdown.split('\n').length + 1;
+      lines += (m.markdown.match(/```mermaid/gi) || []).length * 22; // diagrams take vertical room
+    } else if (m.type === 'chat-text' && m.text) {
+      lines += Math.ceil(m.text.length / 45) + m.text.split('\n').length + 1;
+    } else if (m.type === 'chat-image') {
+      lines += 8;
+    }
+  }
+  const needed = 24 + 42 + 32 + Math.max(lines * 18, 80);
+  const maxH = (screen.getPrimaryDisplay().workArea.height * 0.80) | 0;
+  const newH = Math.min(needed, maxH);
+  const [curW] = stickyWin.getSize();
+  try { stickyWin.setSize(curW, newH); } catch {}
+  setTimeout(() => syncStickyPosition(), 50);
+}
+
+// Push a full answer (markdown with diagrams/code) to the sticky, rendered the
+// same way as the chat area. Local only — not broadcast over the network.
+ipcMain.handle('sticky-send-rich', (_e, markdown) => {
+  const md = String(markdown || '').trim();
+  if (!md) return false;
+  pushChatToSticky({ type: 'chat-rich', markdown: md, ts: Date.now(), fromMe: true });
+  resizeStickyToContent();
+  return true;
+});
+
 ipcMain.handle('sticky-send-text', (_e, text) => {
   const t = String(text || '').trim();
   if (!t) return false;
   const msg = { type: 'chat-text', text: t, ts: Date.now(), fromMe: true };
   pushChatToSticky(msg);
+  resizeStickyToContent();
   let sent = 0;
   if (state.network.role === 'speaker') {
     const payload = { type: 'chat-text', text: t, ts: msg.ts };

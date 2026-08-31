@@ -22,6 +22,9 @@ Thumbs.db
 .idea/
 *.swp
 
+# Claude Code / app runtime scratch
+.claude/
+
 # Build output
 dist/
 build/

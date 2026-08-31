@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src 'self' blob: mediastream:; connect-src 'self' blob:" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src 'self' blob: mediastream:; connect-src 'self' blob:; img-src 'self' data: blob:;" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -39,24 +39,19 @@
     <button class="btn" id="quitBtn" title="Quit">&times;</button>
   </header>
 
-  <div class="urlbar iv-btn" id="urlbar">
-    <button class="urlbar-btn" id="urlBackBtn" title="Back" disabled>&#8249;</button>
-    <button class="urlbar-btn" id="urlForwardBtn" title="Forward" disabled>&#8250;</button>
-    <button class="urlbar-btn" id="urlReloadBtn" title="Reload">&#8635;</button>
-    <input type="text" id="urlInputBar" class="urlbar-input" spellcheck="false"
-      placeholder="Type a URL and press Enter (e.g. chatgpt.com)" />
-    <button class="urlbar-btn urlbar-go" id="urlGoBtn" title="Go">&#10148;</button>
-  </div>
-
   <aside class="right-rail iv-btn" id="rightRail">
-    <button class="rail-btn" id="urlMenuBtn" title="Switch site">&#9662;</button>
-    <button class="rail-btn" id="reloadBtn" title="Reload site">&#8635;</button>
     <button class="rail-btn" id="settingsBtn" title="Settings">&#9881;</button>
     <button class="rail-btn mode-toggle-btn" id="modeToggleBtn" title="Toggle mode: OCR ↔ Voice (Alt+D)">OCR</button>
     <button class="rail-btn rec-btn" id="recBtn" title="Start transcription">
       <span class="rec-dot"></span>
     </button>
-    <button class="rail-btn" id="promptRailBtn" title="Insert a saved prompt">&#9998;</button>
+    <button class="rail-btn rail-model-btn" id="railModelBtn" title="Select answer model">M</button>
+    <div class="rail-speed-wrap" title="Typing speed (1=slow · 5=fast)">
+      <span class="rail-speed-label">5</span>
+      <input type="range" id="ideSpeedSlider" class="rail-speed-slider"
+             min="1" max="5" step="1" value="3" orient="vertical">
+      <span class="rail-speed-label">1</span>
+    </div>
   </aside>
 
   <section class="settings-overlay" id="settingsOverlay" hidden>
@@ -65,127 +60,36 @@
       <button class="btn" id="settingsCloseBtn" title="Close settings">&times;</button>
     </div>
     <nav class="settings-tabs" id="settingsTabs">
-      <button class="tab-btn active" data-tab="general" type="button">General</button>
-      <button class="tab-btn" data-tab="session" type="button">Session</button>
+      <button class="tab-btn active" data-tab="apikeys" type="button">API keys</button>
       <button class="tab-btn" data-tab="prompts" type="button">Prompts</button>
-      <button class="tab-btn" data-tab="voice" type="button">Voice</button>
-      <button class="tab-btn" data-tab="caption" type="button">Caption</button>
-      <button class="tab-btn" data-tab="network" type="button">Network</button>
       <button class="tab-btn" data-tab="hotkeys" type="button">Hotkeys</button>
-      <button class="tab-btn" data-tab="log" type="button">Log</button>
-      <button class="tab-btn" data-tab="help" type="button">Help</button>
     </nav>
     <div class="settings-body">
 
-      <div class="settings-tab" data-tab="general">
+      <div class="settings-tab" data-tab="apikeys">
         <section class="settings-section">
-          <h3>Active mode</h3>
-          <p class="hint">Pick before starting. The dot button on the rail starts the selected mode.</p>
-          <div class="field-row">
-            <label class="radio"><input type="radio" name="mode" value="voice" id="modeVoice" /> Voice (mic + system audio &rarr; foreground app)</label>
-            <label class="radio"><input type="radio" name="mode" value="caption" id="modeCaption" /> Caption (OCR a screen area &rarr; site input)</label>
-          </div>
-        </section>
-
-        <section class="settings-section">
-          <h3>Web URLs</h3>
-          <p class="hint">Add the sites you want available from the dropdown on the left.</p>
-          <div class="url-list" id="urlList"></div>
-          <div class="url-add">
-            <input type="text" id="urlInput" placeholder="https://chatgpt.com" spellcheck="false" />
-            <button id="urlAddBtn">Add</button>
-          </div>
-        </section>
-
-        <section class="settings-section">
-          <h3>App version</h3>
-          <div class="updater-row">
-            <span class="updater-version" id="updaterVersion">version &mdash;</span>
-            <button id="updaterCheckBtn">Check for updates</button>
-            <button id="updaterInstallBtn" hidden>Restart &amp; install</button>
-          </div>
-          <div class="updater-status" id="updaterStatus">Idle.</div>
-        </section>
-      </div>
-
-      <div class="settings-tab" data-tab="session" hidden>
-        <section class="settings-section">
-          <h3>Session cookies</h3>
-          <p class="hint">Export your signed-in session to a file, then import it on another computer to restore your logins (ChatGPT, Claude, etc.) without signing in again.</p>
-          <div class="updater-row">
-            <button id="cookieExportBtn">Export cookies&hellip;</button>
-            <button id="cookieImportBtn">Import cookies&hellip;</button>
-          </div>
-          <div class="updater-status" id="cookieStatus">Ready.</div>
-          <p class="hint">&#9888; The exported file contains your login tokens &mdash; treat it like a password. Anyone with it can access your sessions until they expire.</p>
-        </section>
-      </div>
-
-      <div class="settings-tab" data-tab="prompts" hidden>
-        <section class="settings-section">
-          <h3>Prompt library</h3>
-          <p class="hint">Save reusable prompts and insert them into the loaded ChatGPT/Claude input. The &#9998; button on the rail inserts a saved prompt without opening settings.</p>
-          <div class="prompt-list" id="promptList"></div>
-          <div class="updater-row" style="margin-top:8px">
-            <button id="promptExportBtn">Export prompts&hellip;</button>
-            <button id="promptImportBtn">Import prompts&hellip;</button>
-            <span class="updater-version" id="promptIoStatus"></span>
-          </div>
-        </section>
-        <section class="settings-section">
-          <h3 id="promptEditorTitle">New prompt</h3>
-          <div class="field">
-            <label for="promptTitleInput">Title</label>
-            <input type="text" id="promptTitleInput" placeholder="e.g. Summarize, Behavioral answer&hellip;" spellcheck="false" />
-          </div>
-          <div class="field">
-            <label for="promptTextInput">Prompt text</label>
-            <textarea id="promptTextInput" rows="6" placeholder="Type the prompt to save&hellip;" spellcheck="false"></textarea>
-          </div>
-          <div class="updater-row">
-            <button id="promptSaveBtn">Save prompt</button>
-            <button id="promptNewBtn">New / Clear</button>
-          </div>
-          <div class="updater-status" id="promptStatus"></div>
-        </section>
-      </div>
-
-      <div class="settings-tab" data-tab="voice" hidden>
-        <section class="settings-section">
-          <h3>Audio capture</h3>
-          <div class="field">
-            <label for="micSelect">Microphone</label>
-            <select id="micSelect"></select>
-          </div>
-          <div class="field-row">
-            <label class="checkbox"><input type="checkbox" id="captureMic" /> Capture microphone</label>
-            <label class="checkbox"><input type="checkbox" id="captureSystem" /> Capture system audio (loopback)</label>
-          </div>
-        </section>
-
-        <section class="settings-section">
-          <h3>Transcription engine</h3>
+          <h3>Transcription</h3>
           <div class="field-row">
             <label class="radio"><input type="radio" name="engine" value="deepgram" id="engineDeepgram" /> Deepgram API</label>
-            <label class="radio"><input type="radio" name="engine" value="local" id="engineLocal" /> Local whisper.cpp</label>
+            <label class="radio"><input type="radio" name="engine" value="xai" id="engineXai" /> xAI (Grok) API</label>
           </div>
           <div class="field" id="deepgramBlock">
             <label for="deepgramKey">Deepgram API key</label>
             <input type="password" id="deepgramKey" placeholder="Paste Deepgram key..." spellcheck="false" />
           </div>
-          <div class="field" id="localExeBlock">
-            <label for="whisperExe">whisper.exe path</label>
-            <div class="path-row">
-              <input type="text" id="whisperExe" placeholder="C:\path\to\whisper-cli.exe" spellcheck="false" />
-              <button id="whisperExeBrowse">Browse</button>
-            </div>
+          <div class="field" id="xaiBlock">
+            <label for="xaiKey">xAI API key</label>
+            <input type="password" id="xaiKey" placeholder="Paste xAI key..." spellcheck="false" />
           </div>
-          <div class="field" id="localModelBlock">
-            <label for="whisperModel">Whisper model file</label>
-            <div class="path-row">
-              <input type="text" id="whisperModel" placeholder="C:\path\to\ggml-base.bin" spellcheck="false" />
-              <button id="whisperModelBrowse">Browse</button>
-            </div>
+          <h3 class="settings-subhead">Audio sources</h3>
+          <p class="hint">Choose what Voice mode transcribes. Microphone is your voice; system audio is meeting or speaker output (Zoom, Teams, browser). Enable one or both. Changes apply the next time you start transcription.</p>
+          <div class="field-row tx-source-row">
+            <label class="checkbox"><input type="checkbox" id="captureMic" /> Microphone</label>
+            <label class="checkbox"><input type="checkbox" id="captureSystem" /> System audio</label>
+          </div>
+          <div class="field">
+            <label for="micSelect">Microphone device</label>
+            <select id="micSelect"></select>
           </div>
           <div class="field">
             <label for="languageSelect">Language</label>
@@ -208,17 +112,97 @@
               <option value="uk">Ukrainian</option>
             </select>
           </div>
-          <div class="field" id="chunkSecondsField">
-            <label for="chunkSecondsRange">Chunk length (whisper.cpp only) &mdash; <span id="chunkSecondsValue">3.0</span> s</label>
-            <input type="range" id="chunkSecondsRange" min="1" max="10" step="0.5" value="3" />
-            <p class="hint">How much audio to batch before each whisper.cpp pass. Adjustable while recording — takes effect on the next chunk.
-              <br />&bull; <b>Slow CPU</b> (no GPU, integrated graphics): try <b>4&ndash;6 s</b>. Smaller chunks back the queue up and drop words.
-              <br />&bull; <b>Fast CPU</b> or small model: <b>2&ndash;3 s</b> gives lower latency without losing words.
-              <br />&bull; Below 1.5 s whisper almost always drops words for lack of context. Ignored when Deepgram is selected (Deepgram streams live).</p>
+        </section>
+
+        <section class="settings-section">
+          <h3>Answer generation</h3>
+          <p class="hint">Pick a provider, paste its key, then switch anytime. Keys and last-used models are remembered separately. Transcription above is independent of this.</p>
+          <div class="field-row" id="answerProviderRow">
+            <label class="radio"><input type="radio" name="answerProvider" value="xai" id="answerProviderXai" /> xAI</label>
+            <label class="radio"><input type="radio" name="answerProvider" value="anthropic" id="answerProviderAnthropic" /> Anthropic</label>
+            <label class="radio"><input type="radio" name="answerProvider" value="openai" id="answerProviderOpenai" /> OpenAI</label>
           </div>
-          <p class="hint">Click the rail dot to start/stop. Transcribed text auto-pastes into the foreground app at the cursor.</p>
+          <div class="field">
+            <label for="answerKey">xAI API key</label>
+            <input type="password" id="answerKey" placeholder="Paste xAI key for answers..." spellcheck="false" />
+            <p class="hint">If blank, the xAI transcription key above is used. Get a key at console.x.ai.</p>
+          </div>
+          <div class="field">
+            <label for="answerKeyAnthropic">Anthropic API key</label>
+            <input type="password" id="answerKeyAnthropic" placeholder="Paste Anthropic key (sk-ant-…)..." spellcheck="false" />
+            <p class="hint">Get a key at console.anthropic.com.</p>
+          </div>
+          <div class="field">
+            <label for="answerKeyOpenai">OpenAI API key</label>
+            <input type="password" id="answerKeyOpenai" placeholder="Paste OpenAI key (sk-…)..." spellcheck="false" />
+            <p class="hint">Get a key at platform.openai.com/api-keys.</p>
+          </div>
+          <div class="field">
+            <label for="answerModel">Model</label>
+            <select id="answerModel"></select>
+            <p class="hint">List is for the selected provider. Reasoning models think first (slower first token).</p>
+          </div>
         </section>
       </div>
+
+      <div class="settings-tab" data-tab="prompts" hidden id="settingsPromptsHost">
+        <section class="settings-section">
+          <h3>Prompt presets</h3>
+          <p class="hint">Each preset is a system prompt for a meeting type. Pick the active one in the Answer panel's Preset dropdown during the session.</p>
+          <div class="prompt-list" id="promptList"></div>
+          <div class="updater-row" style="margin-top:8px">
+            <button id="promptExportBtn">Export prompts&hellip;</button>
+            <button id="promptImportBtn">Import prompts&hellip;</button>
+            <span class="updater-version" id="promptIoStatus"></span>
+          </div>
+        </section>
+        <section class="settings-section">
+          <h3 id="promptEditorTitle">New prompt</h3>
+          <div class="field">
+            <label for="promptTitleInput">Title</label>
+            <input type="text" id="promptTitleInput" placeholder="e.g. Tech interview, CEO chat&hellip;" spellcheck="false" />
+          </div>
+          <div class="field">
+            <label for="promptTextInput">Prompt text</label>
+            <textarea id="promptTextInput" rows="6" placeholder="Type the prompt to save&hellip;" spellcheck="false"></textarea>
+          </div>
+          <div class="updater-row">
+            <button id="promptSaveBtn">Save prompt</button>
+            <button id="promptNewBtn">New / Clear</button>
+          </div>
+          <div class="updater-status" id="promptStatus"></div>
+        </section>
+
+        <section class="settings-section">
+          <h3>Avoid phrases</h3>
+          <p class="hint">One phrase or pattern per line. These are always blocked regardless of which prompt is active — the AI is explicitly told never to use them.</p>
+          <div class="field">
+            <textarea id="avoidPhrasesInput" rows="6" placeholder="e.g.&#10;years of experience&#10;In my current role&#10;I led the end-to-end&#10;passionate about&#10;proven track record" spellcheck="false"></textarea>
+          </div>
+          <div class="updater-row">
+            <button id="avoidPhrasesSaveBtn">Save</button>
+            <span class="updater-status" id="avoidPhrasesStatus"></span>
+          </div>
+        </section>
+      </div>
+
+      <!-- Hidden, no-nav panes kept so existing wiring keeps working; removed in cleanup. -->
+      <div class="settings-tab" data-tab="general" hidden>
+        <section class="settings-section">
+          <div class="field-row">
+            <label class="radio"><input type="radio" name="mode" value="voice" id="modeVoice" /> Voice</label>
+            <label class="radio"><input type="radio" name="mode" value="caption" id="modeCaption" /> Caption</label>
+          </div>
+          <div class="updater-row">
+            <span class="updater-version" id="updaterVersion">version &mdash;</span>
+            <button id="updaterCheckBtn">Check for updates</button>
+            <button id="updaterInstallBtn" hidden>Restart &amp; install</button>
+          </div>
+          <div class="updater-status" id="updaterStatus">Idle.</div>
+        </section>
+      </div>
+
+      <div class="settings-tab" data-tab="voice" hidden></div>
 
       <div class="settings-tab" data-tab="caption" hidden>
         <section class="settings-section">
@@ -369,8 +353,8 @@
           <h3>Quick start (solo)</h3>
           <ol class="help-steps">
             <li>Setup &rarr; pick <b>Caption</b> or <b>Voice</b> mode.</li>
-            <li>If using Voice: <b>Voice</b> tab &rarr; choose engine (Deepgram API or local whisper.cpp) and provide key/paths.</li>
-            <li><b>Sites</b> tab &rarr; add <code>https://chatgpt.com</code> or <code>https://claude.ai</code>.</li>
+            <li>If using Voice: <b>Voice</b> tab &rarr; choose engine (Deepgram or xAI) and paste the API key.</li>
+            <li><b>API keys</b> tab &rarr; pick an answer provider (xAI, Anthropic, or OpenAI) and paste its key.</li>
             <li>Click <b>Start</b>.</li>
             <li>For Caption mode: a screen-area selector appears &mdash; drag a rectangle around the live caption strip you want to OCR.</li>
             <li>Click the <b>&#9679;</b> rec dot in the header to begin / stop.</li>
@@ -415,10 +399,9 @@
 
         <section class="settings-section help-section">
           <h3>Setup screen</h3>
-          <p>Before each session, the Setup overlay walks through the five tabs:</p>
+          <p>Before each session, the Setup overlay walks through these tabs:</p>
           <ul>
             <li><b>Essentials</b> &mdash; pick active mode (Caption / Voice) and network role (Speaker / Supporter). Speaker shows the port; Supporter shows the address. Use <b>Save default</b> to remember the value across launches.</li>
-            <li><b>Sites</b> &mdash; URLs that appear in the rail dropdown during the session. Add ChatGPT, Claude, etc.</li>
             <li><b>Caption</b> &mdash; OCR language and poll interval. The capture area itself is picked after Start.</li>
             <li><b>Voice</b> &mdash; transcription engine + mic + system audio sources.</li>
             <li><b>Network</b> &mdash; max supporters cap (Speaker only).</li>
@@ -428,14 +411,14 @@
 
         <section class="settings-section help-section">
           <h3>Voice mode</h3>
-          <p>Captures mic and/or system audio in real-time and streams it to Deepgram (or local whisper.cpp in chunks). Final transcripts are injected directly into the loaded AI site's chat input — no clipboard, no focus theft. All transcripts are also saved to a <b>.txt file</b> when you click End.</p>
+          <p>Captures mic and/or system audio in real-time and streams it to Deepgram or xAI. Final transcripts are injected directly into the loaded AI site's chat input — no clipboard, no focus theft. All transcripts are also saved to a <b>.txt file</b> when you click End.</p>
           <h4>Setup</h4>
           <ol class="help-steps">
-            <li><b>Voice</b> tab &rarr; pick microphone, toggle "Capture mic" / "Capture system audio".</li>
+            <li><b>Settings</b> &rarr; Transcription &rarr; enable <b>Microphone</b> and/or <b>System audio</b>, then pick the mic device.</li>
             <li>Pick engine:
               <ul>
-                <li><b>Deepgram API</b> &mdash; paste API key. Real-time, low-latency, audio leaves your machine. Get a free key at deepgram.com.</li>
-                <li><b>Local whisper.cpp</b> &mdash; browse to <code>whisper-cli.exe</code> and a model (<code>ggml-base.bin</code> etc.). Fully offline; slower without GPU.</li>
+                <li><b>Deepgram API</b> &mdash; paste API key. Real-time, low-latency. Get a free key at deepgram.com.</li>
+                <li><b>xAI (Grok) API</b> &mdash; paste your xAI API key. Real-time streaming speech-to-text. Get a key at console.x.ai.</li>
               </ul>
             </li>
             <li>Pick language or leave on Auto-detect.</li>
@@ -611,10 +594,8 @@
           <p>Voice transcripts are injected directly into the AI site loaded in the webview (ChatGPT, Claude, etc.) — make sure a site is loaded and the chat input is visible. The injection targets the chat input automatically, no click needed.</p>
           <h4>Caption mode duplicates text</h4>
           <p>The diff is word-based and tolerant to OCR variations, but if the OCR engine produces wildly different text for the same speech, some duplication is unavoidable. Press <span class="kbd">Ctrl+Q</span> to re-pick a tighter area &mdash; smaller and cleaner is better.</p>
-          <h4>Deepgram 401 / 429 errors</h4>
-          <p>Check the <b>Log</b> tab. 401 = bad API key. 429 = rate limit / out of credits. Get a free key at deepgram.com.</p>
-          <h4>Local whisper exits with non-zero code</h4>
-          <p>Open a terminal and run the same command manually with <code>-f some.wav -m model.bin</code> to see the real error. Ensure the model and exe are from the same whisper.cpp version.</p>
+          <h4>Deepgram / xAI 401 / 429 errors</h4>
+          <p>Check the <b>Log</b> tab. 401 = bad API key. 429 = rate limit / out of credits. Verify the key in Settings &rarr; Voice.</p>
           <h4>Hotkey shows red "register failed"</h4>
           <p>Another app already owns that combo system-wide. Pick a different one.</p>
           <h4>Sticky note isn't appearing on A's screen</h4>
@@ -628,175 +609,117 @@
     </div>
   </section>
 
-  <section class="setup-overlay" id="setupOverlay">
-    <div class="setup-card">
-      <h2 class="setup-title">Setup</h2>
-      <p class="hint">Configure everything for the session. Caption area &amp; hotkeys are set later in interview mode.</p>
+  <!-- Stage 1: choose New vs Continue -->
+  <section class="setup-overlay mode-select-overlay" id="modeSelectOverlay" hidden>
+    <div class="setup-card mode-select-card">
+      <div class="setup-topbar">
+        <h2 class="setup-title">Start</h2>
+        <button class="setup-gear-btn" id="modeSelectSettingsBtn" title="Settings — API keys, prompts, hotkeys">&#9881;</button>
+      </div>
+      <p class="setup-intro hint">Begin a new interview session, or continue a saved one with its materials.</p>
+      <div class="mode-choice-cards">
+        <button class="mode-choice-card" id="modeNewBtn">
+          <span class="mode-choice-icon">✨</span>
+          <span class="mode-choice-name">New session</span>
+          <span class="mode-choice-desc">Attach materials, set your profile, and start fresh</span>
+        </button>
+        <button class="mode-choice-card" id="modeContinueBtn">
+          <span class="mode-choice-icon">📂</span>
+          <span class="mode-choice-name">Continue existing</span>
+          <span class="mode-choice-desc">Resume a saved session with its attached materials</span>
+        </button>
+      </div>
+    </div>
+  </section>
 
-      <nav class="setup-tabs-nav" id="setupTabs">
-        <button class="stab-btn active" data-stab="essentials" type="button">Essentials</button>
-        <button class="stab-btn" data-stab="sites" type="button">Sites</button>
-        <button class="stab-btn" data-stab="caption" type="button">Caption</button>
-        <button class="stab-btn" data-stab="voice" type="button">Voice</button>
-        <button class="stab-btn" data-stab="network" type="button">Network</button>
-      </nav>
+  <section class="setup-overlay" id="setupOverlay" hidden>
+    <div class="setup-card interview-setup">
+      <div class="setup-topbar">
+        <button class="setup-back-btn" id="setupBackBtn" title="Back">&#8592;</button>
+        <h2 class="setup-title">New Session</h2>
+        <button class="setup-gear-btn" id="setupSettingsBtn" title="Settings — API keys, prompts, hotkeys">&#9881;</button>
+      </div>
+      <p class="setup-intro hint">Upload your materials — the assistant uses them as base knowledge to ground its answers. Then press Start.</p>
 
-      <div class="setup-tabs-body">
-
-        <div class="setup-tab-pane" data-stab="essentials">
-          <div class="setup-section">
-            <h4>Active mode</h4>
-            <label class="radio"><input type="radio" name="setupMode" value="caption" id="setupModeCaption" checked /> Caption (OCR a screen area)</label>
-            <label class="radio"><input type="radio" name="setupMode" value="voice" id="setupModeVoice" /> Voice (mic + system audio)</label>
-          </div>
-
-          <div class="setup-section">
-            <h4>Network role</h4>
-            <label class="radio"><input type="radio" name="setupRole" value="speaker" id="setupRoleSpeaker" checked /> Speaker (host)</label>
-            <label class="radio"><input type="radio" name="setupRole" value="supporter" id="setupRoleSupporter" /> Supporter (client)</label>
-          </div>
-
-          <div class="setup-section" id="setupPortBlock">
-            <h4>Port</h4>
-            <div class="path-row">
-              <input type="number" id="setupPort" min="1" max="65535" value="2000" />
-              <button id="setupSavePortBtn" title="Save current port as default">Save default</button>
-            </div>
-            <p class="hint" style="margin:6px 0 0">Speaker binds <code>0.0.0.0</code> on this port.</p>
-          </div>
-
-          <div class="setup-section" id="setupAddressBlock" hidden>
-            <h4>Speaker address</h4>
-            <div class="path-row">
-              <input type="text" id="setupAddress" placeholder="172.16.98.11:2000" spellcheck="false" />
-              <button id="setupSaveAddressBtn" title="Save current address as default">Save default</button>
-            </div>
-            <p class="hint" style="margin:6px 0 0">Format: <code>host:port</code></p>
-          </div>
+      <div class="setup-profile-row">
+        <p class="setup-roles-label">Your profile</p>
+        <div class="profile-picker">
+          <select id="profileSelect" class="profile-input"></select>
+          <button id="profileSaveNewBtn" class="profile-mini-btn" title="Save current fields as a new profile">＋</button>
+          <button id="profileUpdateBtn" class="profile-mini-btn" title="Update the selected profile with current fields">⟳</button>
+          <button id="profileDeleteBtn" class="profile-mini-btn profile-mini-btn--danger" title="Delete the selected profile">🗑</button>
         </div>
-
-        <div class="setup-tab-pane" data-stab="sites" hidden>
-          <div class="setup-section">
-            <h4>Web URLs</h4>
-            <p class="hint" style="margin:0 0 8px">Sites picked from the rail dropdown during the session.</p>
-            <div class="url-list" id="setupUrlList"></div>
-            <div class="url-add">
-              <input type="text" id="setupUrlInput" placeholder="https://chatgpt.com" spellcheck="false" />
-              <button id="setupUrlAddBtn">Add</button>
-            </div>
-          </div>
+        <div class="profile-saverow" id="profileSaveRow" hidden>
+          <input type="text" id="profileLabelInput" class="profile-input" placeholder="Profile name (e.g. profile1)" spellcheck="false" />
+          <button id="profileSaveConfirm" class="profile-mini-btn" title="Save">✓</button>
+          <button id="profileSaveCancel" class="profile-mini-btn" title="Cancel">✕</button>
         </div>
-
-        <div class="setup-tab-pane" data-stab="caption" hidden>
-          <div class="setup-section" id="setupCaptionSection">
-            <h4>OCR options</h4>
-            <p class="hint" style="margin:0 0 8px">Capture area is picked after Start.</p>
-            <div class="field-row">
-              <div class="field" style="flex:1">
-                <label for="setupCaptureLanguage">OCR language</label>
-                <select id="setupCaptureLanguage">
-                  <option>English</option>
-                  <option>French</option>
-                  <option>German</option>
-                  <option>Japanese</option>
-                  <option>Korean</option>
-                  <option>Russian</option>
-                  <option>Spanish</option>
-                </select>
-              </div>
-              <div class="field" style="flex:1">
-                <label for="setupCapturePollMs">Poll (ms)</label>
-                <input type="number" id="setupCapturePollMs" min="200" max="5000" step="100" />
-              </div>
-            </div>
-          </div>
+        <div class="profile-inputs profile-inputs--vertical">
+          <input type="text" id="profileName" class="profile-input" placeholder="Name" spellcheck="false" />
+          <input type="text" id="profileCity" class="profile-input" placeholder="City" spellcheck="false" />
+          <input type="text" id="profileCountry" class="profile-input" placeholder="Country" spellcheck="false" />
+          <select id="profileTimezone" class="profile-input profile-tz-select"></select>
         </div>
-
-        <div class="setup-tab-pane" data-stab="voice" hidden>
-          <div class="setup-section" id="setupVoiceSection">
-            <h4>Transcription engine</h4>
-            <label class="radio"><input type="radio" name="setupEngine" value="deepgram" id="setupEngineDeepgram" /> Deepgram API</label>
-            <label class="radio"><input type="radio" name="setupEngine" value="local" id="setupEngineLocal" /> Local whisper.cpp</label>
-            <div class="field" id="setupDeepgramBlock">
-              <label for="setupDeepgramKey">Deepgram API key</label>
-              <input type="password" id="setupDeepgramKey" placeholder="Paste Deepgram key..." spellcheck="false" />
-            </div>
-            <div class="field" id="setupLocalExeBlock">
-              <label for="setupWhisperExe">whisper.exe path</label>
-              <div class="path-row">
-                <input type="text" id="setupWhisperExe" placeholder="C:\path\to\whisper-cli.exe" spellcheck="false" />
-                <button id="setupWhisperExeBrowse">Browse</button>
-              </div>
-            </div>
-            <div class="field" id="setupLocalModelBlock">
-              <label for="setupWhisperModel">Whisper model file</label>
-              <div class="path-row">
-                <input type="text" id="setupWhisperModel" placeholder="C:\path\to\ggml-base.bin" spellcheck="false" />
-                <button id="setupWhisperModelBrowse">Browse</button>
-              </div>
-            </div>
-            <div class="field" id="setupChunkSecondsField">
-              <label for="setupChunkSecondsRange">Chunk length (whisper.cpp only) &mdash; <span id="setupChunkSecondsValue">3.0</span> s</label>
-              <input type="range" id="setupChunkSecondsRange" min="1" max="10" step="0.5" value="3" />
-              <p class="hint">How much audio to batch before each whisper.cpp pass. Adjustable while recording. Slow CPU → 4-6 s, fast CPU → 2-3 s, below 1.5 s drops words. Ignored when Deepgram is selected.</p>
-            </div>
-            <div class="field">
-              <label for="setupVoiceLanguage">Language</label>
-              <select id="setupVoiceLanguage">
-                <option value="auto">Auto-detect</option>
-                <option value="en">English</option>
-                <option value="ru">Russian</option>
-                <option value="ja">Japanese</option>
-                <option value="zh">Chinese</option>
-                <option value="es">Spanish</option>
-                <option value="fr">French</option>
-                <option value="de">German</option>
-                <option value="pt">Portuguese</option>
-                <option value="it">Italian</option>
-                <option value="nl">Dutch</option>
-                <option value="tr">Turkish</option>
-                <option value="pl">Polish</option>
-                <option value="ar">Arabic</option>
-                <option value="hi">Hindi</option>
-                <option value="uk">Ukrainian</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="setup-section">
-            <h4>Audio capture</h4>
-            <div class="field">
-              <label for="setupMicSelect">Microphone</label>
-              <select id="setupMicSelect"></select>
-            </div>
-            <div class="field-row">
-              <label class="checkbox"><input type="checkbox" id="setupCaptureMic" /> Capture microphone</label>
-              <label class="checkbox"><input type="checkbox" id="setupCaptureSystem" /> Capture system audio</label>
-            </div>
-          </div>
-        </div>
-
-        <div class="setup-tab-pane" data-stab="network" hidden>
-          <div class="setup-section">
-            <h4>Network options</h4>
-            <div class="field" id="setupMaxSupportersField">
-              <label for="setupMaxSupporters">Max supporters (Speaker only)</label>
-              <input type="number" id="setupMaxSupporters" min="1" max="10" step="1" />
-            </div>
-            <p class="hint" style="margin:0">Two-way audio is always on (supporter mic &rarr; speaker).</p>
-          </div>
-        </div>
-
       </div>
 
-      <div class="setup-section">
-        <h4>Restore a previous session (optional)</h4>
-        <p class="hint">New computer? Import a session-cookie file you exported elsewhere to bring back your logins (ChatGPT, Claude, etc.).</p>
-        <button id="setupImportCookiesBtn">Import cookies&hellip;</button>
-        <span class="hint" id="setupCookieStatus" style="margin-left:8px"></span>
+      <div class="upload-grid">
+        <div class="upload-zone" id="dropCv" data-kind="cv"><div class="upload-zone-title">Resume / CV</div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="filesCv"></div><input type="file" id="fileCv" hidden /></div>
+        <div class="upload-zone" id="dropJd" data-kind="jd"><div class="upload-zone-title">Job Description</div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="filesJd"></div><input type="file" id="fileJd" hidden /></div>
+        <div class="upload-zone" id="dropSupport" data-kind="support"><div class="upload-zone-title">Support material</div><div class="upload-zone-hint">Click or drag &amp; drop · multiple</div><div class="upload-files" id="filesSupport"></div><input type="file" id="fileSupport" hidden multiple /></div>
+        <div class="upload-zone" id="dropMeetings" data-kind="meetings"><div class="upload-zone-title">Previous meeting records</div><div class="upload-zone-hint">Click or drag &amp; drop · multiple</div><div class="upload-files" id="filesMeetings"></div><input type="file" id="fileMeetings" hidden multiple /></div>
       </div>
 
-      <button class="action-btn setup-start-btn" id="setupStartBtn">Start</button>
+      <div class="setup-bottom">
+        <div class="setup-roles">
+          <p class="setup-roles-label">Select your role</p>
+          <div class="role-cards">
+            <label class="role-card" id="roleCardSpeaker">
+              <input type="radio" name="setupRoleV" value="speaker" id="setupRoleSpeakerV" checked hidden />
+              <span class="role-card-icon">🎤</span>
+              <span class="role-card-name">Speaker</span>
+              <span class="role-card-desc">You are being interviewed</span>
+            </label>
+            <label class="role-card" id="roleCardSupporter">
+              <input type="radio" name="setupRoleV" value="supporter" id="setupRoleSupporterV" hidden />
+              <span class="role-card-icon">🛡️</span>
+              <span class="role-card-name">Supporter</span>
+              <span class="role-card-desc">You assist a speaker remotely</span>
+            </label>
+          </div>
+          <input type="text" id="setupAddressV" class="setup-address-input" placeholder="172.16.98.11:2000" spellcheck="false" hidden />
+        </div>
+
+        <div class="setup-prompt-row">
+          <p class="setup-roles-label">System prompt</p>
+          <select id="setupPresetSelect" class="setup-preset-select">
+          </select>
+        </div>
+
+        <button class="action-btn setup-start-btn" id="setupStartBtnV">START</button>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- Stage 1b: continue an existing session -->
+  <section class="setup-overlay continue-overlay" id="continueOverlay" hidden>
+    <div class="setup-card continue-card">
+      <div class="setup-topbar">
+        <button class="setup-back-btn" id="continueBackBtn" title="Back">&#8592;</button>
+        <h2 class="setup-title">Continue a Session</h2>
+      </div>
+      <div class="continue-body">
+        <div class="continue-left">
+          <input type="text" id="sessionSearch" class="session-search" placeholder="Search sessions…" spellcheck="false" />
+          <div class="session-list" id="continueSessionList"></div>
+        </div>
+        <div class="continue-right">
+          <div class="continue-detail" id="continueDetail">
+            <p class="continue-empty">Select a session on the left to see its profile and attached materials.</p>
+          </div>
+          <button class="action-btn continue-ok-btn" id="continueOkBtn" disabled>Continue &rarr;</button>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -807,6 +730,11 @@
         <h3 class="modal-title">End session?</h3>
       </div>
       <div class="modal-body">
+        <p class="modal-lead">Label this session (used in its title and saved transcript):</p>
+        <div class="end-fields">
+          <input type="text" id="endCompany" class="profile-input" placeholder="Company" spellcheck="false" />
+          <input type="text" id="endPosition" class="profile-input" placeholder="Position" spellcheck="false" />
+        </div>
         <p class="modal-lead">The following will be stopped before returning to setup:</p>
         <ul class="modal-list" id="endModalList"></ul>
       </div>
@@ -816,6 +744,34 @@
       </div>
     </div>
   </div>
+
+  <section class="answer-main" id="answerMain" hidden>
+    <div class="answer-presetbar">
+      <select id="presetSelect" class="answer-preset-select" style="display:none">
+      </select>
+      <select id="answerProviderSelect" class="answer-provider-select" title="Answer API provider">
+        <option value="xai">xAI</option>
+        <option value="anthropic">Anthropic</option>
+        <option value="openai">OpenAI</option>
+      </select>
+      <div class="mode-seg" id="modeSeg">
+        <button class="mode-seg-btn mode-seg-btn--active" data-mode="ANSWER" title="Plain text answer">Text</button>
+        <button class="mode-seg-btn" data-mode="CODE" title="Force code answer">Code</button>
+        <button class="mode-seg-btn" data-mode="DIAGRAM" title="Force diagram answer">Diagram</button>
+      </div>
+      <button id="answerClearBtn" class="answer-clear-btn" title="Clear answers">Clear</button>
+    </div>
+    <div class="answer-history" id="answerHistory">
+      <div class="answer-empty" id="answerEmpty">No answers yet. Speak or capture text, then press Ctrl+Enter to get an answer.</div>
+    </div>
+    <div class="answer-composer">
+      <div class="composer-img-strip" id="composerImgStrip" hidden></div>
+      <div class="composer-row">
+        <textarea id="composerInput" rows="2" spellcheck="false"></textarea>
+        <button id="getAnswerBtn" class="answer-send-btn" title="Get answer (Ctrl+Enter)">&#10148;</button>
+      </div>
+    </div>
+  </section>
 
   <section class="chat-main" id="chatMain" hidden>
     <div class="mic-mode-banner mode-aOnly" id="micModeBanner">
@@ -870,11 +826,27 @@
     </div>
   </div>
 
+  <!-- Full-window zoom/pan viewer for diagrams -->
+  <div class="diagram-overlay" id="diagramOverlay" hidden>
+    <div class="diagram-overlay-toolbar">
+      <button class="diagram-ov-btn" id="diagramZoomOut" title="Zoom out">&minus;</button>
+      <button class="diagram-ov-btn" id="diagramZoomFit" title="Fit to screen">Fit</button>
+      <button class="diagram-ov-btn" id="diagramZoomIn" title="Zoom in">+</button>
+      <button class="diagram-ov-btn diagram-ov-close" id="diagramOverlayClose" title="Close (Esc)">&times;</button>
+    </div>
+    <div class="diagram-overlay-stage" id="diagramOverlayStage"></div>
+    <div class="diagram-overlay-hint">Scroll to zoom &middot; drag to pan &middot; double-click to reset</div>
+  </div>
+
   <audio id="remoteAudio" autoplay playsinline style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none"></audio>
   <audio id="speakerInAudio" autoplay playsinline style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none"></audio>
   <audio id="cableOutAudio" autoplay playsinline style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none"></audio>
 
   <script src="lib/simplepeer.min.js"></script>
+  <script src="lib/marked.min.js"></script>
+  <script src="lib/mermaid.min.js"></script>
+  <script src="diagram-shared.js"></script>
+  <script src="tooltip.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>
