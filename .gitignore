@@ -30,3 +30,4 @@ dist/
 build/
 out/
 !build/icon-source.png
+!build/entitlements.mac.plist
