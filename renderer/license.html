@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Activation</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+      background: #fff; color: #111118; padding: 24px; font-size: 14px;
+      -webkit-user-select: none; user-select: none;
+    }
+    h1 { font-size: 17px; margin-bottom: 6px; }
+    p.hint { color: #555; margin-bottom: 16px; line-height: 1.45; }
+    .mac-row {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 18px;
+      background: #f5f5f7; border: 1px solid #e2e2e6; border-radius: 8px; padding: 10px 12px;
+    }
+    .mac-row code { font-size: 15px; letter-spacing: 1px; flex: 1; user-select: text; }
+    button {
+      font: inherit; border: 1px solid #d0d0d6; background: #fff; border-radius: 7px;
+      padding: 7px 14px; cursor: pointer;
+    }
+    button:hover { background: #f0f0f3; }
+    button.primary { background: #111118; color: #fff; border-color: #111118; }
+    button.primary:hover { background: #2a2a35; }
+    label { display: block; font-weight: 600; margin-bottom: 6px; }
+    textarea {
+      width: 100%; height: 84px; font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+      border: 1px solid #d0d0d6; border-radius: 8px; padding: 10px; resize: none;
+      -webkit-user-select: text; user-select: text;
+    }
+    textarea:focus { outline: 2px solid #111118; border-color: transparent; }
+    .actions { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; }
+    #status { font-size: 13px; min-height: 18px; margin-top: 10px; }
+    #status.err { color: #c0262d; }
+    #status.ok { color: #147a3d; }
+  </style>
+</head>
+<body>
+  <h1>Activation required</h1>
+  <p class="hint">
+    Send this computer's ID to your administrator, then enter the license
+    key you receive below.
+  </p>
+  <div class="mac-row">
+    <code id="mac">…</code>
+    <button id="copyBtn">Copy</button>
+  </div>
+  <label for="code">License key</label>
+  <textarea id="code" spellcheck="false" placeholder="Paste the license key here"></textarea>
+  <div id="status"></div>
+  <div class="actions">
+    <button id="quitBtn">Quit</button>
+    <button id="okBtn" class="primary">OK</button>
+  </div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    window.licenseApi.getInfo().then((info) => {
+      $('mac').textContent = info.mac || 'no network adapter found';
+      if (info.reason === 'expired') {
+        $('status').className = 'err';
+        $('status').textContent = 'Your license has expired. Ask your administrator for a new key.';
+      }
+    });
+    $('copyBtn').onclick = async () => {
+      await window.licenseApi.copyMac();
+      $('copyBtn').textContent = 'Copied';
+      setTimeout(() => { $('copyBtn').textContent = 'Copy'; }, 1200);
+    };
+    $('quitBtn').onclick = () => window.licenseApi.quit();
+    $('okBtn').onclick = async () => {
+      const code = $('code').value.trim();
+      const st = $('status');
+      if (!code) { st.className = 'err'; st.textContent = 'Enter a license key first.'; return; }
+      $('okBtn').disabled = true;
+      const r = await window.licenseApi.submit(code);
+      $('okBtn').disabled = false;
+      if (r.ok) {
+        st.className = 'ok';
+        st.textContent = 'License accepted — valid until ' + new Date(r.expiresAt).toLocaleDateString() + '. Starting…';
+      } else {
+        st.className = 'err';
+        st.textContent = r.reason === 'expired'
+          ? 'This license key has expired.'
+          : 'Invalid license key for this computer. Check that you sent the ID shown above.';
+      }
+    };
+    $('code').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('okBtn').click(); }
+    });
+  </script>
+</body>
+</html>

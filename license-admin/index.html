@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>License Generator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+      background: #fff; color: #111118; padding: 24px; font-size: 14px;
+    }
+    h1 { font-size: 17px; margin-bottom: 16px; }
+    label { display: block; font-weight: 600; margin: 14px 0 6px; }
+    input {
+      width: 100%; font: inherit; border: 1px solid #d0d0d6; border-radius: 8px; padding: 9px 12px;
+    }
+    input:focus { outline: 2px solid #111118; border-color: transparent; }
+    button {
+      font: inherit; border: 1px solid #d0d0d6; background: #fff; border-radius: 7px;
+      padding: 8px 16px; cursor: pointer;
+    }
+    button:hover { background: #f0f0f3; }
+    button.primary { background: #111118; color: #fff; border-color: #111118; margin-top: 18px; }
+    button.primary:hover { background: #2a2a35; }
+    textarea {
+      width: 100%; height: 96px; font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+      border: 1px solid #d0d0d6; border-radius: 8px; padding: 10px; resize: none; margin-top: 6px;
+    }
+    #meta { color: #147a3d; font-size: 13px; margin-top: 8px; min-height: 18px; }
+    #err { color: #c0262d; font-size: 13px; margin-top: 8px; min-height: 18px; }
+    .row { display: flex; gap: 10px; align-items: end; }
+    .row > div { flex: 1; }
+    #copyBtn { margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h1>License Generator</h1>
+  <div id="err"></div>
+  <label for="mac">Computer ID (MAC address, as the user sent it)</label>
+  <input id="mac" placeholder="AA:BB:CC:DD:EE:FF" spellcheck="false" />
+  <label for="days">Valid for (days)</label>
+  <input id="days" type="number" value="30" min="1" max="3650" />
+  <button id="genBtn" class="primary">Generate license</button>
+  <label for="out">License key</label>
+  <textarea id="out" readonly spellcheck="false"></textarea>
+  <div id="meta"></div>
+  <button id="copyBtn">Copy license</button>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    window.adminApi.keyStatus().then((err) => { if (err) { $('err').textContent = err; $('genBtn').disabled = true; } });
+    $('genBtn').onclick = async () => {
+      $('err').textContent = ''; $('meta').textContent = ''; $('out').value = '';
+      const r = await window.adminApi.gen($('mac').value, $('days').value);
+      if (r.error) { $('err').textContent = r.error; return; }
+      $('out').value = r.code;
+      $('meta').textContent = 'For ' + r.mac.replace(/(..)(?=.)/g, '$1:') +
+        ' — valid until ' + new Date(r.expiresAt).toLocaleDateString();
+    };
+    $('copyBtn').onclick = async () => {
+      if (!$('out').value) return;
+      await window.adminApi.copy($('out').value);
+      $('copyBtn').textContent = 'Copied';
+      setTimeout(() => { $('copyBtn').textContent = 'Copy license'; }, 1200);
+    };
+  </script>
+</body>
+</html>
