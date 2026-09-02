@@ -2633,3 +2633,25 @@ body.role-supporter .mode-toggle-btn { display: none !important; }
 }
 .tour-back:disabled { opacity: .4; cursor: default; }
 .tour-next { padding: 7px 16px; font-size: 13px; }
+
+/* ── Session history modal ─────────────────────────────────── */
+.history-icon { width: 16px; height: 16px; display: block; }
+.history-icon path { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.history-body { display: flex; flex-direction: column; gap: 10px; }
+.history-search { width: 100%; }
+.history-list { display: flex; flex-direction: column; gap: 8px; }
+.history-item {
+  -webkit-app-region: no-drag;
+  text-align: left; width: 100%;
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--bg); color: var(--text); box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease), transform var(--t) var(--ease);
+}
+.history-item:hover { border-color: rgba(37,99,235,.45); box-shadow: var(--shadow); transform: translateY(-1px); }
+.history-title { font-size: 14px; font-weight: 650; }
+.history-title .history-untitled { color: var(--muted); font-weight: 500; }
+.history-meta { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.history-empty { text-align: center; padding: 14px 0; }

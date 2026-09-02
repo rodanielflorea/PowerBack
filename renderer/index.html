@@ -418,6 +418,9 @@
     <div class="setup-card mode-select-card">
       <div class="setup-topbar">
         <span class="setup-topbar-spacer"></span>
+        <button class="setup-gear-btn" id="historyBtn" title="Session history — resume a saved interview">
+          <svg class="history-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12 a8.5 8.5 0 1 0 2.6 -6.1" /><path d="M3 4.5 v4.5 h4.5" /><path d="M12 8 v4.5 l3 2" /></svg>
+        </button>
         <button class="setup-gear-btn" id="modeSelectSettingsBtn" title="Settings &amp; user guide">&#9881;</button>
       </div>
       <div class="welcome-hero">
@@ -724,6 +727,21 @@
   <script src="lib/mermaid.min.js"></script>
   <script src="diagram-shared.js"></script>
   <script src="tooltip.js"></script>
+  <!-- Session history: pick a saved interview to resume -->
+  <section class="settings-overlay" id="historyOverlay" hidden>
+   <div class="settings-modal" role="dialog" aria-modal="true" aria-label="Session history">
+    <div class="settings-header">
+      <span>Session history</span>
+      <button class="btn" id="historyCloseBtn" title="Close">&times;</button>
+    </div>
+    <div class="settings-body history-body">
+      <input type="search" id="historySearch" class="profile-input history-search" placeholder="Search company, position, name, timezone…" spellcheck="false" />
+      <div class="history-list" id="historyList"></div>
+      <p class="hint history-empty" id="historyEmpty" hidden>No saved interviews yet. A session is saved when you end an interview.</p>
+    </div>
+   </div>
+  </section>
+
   <!-- First-run tour (renderer/tour.js) -->
   <div id="tour" hidden>
     <div class="tour-spot"></div>

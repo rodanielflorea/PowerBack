@@ -2794,7 +2794,7 @@ function knowledgeItems(k) {
 // Lightweight list for the picker (no turn bodies/images/knowledge text).
 ipcMain.handle('session-list', () =>
   sessions
-    .map(s => ({ id: s.id, name: s.name || '(untitled)', createdAt: s.createdAt, updatedAt: s.updatedAt, turnCount: (s.turns || []).length, profile: s.profile || {} }))
+    .map(s => ({ id: s.id, name: s.name || '(untitled)', createdAt: s.createdAt, updatedAt: s.updatedAt, turnCount: (s.turns || []).length, profile: s.profile || {}, company: s.company || '', position: s.position || '', salary: s.salary || null }))
     .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 );
 // Preview metadata for one session — no side effects (doesn't switch current).
@@ -2898,6 +2898,30 @@ ipcMain.handle('session-load', (_e, id) => {
   activeSalary = s.salary || null;
   schedulePromptCacheWarm();
   return { id: s.id, name: s.name, turns: s.turns || [], profile: s.profile || {}, knowledgeMeta: knowledgeMeta(s.knowledge) };
+});
+// Resume a saved session from the materials step: keep its id and turns,
+// take the (possibly edited) profile, salary and current materials.
+ipcMain.handle('session-resume', (_e, { id, profile, salary } = {}) => {
+  const s = sessions.find(x => x.id === id);
+  if (!s) return null;
+  const p = profile || s.profile || {};
+  s.profile = { name: p.name || '', city: p.city || '', country: p.country || '', timezone: p.timezone || '' };
+  s.salary = salary && Number(salary.amount) > 0
+    ? { amount: Number(salary.amount), currency: String(salary.currency || 'USD'), period: String(salary.period || 'month') }
+    : (s.salary || null);
+  s.knowledge = snapshotKnowledge();
+  s.updatedAt = Date.now();
+  currentSessionId = id;
+  convoHistory = (s.turns || [])
+    .filter((t) => t && t.kind !== 'meet')
+    .map((t) => ({ user: t.q || '', assistant: t.a || '', mode: t.mode || 'ANSWER' }));
+  activeProfile = s.profile;
+  activeSalary = s.salary;
+  state.profile = { ...s.profile };
+  saveState();
+  saveSessions();
+  schedulePromptCacheWarm();
+  return { id: s.id, name: s.name, turns: s.turns || [], profile: s.profile };
 });
 ipcMain.handle('session-delete', (_e, id) => {
   sessions = sessions.filter(s => s.id !== id);

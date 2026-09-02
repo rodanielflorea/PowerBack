@@ -92,6 +92,7 @@ contextBridge.exposeInMainWorld('api', {
   sessionMeta: (id) => ipcRenderer.invoke('session-meta', id),
   sessionNew: (meta) => ipcRenderer.invoke('session-new', meta),
   sessionLoad: (id) => ipcRenderer.invoke('session-load', id),
+  sessionResume: (id, meta) => ipcRenderer.invoke('session-resume', { id, ...(meta || {}) }),
   sessionRecordMeet: (payload) => ipcRenderer.invoke('session-record-meet', payload),
   sessionDelete: (id) => ipcRenderer.invoke('session-delete', id),
   sessionUpdateProfile: (id, profile) => ipcRenderer.invoke('session-update-profile', { id, profile }),
