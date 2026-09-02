@@ -23,7 +23,8 @@ function square(size) {
     console.error('Missing build/icon-source.png');
     process.exit(1);
   }
-  await square(256).toFile(PNG);
+  // 512px: electron-builder's Linux targets want at least 512x512.
+  await square(512).toFile(PNG);
   console.log('Wrote', PNG);
 
   const buffers = await Promise.all(SIZES.map((s) => square(s).toBuffer()));
