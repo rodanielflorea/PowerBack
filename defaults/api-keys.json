@@ -1,0 +1,7 @@
+{
+  "_comment": "Built-in provider API keys shipped inside the app. Fill in the ones you want users to get automatically; leave a key empty to let users enter their own for that provider. WARNING: anything here can be extracted from the installed app by its users - rotate at the provider if it leaks.",
+  "deepgram": "",
+  "xai": "",
+  "anthropic": "",
+  "openai": ""
+}

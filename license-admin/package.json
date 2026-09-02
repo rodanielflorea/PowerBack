@@ -4,8 +4,8 @@
   "description": "License generator for RemoteDevJobAce (admin only — never distribute)",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "build": "electron-builder --win portable --publish never"
+    "start": "cd .. && npx electron license-admin",
+    "build": "cd .. && npm run admin:build"
   },
   "build": {
     "appId": "com.stealthsupport.licenseadmin",
@@ -25,10 +25,7 @@
         "portable"
       ],
       "artifactName": "ACE-License-Generator-${version}.${ext}"
-    }
-  },
-  "devDependencies": {
-    "electron": "^41.4.0",
-    "electron-builder": "^25.0.0"
+    },
+    "electronVersion": "41.4.0"
   }
 }

@@ -22,6 +22,22 @@ const captureSystemEl = document.getElementById("captureSystem");
 const engineDeepgram = document.getElementById("engineDeepgram");
 const engineXai = document.getElementById("engineXai");
 const deepgramKeyEl = document.getElementById("deepgramKey");
+
+// Providers with a key built into the app (defaults/api-keys.json) need no
+// key from the user: hide their key fields entirely.
+if (window.api.getBuiltinKeys) {
+  window.api.getBuiltinKeys().then((b) => {
+    const hideField = (id) => {
+      const el = document.getElementById(id);
+      const field = el && el.closest(".field");
+      if (field) field.hidden = true;
+    };
+    if (b.deepgram) hideField("deepgramKey");
+    if (b.xai) { hideField("xaiKey"); hideField("answerKey"); }
+    if (b.anthropic) hideField("answerKeyAnthropic");
+    if (b.openai) hideField("answerKeyOpenai");
+  }).catch(() => {});
+}
 const xaiKeyEl = document.getElementById("xaiKey");
 const languageSelect = document.getElementById("languageSelect");
 
