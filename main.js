@@ -94,6 +94,7 @@ const DEFAULT_STATE = {
     micDeviceId: '',
     captureSystem: true,
     captureMic: false,
+    autoAnswer: true, // answer by itself when the interviewer stops speaking
   },
   capture: {
     rect: null,
@@ -3197,7 +3198,7 @@ function meetingStanceBlock() {
   const { hiringType } = getMeetingConfig();
   const kb = `${whoAmILine()} This is a 1:1 hiring call. Transcript lines tagged Interviewer are the other person. The setup profile name is you. Your knowledge base is whatever was uploaded (CV and/or JD and/or support). Missing files are fine. You are the candidate, not a helper who follows their lead.`;
   const typeHint = STAGE_GUIDANCE[hiringType] || '';
-  return `MEETING STANCE — HIRING INTERVIEW (${hiringType}): ${kb}\n${typeHint}\n${ANSWER_SHAPE}\n${QUESTION_POLICY} If they state an opinion, do not auto-agree. If they talk only among themselves and you should stay quiet, use [LISTEN] plus a short reason. Never invent experience. One spoken turn only.`;
+  return `MEETING STANCE — HIRING INTERVIEW (${hiringType}): ${kb}\n${typeHint}\n${ANSWER_SHAPE}\n${QUESTION_POLICY} If they state an opinion, do not auto-agree. Never invent experience. One spoken turn only.`;
 }
 
 function assembleStaticSystem(mode) {
@@ -3252,7 +3253,7 @@ function formatAnswerUserTurn(q, transcript, mode) {
   if (ask) {
     parts.push('The candidate typed this question in the input box. Answer it from the knowledge base. Use the meeting transcript only if it helps.\n\n' + ask);
   } else {
-    parts.push('The candidate did not type a question. This is live meeting talk. Decide now: speak, or [LISTEN]. If you speak, answer, take a position, push back, or ask. Use names when you know them. Do not only follow their idea.');
+    parts.push('The candidate did not type a question. The interviewer just spoke — see the last transcript lines. Respond as the candidate to what was said last: answer the question they asked, or react briefly and naturally to their statement. Always respond; never stay silent and never answer with a placeholder.');
   }
   return parts.join('\n\n');
 }
@@ -3298,7 +3299,10 @@ async function generateAnswer(question, images, forcedMode, transcript) {
   const imgs = Array.isArray(images) && images.length ? images : null;
   const q = String(question || '').trim();
   const mt = String(transcript || '').trim();
-  if (!q && !imgs && !mt) return;
+  if (!q && !imgs && !mt) {
+    if (win && !win.isDestroyed()) win.webContents.send('answer-error', 'Nothing to answer yet — wait for the interviewer to speak, or type a question.');
+    return;
+  }
   const provider = getAnswerProvider();
   const apiKey = getAnswerApiKey(provider.id);
   if (!apiKey) {
@@ -3308,6 +3312,9 @@ async function generateAnswer(question, images, forcedMode, transcript) {
   if (answerAbort) { try { answerAbort.abort(); } catch {} answerAbort = null; }
   const ac = new AbortController();
   answerAbort = ac;
+  // A request that never produces a first token would leave the bubble
+  // "streaming" forever; give up after 25 s and say so.
+  const watchdog = setTimeout(() => { ac._timedOut = true; try { ac.abort(); } catch {} }, 25000);
 
   const model = getAnswerModel(provider.id);
   const mode = resolveAnswerMode(forcedMode, q);
@@ -3338,6 +3345,7 @@ async function generateAnswer(question, images, forcedMode, transcript) {
         if (!piece) return;
         if (firstToken) {
           firstToken = false;
+          clearTimeout(watchdog);
           appendLogLine(`[answer] first-token ${Date.now() - t0}ms provider=${provider.id} model=${model}`);
         }
         full += piece;
@@ -3345,7 +3353,11 @@ async function generateAnswer(question, images, forcedMode, transcript) {
       },
     });
   } catch (e) {
-    if (e.name !== 'AbortError' && win && !win.isDestroyed()) {
+    clearTimeout(watchdog);
+    if (e.name === 'AbortError' && ac._timedOut && win && !win.isDestroyed()) {
+      appendLogLine(`[answer] no response after 25s provider=${provider.id} model=${model}`);
+      win.webContents.send('answer-error', `${provider.label} did not respond in 25 s — press ↻ to try again.`);
+    } else if (e.name !== 'AbortError' && win && !win.isDestroyed()) {
       if (e.status) {
         appendLogLine(`[${provider.id}] ${e.status}: ${(e.body || e.message || '').slice(0, 200)}`);
         win.webContents.send('answer-error', friendlyAnswerError(provider, e.status, e.body));
@@ -3356,6 +3368,7 @@ async function generateAnswer(question, images, forcedMode, transcript) {
     answerAbort = null;
     return;
   }
+  clearTimeout(watchdog);
   answerAbort = null;
   if (full.trim()) {
     sessionLog.push({ ts: Date.now(), kind: 'question', text: q || `[${(imgs && imgs.length) || 0} image${imgs && imgs.length > 1 ? 's' : ''}]` });
