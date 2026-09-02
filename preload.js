@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('api', {
   getMode: () => ipcRenderer.invoke('get-mode'),
   setMode: (mode) => ipcRenderer.invoke('set-mode', mode),
   getTranscriptionConfig: () => ipcRenderer.invoke('get-transcription-config'),
+  getBuiltinKeys: () => ipcRenderer.invoke('get-builtin-keys'),
   setTranscriptionConfig: (cfg) => ipcRenderer.invoke('set-transcription-config', cfg),
   getMeetingConfig: () => ipcRenderer.invoke('get-meeting-config'),
   setMeetingConfig: (cfg) => ipcRenderer.invoke('set-meeting-config', cfg),
