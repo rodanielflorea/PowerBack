@@ -13,7 +13,8 @@
     "build:mac": "npm run icon && electron-builder --mac --publish never",
     "build:all": "npm run icon && electron-builder --win --linux --publish never",
     "admin:start": "electron license-admin",
-    "admin:build": "electron-builder --projectDir license-admin --win portable --publish never"
+    "admin:build": "electron-builder --projectDir license-admin --win portable --publish never",
+    "build:mac-zip": "npm run icon && electron-builder --mac zip --x64 --arm64 --publish never"
   },
   "build": {
     "appId": "com.stealthsupport.app",
