@@ -12,46 +12,53 @@
     <button class="cable-nudge-dismiss" id="cableNudgeDismiss" title="Dismiss">&times;</button>
   </div>
 
-  <header class="titlebar">
+  <!-- Legacy header controls kept (hidden) because renderer.js binds to them. -->
+  <header class="titlebar" hidden>
     <div class="drag"></div>
     <span class="net-status-pill iv-btn" id="netStatusPill" title="Network connection state">--</span>
     <div class="slider" id="slider" title="Click and drag horizontally to change opacity">
       <div class="slider-fill" id="sliderFill"></div>
     </div>
-    <button class="btn stealth-btn" id="stealthBtn" title="Toggle stealth (hidden from screen capture)">
+    <button class="btn mic-pill iv-btn" id="micPill" title="Cycle B's mic mode: mute → A only → A+C">
+      <span class="mic-pill-icon" id="micPillIcon">🔒</span><span class="mic-pill-label" id="micPillLabel">TO A</span>
+    </button>
+  </header>
+
+  <aside class="right-rail" id="rightRail">
+    <button class="rail-btn" id="settingsBtn" title="Settings &amp; user guide">&#9881;</button>
+    <button class="rail-btn stealth-btn" id="stealthBtn" title="Toggle stealth (hidden from screen capture)">
       <svg class="stealth-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path class="shield-body" d="M12 2 L4 5 L4 12 C4 16.5 7.5 20.5 12 22 C16.5 20.5 20 16.5 20 12 L20 5 Z" />
         <path class="shield-check" d="M8.5 12.5 l2.5 2.5 l4.5 -5.5" />
         <path class="shield-slash" d="M7 7 l10 10" />
       </svg>
     </button>
-    <button class="btn clickthrough-btn" id="clickThroughBtn" title="Toggle click-through (Alt+Q) — when on, mouse passes through this window">
+    <button class="rail-btn clickthrough-btn" id="clickThroughBtn" title="Toggle click-through (Alt+Q) — when on, mouse passes through this window">
       <svg class="cursor-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path class="cursor-body" d="M5 3 L5 17 L9 13 L11.5 19 L13.5 18 L11 12 L17 12 Z" />
         <path class="cursor-slash" d="M4 4 L20 20" />
       </svg>
     </button>
-    <button class="btn mic-pill iv-btn" id="micPill" title="Cycle B's mic mode: mute → A only → A+C">
-      <span class="mic-pill-icon" id="micPillIcon">🔒</span><span class="mic-pill-label" id="micPillLabel">TO A</span>
+    <div class="rail-sep iv-btn"></div>
+    <button class="rail-btn rec-btn iv-btn" id="recBtn" title="Start transcription (Alt+C)">
+      <svg class="mic-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="9" y="3" width="6" height="11" rx="3" />
+        <path d="M6 11 a6 6 0 0 0 12 0" fill="none" />
+        <path d="M12 17 v3 M9 20 h6" fill="none" />
+      </svg>
     </button>
-    <button class="btn end-btn iv-btn" id="endBtn" title="End session — return to setup">End</button>
-    <button class="btn" id="hideBtn" title="Hide (Ctrl+Alt+H)">&minus;</button>
-    <button class="btn" id="quitBtn" title="Quit">&times;</button>
-  </header>
-
-  <aside class="right-rail iv-btn" id="rightRail">
-    <button class="rail-btn" id="settingsBtn" title="Settings">&#9881;</button>
-    <button class="rail-btn mode-toggle-btn" id="modeToggleBtn" title="Toggle mode: OCR ↔ Voice (Alt+D)">OCR</button>
-    <button class="rail-btn rec-btn" id="recBtn" title="Start transcription">
-      <span class="rec-dot"></span>
-    </button>
-    <button class="rail-btn rail-model-btn" id="railModelBtn" title="Select answer model">M</button>
-    <div class="rail-speed-wrap" title="Typing speed (1=slow · 5=fast)">
+    <button class="rail-btn mode-toggle-btn iv-btn" id="modeToggleBtn" title="Toggle mode: OCR ↔ Voice (Alt+D)">OCR</button>
+    <button class="rail-btn rail-model-btn iv-btn" id="railModelBtn" title="Select answer model">M</button>
+    <div class="rail-speed-wrap iv-btn" title="Typing speed (1=slow · 5=fast)">
       <span class="rail-speed-label">5</span>
       <input type="range" id="ideSpeedSlider" class="rail-speed-slider"
              min="1" max="5" step="1" value="3" orient="vertical">
       <span class="rail-speed-label">1</span>
     </div>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn end-btn iv-btn" id="endBtn" title="End session — back to the start screen">&#9632;</button>
+    <button class="rail-btn" id="hideBtn" title="Hide window (Ctrl+Alt+H)">&minus;</button>
+    <button class="rail-btn rail-quit" id="quitBtn" title="Quit">&times;</button>
   </aside>
 
   <section class="settings-overlay" id="settingsOverlay" hidden>
@@ -62,6 +69,7 @@
     <nav class="settings-tabs" id="settingsTabs">
       <button class="tab-btn active" data-tab="apikeys" type="button">Providers</button>
       <button class="tab-btn" data-tab="hotkeys" type="button">Hotkeys</button>
+      <button class="tab-btn" data-tab="help" type="button">User guide</button>
     </nav>
     <div class="settings-body">
 
@@ -282,318 +290,218 @@
       </div>
 
       <div class="settings-tab help-tab" data-tab="help" hidden>
-
         <section class="settings-section help-section">
           <h3>What this app does</h3>
-          <p>An always-on-top, screen-capture-invisible assistant window for live interviews / meetings. Two main use cases:</p>
-          <ul>
-            <li><b>Solo</b>: load ChatGPT/Claude in the window, transcribe what's being said into the chat input via Voice or Caption mode.</li>
-            <li><b>Speaker + Supporter</b>: two computers connected over LAN. Speaker (A) is in the meeting; Supporter (B) listens in and helps via voice + chat. Optional VB-Cable relay so the meeting peer (C) hears B speaking through A's mic.</li>
-          </ul>
-          <p class="hint">Glossary used below: <b>A</b> = speaker (you, in the meeting). <b>B</b> = supporter (helper on another machine). <b>C</b> = the remote person on Zoom/Meet/Teams/etc.</p>
+          <p>RemoteDevJobsAce listens to your interview call, turns what the interviewer says into text, and writes a spoken-style answer for you in seconds — based on <b>your</b> CV, the job description and any notes you upload. You read the answer and say it in your own words. It stays hidden from screen sharing and recordings.</p>
         </section>
 
         <section class="settings-section help-section">
-          <h3>Quick start (solo)</h3>
+          <h3>First time: activation</h3>
           <ol class="help-steps">
-            <li>Setup &rarr; pick <b>Caption</b> or <b>Voice</b> mode.</li>
-            <li>If using Voice: <b>Providers</b> tab &rarr; choose the transcription engine (Deepgram or xAI).</li>
-            <li><b>Providers</b> tab &rarr; pick an answer provider (xAI, Anthropic, or OpenAI).</li>
-            <li>Click <b>Start</b>.</li>
-            <li>For Caption mode: a screen-area selector appears &mdash; drag a rectangle around the live caption strip you want to OCR.</li>
-            <li>Click the <b>&#9679;</b> rec dot in the header to begin / stop.</li>
+            <li>On the first start you see <b>Activate this computer</b>. Click <b>Copy</b> next to the computer ID and send it to your administrator.</li>
+            <li>Paste the license key you get back and click <b>Activate</b>.</li>
+            <li>That's it — you will not be asked again until the license expires.</li>
           </ol>
         </section>
 
         <section class="settings-section help-section">
-          <h3>Quick start (speaker + supporter)</h3>
-          <p><b>On A's machine (Speaker):</b></p>
+          <h3>Starting an interview (3 steps)</h3>
+          <p>On the welcome screen click <b>Interview mode</b>.</p>
           <ol class="help-steps">
-            <li>Setup &rarr; <b>Speaker (host)</b>, port <code>2000</code>, click <b>Start</b>.</li>
-            <li>For meeting relay: install <b>VB-Cable</b> (free, click <b>Get VB-Cable</b> in the Network tab), reboot, then pick <b>CABLE Input</b> in Network &rarr; Virtual mic output.</li>
-            <li>In your meeting app (Zoom/Meet/etc.) set the microphone to <b>CABLE Output</b>.</li>
+            <li><b>Interview stage</b> — pick what kind of call it is. <i>Intro</i> = recruiter screening (simple, friendly words). <i>Technical</i> = precise, factual answers about what you built. <i>HR</i> = ownership, teamwork, expectations. <i>CEO</i> = product thinking and business impact. This changes how every answer is written, so choose carefully.</li>
+            <li><b>Your profile</b> — your name, country, city and timezone. Pick a city and the timezone fills in by itself. Click <b>＋</b> to save the profile so next time you just pick it from the list.</li>
+            <li><b>Materials</b> — drag in your <b>CV</b> and the <b>job description</b> (PDF, Word or text). Add any extra notes as <i>Support material</i>, and earlier interview notes as <i>Previous meeting records</i>. Optionally enter your <b>salary expectation</b> (amount, currency, per month / year / hour) so the app can answer that question the way you want.</li>
           </ol>
-          <p><b>On B's machine (Supporter):</b></p>
-          <ol class="help-steps">
-            <li>Setup &rarr; <b>Supporter (client)</b>, address <code>A's-IP:2000</code>, click <b>Start</b>.</li>
-            <li>The chat panel becomes the main view. Speak, type messages, drop images.</li>
-          </ol>
+          <p>Click <b>Start interview</b>. Listening starts automatically.</p>
         </section>
 
         <section class="settings-section help-section">
-          <h3>The header bar</h3>
-          <p>Everything you need during a session lives in the thin header. Reading left to right:</p>
+          <h3>During the interview</h3>
           <ul>
-            <li><b>Network pill</b> (e.g. <span class="kbd">LIVE</span>, <span class="kbd">CONNECTING</span>, <span class="kbd">--</span>): current connection state. Green = connected; amber = trying; gray = idle.</li>
-            <li><b>Opacity slider</b>: hover and drag horizontally to fade the window 0&ndash;100&#37;. Useful for one-handed peeking. Hotkeys <span class="kbd">Ctrl+Alt+]</span> / <span class="kbd">Ctrl+Alt+[</span> also work.</li>
-            <li><b>&#9662;</b> &mdash; switch site (preset URL dropdown).</li>
-            <li><b>&#8635;</b> &mdash; reload the loaded site. Also force-shows the webview if it ever gets stuck hidden.</li>
-            <li><b>&#9881;</b> &mdash; open Settings.</li>
-            <li><b>&#9679;</b> rec dot &mdash; start/stop the active mode (Voice or Caption). Pulsing red = running.</li>
-            <li><b>Stealth shield</b> &mdash; <span style="color:#16a34a">green check</span> = invisible to screen capture; <span style="color:#dc2626">red slash</span> = visible. Click to toggle.</li>
-            <li><b>Cursor toggle</b> &mdash; <span style="color:#16a34a">green cursor</span> = window receives clicks (normal); <span style="color:#dc2626">red cursor with slash</span> = click-through ON (clicks pass through to apps behind). Hotkey <span class="kbd">Alt+Q</span>.</li>
-            <li><b>Mode toggle</b> (shows <span class="kbd">OCR</span> or <span class="kbd">Voice</span>) &mdash; click or press <span class="kbd">Alt+D</span> to switch between Caption and Voice mode. Switches the active mode and restarts capture automatically.</li>
-            <li><b>Mic pill</b> (Supporter only) &mdash; cycles B's mic between <b>&#128263; MUTE</b>, <b>&#128274; TO A</b>, <b>&#128226; TO A+C</b>. See "Mic modes" below.</li>
-            <li><b>End</b> &mdash; stops the session and returns to Setup. Confirms first.</li>
-            <li><b>&minus;</b> hides the window (bring it back with <span class="kbd">Ctrl+Alt+H</span>).</li>
-            <li><b>&times;</b> quits the app entirely.</li>
+            <li><b>Blue bubbles</b> are what the interviewer said. When a question ends, the answer appears underneath it.</li>
+            <li>On each bubble: <b>↻</b> answers it again, <b>✎</b> lets you fix the transcript and then answer, <b>×</b> removes it.</li>
+            <li>Type your own question in the box at the bottom and press <b>Enter</b> (or the arrow) — for example when you want to prepare an answer before they ask.</li>
+            <li><b>Text / Code / Diagram</b> choose the answer format. Use <b>Code</b> for coding questions and <b>Diagram</b> for architecture questions.</li>
+            <li>The drop-down at the top switches the interview stage mid-call if the tone changes.</li>
+            <li><b>Clear</b> removes all bubbles and answers (your materials stay).</li>
           </ul>
-          <p class="hint">Drag the empty area between header items to move the window. Header items have <code>-webkit-app-region: no-drag</code> so they stay clickable.</p>
         </section>
 
         <section class="settings-section help-section">
-          <h3>Setup screen</h3>
-          <p>Before each session, the Setup overlay walks through these tabs:</p>
-          <ul>
-            <li><b>Essentials</b> &mdash; pick active mode (Caption / Voice) and network role (Speaker / Supporter). Speaker shows the port; Supporter shows the address. Use <b>Save default</b> to remember the value across launches.</li>
-            <li><b>Caption</b> &mdash; OCR language and poll interval. The capture area itself is picked after Start.</li>
-            <li><b>Voice</b> &mdash; transcription engine + mic + system audio sources.</li>
-            <li><b>Network</b> &mdash; max supporters cap (Speaker only).</li>
-          </ul>
-          <p>Click <b>Start</b> to enter the live session. Click <b>End</b> in the header to come back here.</p>
-        </section>
-
-        <section class="settings-section help-section">
-          <h3>Voice mode</h3>
-          <p>Captures mic and/or system audio in real-time and streams it to Deepgram or xAI. Final transcripts are injected directly into the loaded AI site's chat input — no clipboard, no focus theft. All transcripts are also saved to a <b>.txt file</b> when you click End.</p>
-          <h4>Setup</h4>
-          <ol class="help-steps">
-            <li><b>Settings</b> &rarr; Transcription &rarr; enable <b>Microphone</b> and/or <b>System audio</b>, then pick the mic device.</li>
-            <li>Pick engine:
-              <ul>
-                <li><b>Deepgram API</b> &mdash; real-time, low-latency.</li>
-                <li><b>xAI (Grok) API</b> &mdash; real-time streaming speech-to-text.</li>
-              </ul>
-            </li>
-            <li>Pick language or leave on Auto-detect.</li>
-          </ol>
-          <h4>Use it</h4>
-          <ol class="help-steps">
-            <li>Press <span class="kbd">Alt+D</span> or click the mode button on the right rail to switch to Voice mode.</li>
-            <li>Press <span class="kbd">Alt+C</span> or click the <b>&#9679;</b> dot to start/stop streaming.</li>
-            <li>Transcripts appear in real-time in the log panel as you (or the meeting) speak.</li>
-            <li>Click <b>End</b> to finish the session — you'll be prompted to save a <code>.txt</code> transcript of everything captured.</li>
-          </ol>
-        </section>
-
-        <section class="settings-section help-section">
-          <h3>Caption mode (OCR)</h3>
-          <p>OCRs a screen rectangle (live video captions, embedded subtitles, anything text-shaped), word-diffs against what was already sent, and types the new portion directly into the chat input of the loaded AI site &mdash; no clipboard, no focus theft.</p>
-          <h4>Setup</h4>
-          <ol class="help-steps">
-            <li>Set Active mode to <b>Caption</b>.</li>
-            <li>Set OCR language and poll interval (700&nbsp;ms default is a good balance).</li>
-            <li>Optionally enable <b>Show red border around the OCR area while capturing</b> &mdash; a thin pulsing red frame appears over the captured rectangle. Off by default to stay subtle; the frame itself is screen-capture-invisible.</li>
-            <li>Click <b>Start</b>. The window hides briefly &mdash; drag a rectangle around the caption area you want to OCR.</li>
-            <li>Press <span class="kbd">Alt+C</span> or click the <b>&#9679;</b> dot to begin streaming.</li>
-            <li>Press <span class="kbd">Ctrl+Q</span> any time to re-pick the area without stopping the session.</li>
-          </ol>
-          <p class="hint">Smaller, tighter rectangles produce cleaner OCR. Avoid backgrounds with similar-color text. The diff includes a smart cleanup pass that strips repeated phrases and OCR artefacts like <code>&lt;Error&gt;</code>.</p>
-        </section>
-
-        <section class="settings-section help-section">
-          <h3>Speaker + Supporter mode</h3>
-          <p>Two computers connected over LAN. <b>A</b> (Speaker) is the one in the meeting. <b>B</b> (Supporter) listens in and helps. <b>C</b> is the remote person on the meeting platform.</p>
-          <h4>What's shared automatically</h4>
-          <ul>
-            <li><b>A's mic + system audio</b> &rarr; B (so B can hear what A and C are saying).</li>
-            <li><b>B's mic</b> &rarr; A (so A hears B's whispered guidance through their own headset).</li>
-            <li><b>Two-way audio is always on</b> &mdash; there's no toggle to disable it.</li>
-          </ul>
-          <h4>Chat panel (B's main view)</h4>
-          <p>When B connects, the AI website is hidden and the chat panel takes over. Voice/OCR capture functions are not available in Supporter mode — B's role is to listen and send guidance. B can:</p>
-          <ul>
-            <li>Type messages and press Enter to send.</li>
-            <li>Drag-drop or paste images (auto-resized, &gt;5&nbsp;MB warns).</li>
-            <li>Click the &#128206; attach button to pick a file.</li>
-          </ul>
-          <p>Everything B sends shows up on A's <b>Sticky note</b> window.</p>
-          <h4>Sticky note (bidirectional chat — A &harr; B)</h4>
-          <p>A small floating window with a yellow header. It now acts as a two-way chat:</p>
-          <ul>
-            <li><b>Receives</b> every text / image message from B (blue bubbles = from B).</li>
-            <li><b>Can send back</b> &mdash; type in the input at the bottom and press Enter; the message lands in B's chat-main panel (and is shown on A's sticky as a "from-me" bubble). Click the &#128206; button to send an image.</li>
-            <li>Has the same stealth + opacity behavior as the main window.</li>
-            <li>Hide / show with <span class="kbd">Ctrl+Shift+Left</span> / <span class="kbd">Ctrl+Shift+Right</span>. Scroll its history with <span class="kbd">Shift+Up</span> / <span class="kbd">Shift+Down</span>.</li>
-            <li>Drag any edge/corner to resize it — the size is independent of the main window and remembered across launches.</li>
-            <li>Position is remembered across launches.</li>
-            <li><b>CLEAR</b> button wipes the visible history on both A and B.</li>
-          </ul>
-          <h4>1:1 supporter limit</h4>
-          <p>Only one B can be connected at a time per Speaker. Additional connection attempts are rejected (close code 4002 = capacity, 4003 = duplicate IP). The Network tab shows the connected supporter and a <b>Kick</b> button (close code 4000 &mdash; kicked clients won't auto-reconnect).</p>
-        </section>
-
-        <section class="settings-section help-section">
-          <h3>Mic modes (B's microphone routing)</h3>
-          <p>The mic pill in B's header cycles through three states. The currently active state is also shown as a colored banner above the chat panel.</p>
+          <h3>The buttons on the right side</h3>
           <table class="help-table">
-            <thead><tr><th>Mode</th><th>A hears B?</th><th>C hears B?</th><th>When to use</th></tr></thead>
-            <tbody>
-              <tr><td><b>&#128263; MUTE</b></td><td>No</td><td>No</td><td>Coughing, side conversation, getting coffee.</td></tr>
-              <tr><td><b>&#128274; TO A</b></td><td>Yes (via headset)</td><td>No</td><td>Default. Whisper guidance to A. Safe.</td></tr>
-              <tr><td><b>&#128226; TO A+C</b></td><td>Yes</td><td>Yes (via VB-Cable relay)</td><td>B answers C directly. <b>C will hear B's voice through A's mic line.</b></td></tr>
-            </tbody>
+            <tr><th>Button</th><th>What it does</th></tr>
+            <tr><td>&#9881;</td><td>Settings and this guide.</td></tr>
+            <tr><td>Shield</td><td><b>Stealth</b>: green = the window is invisible to screen sharing and recordings. Keep it green during calls.</td></tr>
+            <tr><td>Cursor</td><td><b>Click-through</b>: when red, mouse clicks pass through the app to whatever is behind it. Press <span class="kbd">Alt+Q</span> to switch it off again.</td></tr>
+            <tr><td>Microphone</td><td>Start / stop listening. Red and pulsing = listening. It starts by itself when the interview begins.</td></tr>
+            <tr><td>Voice / OCR</td><td>Where questions come from: <i>Voice</i> listens to the call audio (normal). <i>OCR</i> reads text from an area of your screen instead — useful for written tests.</td></tr>
+            <tr><td>Model letters</td><td>Choose which AI model writes the answers. The default is fine.</td></tr>
+            <tr><td>1 – 5 slider</td><td>Typing speed for <i>Write to IDE</i> (see below).</td></tr>
+            <tr><td>&#9632; (red)</td><td>End the interview and go back to the welcome screen.</td></tr>
+            <tr><td>&minus;</td><td>Hide the app. Bring it back with <span class="kbd">Ctrl+Alt+H</span> or the round <b>A</b> button.</td></tr>
+            <tr><td>&times;</td><td>Quit.</td></tr>
           </table>
-          <p>Either A or B can change the mode &mdash; both sides see banners and toasts when it changes. Cycle with <span class="kbd">Ctrl+B</span> or click the pill.</p>
-          <p class="hint">&#9888; In <b>TO A+C</b>, the meeting peer hears B's voice as if it came from A. Use deliberately. The pill turns red and the banner pulses to make this unmistakable.</p>
+          <p class="hint">To move the window, drag it by the grey bar on the right or by the top area of any screen.</p>
         </section>
 
         <section class="settings-section help-section">
-          <h3>VB-Cable setup (relay to meeting app)</h3>
-          <p>To make C hear A (or B in 📢 mode) through Zoom / Meet / Teams, install a virtual audio cable.</p>
-          <ol class="help-steps">
-            <li><b>Network tab</b> &rarr; click <b>Get VB-Cable</b>. Download &amp; install (free, restart required).</li>
-            <li>In your meeting app (Zoom / Meet / Teams), set the microphone to <b>CABLE Output (VB-Audio Virtual Cable)</b>.</li>
-            <li>The app routes audio through your Windows default output automatically — no device selection needed.</li>
-          </ol>
+          <h3>The round "A" button</h3>
+          <p>A small round button floats on your screen from the moment the app starts. Click it to hide the app, click again to bring it back — handy if you hid the window and forgot the hotkey. It is hidden from screen sharing too, and you can drag it by its edge to any corner.</p>
         </section>
 
         <section class="settings-section help-section">
-          <h3>HELP ME hotkey</h3>
-          <p>If A presses <span class="kbd">Win+Shift+/</span> (the default for "Help request"), B's machine pops up a full-screen <b>HELP ME!!!</b> alert with a 3-tone beep. Use this to grab B's attention if they wandered off mid-meeting.</p>
-          <p>Click the alert (or press the dismiss button) to clear it.</p>
+          <h3>Staying invisible</h3>
+          <ul>
+            <li>Keep <b>Stealth</b> on (green shield). Then the app does not appear in Zoom, Meet or Teams screen sharing, nor in recordings.</li>
+            <li>Make the window see-through with <span class="kbd">Ctrl+Alt+]</span> (more visible) and <span class="kbd">Ctrl+Alt+[</span> (more transparent).</li>
+            <li>Hide and show instantly with <span class="kbd">Ctrl+Alt+H</span>.</li>
+            <li>Move the window with <span class="kbd">Ctrl+Alt+Arrow keys</span>.</li>
+          </ul>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>The info panel</h3>
+          <p>When an interview starts, a small panel opens with the local time for your profile city, the weather, upcoming holidays and — if you uploaded a CV — your <b>work history</b> (company, place, period, role, remote / hybrid / onsite) and <b>education</b>. Use it as a quick reminder when they ask "walk me through your CV".</p>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>Write to IDE (typing the code for you)</h3>
+          <p>When an answer contains code, click <b>Write to IDE</b> on that code block, then click into your editor. The app types the code there like a person would — with natural pauses and the occasional corrected typo. Move your mouse to pause; it continues when you stop. The 1–5 slider sets the speed.</p>
         </section>
 
         <section class="settings-section help-section">
           <h3>Hotkeys</h3>
-          <p>Open the <b>Hotkeys</b> tab to view and rebind every shortcut. Click a binding, press a new key combo (or <span class="kbd">Esc</span> to cancel, <span class="kbd">Backspace</span> to disable). Per-row "reset" restores defaults. Failed registrations show in red &mdash; usually means another app already grabbed that combo system-wide.</p>
           <table class="help-table">
-            <thead><tr><th>Action</th><th>Default</th></tr></thead>
-            <tbody>
-              <tr><td>Toggle window visibility</td><td><span class="kbd">Ctrl+Alt+H</span></td></tr>
-              <tr><td>Move window left / right / up / down</td><td><span class="kbd">Ctrl+Alt+&larr;</span> &hellip; <span class="kbd">Ctrl+Alt+&darr;</span></td></tr>
-              <tr><td>Opacity up / down</td><td><span class="kbd">Ctrl+Alt+]</span> / <span class="kbd">Ctrl+Alt+[</span></td></tr>
-              <tr><td>Scroll answers up / down</td><td><span class="kbd">Ctrl+&uarr;</span> / <span class="kbd">Ctrl+&darr;</span></td></tr>
-              <tr><td>Reset capture area (re-pick)</td><td><span class="kbd">Ctrl+Q</span></td></tr>
-              <tr><td>Reload window</td><td><span class="kbd">Ctrl+R</span></td></tr>
-              <tr><td>Toggle stealth</td><td><span class="kbd">Ctrl+H</span></td></tr>
-              <tr><td>Start / stop voice or caption</td><td><span class="kbd">Alt+C</span></td></tr>
-              <tr><td>Toggle OCR ↔ Voice mode</td><td><span class="kbd">Alt+D</span></td></tr>
-              <tr><td>Push-to-talk (toggle supporter mic)</td><td><span class="kbd">Ctrl+B</span></td></tr>
-              <tr><td>Close / open sticky note</td><td><span class="kbd">Ctrl+Shift+Left</span> / <span class="kbd">Ctrl+Shift+Right</span></td></tr>
-              <tr><td>Scroll sticky note up / down</td><td><span class="kbd">Shift+Up</span> / <span class="kbd">Shift+Down</span></td></tr>
-              <tr><td>Send help request (speaker → supporter)</td><td><span class="kbd">Win+Shift+/</span></td></tr>
-              <tr><td>Get answer (send to selected API)</td><td><span class="kbd">Ctrl+Enter</span></td></tr>
-              <tr><td>Screenshot to composer</td><td><span class="kbd">Alt+A</span></td></tr>
-              <tr><td>Area snip to composer</td><td><span class="kbd">Alt+S</span></td></tr>
-              <tr><td>Toggle click-through (mouse passes through)</td><td><span class="kbd">Alt+Q</span></td></tr>
-              <tr><td>Clear current transcript bubble</td><td><span class="kbd">Shift+Z</span></td></tr>
-            </tbody>
+            <tr><th>Keys</th><th>Action</th></tr>
+            <tr><td><span class="kbd">Ctrl+Alt+H</span></td><td>Hide / show the app</td></tr>
+            <tr><td><span class="kbd">Ctrl+H</span></td><td>Stealth on / off</td></tr>
+            <tr><td><span class="kbd">Alt+C</span></td><td>Start / stop listening</td></tr>
+            <tr><td><span class="kbd">Alt+D</span></td><td>Voice ↔ OCR mode</td></tr>
+            <tr><td><span class="kbd">Alt+Q</span></td><td>Click-through on / off</td></tr>
+            <tr><td><span class="kbd">Ctrl+Enter</span></td><td>Send the question you typed</td></tr>
+            <tr><td><span class="kbd">Shift+Z</span></td><td>Remove the latest transcript bubble</td></tr>
+            <tr><td><span class="kbd">Alt+A</span></td><td>Screenshot the screen and ask about it</td></tr>
+            <tr><td><span class="kbd">Alt+S</span></td><td>Select an area of the screen and ask about it</td></tr>
+            <tr><td><span class="kbd">Ctrl+Alt+Arrows</span></td><td>Move the window</td></tr>
+            <tr><td><span class="kbd">Ctrl+Alt+[</span> / <span class="kbd">]</span></td><td>More transparent / more visible</td></tr>
+            <tr><td><span class="kbd">Ctrl+Up</span> / <span class="kbd">Down</span></td><td>Scroll the answers</td></tr>
           </table>
+          <p class="hint">You can change any of these in the <b>Hotkeys</b> tab.</p>
         </section>
 
         <section class="settings-section help-section">
-          <h3>New global hotkeys</h3>
-          <h4>Submit prompt &mdash; <span class="kbd">Ctrl+Enter</span></h4>
-          <p>Submits whatever is currently typed into Claude / ChatGPT's prompt input. Works <b>even when focus is on another app</b> (your meeting window, terminal, etc.). The app finds the loaded AI site's send button and clicks it (falls back to a synthetic Enter key if no button is found).</p>
-          <h4>Screenshot active screen &mdash; <span class="kbd">Alt+A</span></h4>
-          <p>Captures a full screenshot of the display the mouse cursor is currently on (multi-monitor aware) and pastes it into the loaded AI site's prompt input as an attachment. The image goes through the system clipboard for one frame; expect it to behave exactly like Ctrl+C-then-paste from a screenshot tool.</p>
-          <h4>Toggle click-through &mdash; <span class="kbd">Alt+Q</span></h4>
-          <p>When ON, every mouse click passes <i>through</i> the app window to whatever's behind it. The window still draws on top — you can read it — but it stops blocking interaction with the meeting / editor underneath. Use this to keep notes visible while typing in another app.</p>
-          <p class="hint">&#9888; When click-through is ON, you can't click any button in the app — including the cursor toggle button itself. Use <span class="kbd">Alt+Q</span> to turn it back off.</p>
-        </section>
-
-        <section class="settings-section help-section">
-          <h3>Stealth from screen capture</h3>
-          <p>The shield icon enables <code>setContentProtection</code>. On Windows this hides the window from:</p>
+          <h3>Tips for better answers</h3>
           <ul>
-            <li>OBS / display capture in screen recorders</li>
-            <li>Zoom / Teams / Meet share-screen</li>
-            <li>Win+PrtScn and most screenshot tools</li>
-            <li>The capture-area red overlay (when enabled) is also stealth-protected</li>
-          </ul>
-          <p>It does <b>not</b> defeat:</p>
-          <ul>
-            <li>Hardware capture cards</li>
-            <li>A phone / camera pointed at the screen</li>
-            <li>Some kernel-level monitoring agents</li>
+            <li>Always upload your CV and the job description — answers are only as good as what the app knows about you.</li>
+            <li>Pick the right stage. A technical answer in a recruiter call sounds odd, and vice versa.</li>
+            <li>If a transcript came out wrong, click <b>✎</b>, fix the words, and answer again.</li>
+            <li>Read the answer and say it naturally; you do not have to use every word.</li>
           </ul>
         </section>
 
         <section class="settings-section help-section">
-          <h3>Toast notifications &amp; banners</h3>
-          <p>Brief slide-in messages in the bottom-right communicate state changes:</p>
-          <ul>
-            <li>Mic-mode changes (with color matching the new mode).</li>
-            <li>Network connect / disconnect / kick events.</li>
-            <li>VB-Cable warnings (file too large, device missing).</li>
-            <li>Errors that don't warrant a modal (transcription failures, OCR errors).</li>
-          </ul>
-          <p>Toasts auto-dismiss after a few seconds. The mic-mode banner above the chat panel is persistent &mdash; it's always showing the current mode.</p>
+          <h3>If something goes wrong</h3>
+          <h4>No transcript appears</h4>
+          <p>Check the microphone button is red (listening). Open <b>Settings → Providers</b> and make sure <i>Microphone</i> and/or <i>System audio</i> are ticked — system audio is what captures the other person in Zoom, Meet or Teams. Then stop and start listening again.</p>
+          <h4>"API key was rejected" or "rate limit"</h4>
+          <p>The app's built-in key is not working. Contact your administrator.</p>
+          <h4>The window disappeared</h4>
+          <p>Press <span class="kbd">Ctrl+Alt+H</span> or click the round <b>A</b> button. If it is see-through, press <span class="kbd">Ctrl+Alt+]</span> a few times.</p>
+          <h4>Clicks do nothing on the app</h4>
+          <p>Click-through is on (red cursor icon). Press <span class="kbd">Alt+Q</span>.</p>
+          <h4>"License expired"</h4>
+          <p>Send your computer ID to your administrator again to get a new key.</p>
         </section>
-
-        <section class="settings-section help-section">
-          <h3>Auto-update</h3>
-          <p>The app uses GitHub Releases for updates. Settings &rarr; <b>App version</b> &rarr; <b>Check for updates</b> manually, or wait for the on-launch check. When an update is downloaded, the <b>Restart &amp; install</b> button appears.</p>
-        </section>
-
-        <section class="settings-section help-section">
-          <h3>Troubleshooting</h3>
-          <h4>I can't see the loaded website</h4>
-          <p>Click <span class="kbd">&#8635;</span> in the header (or press <span class="kbd">Ctrl+R</span>) &mdash; it force-shows the webview and reloads the page. The webview gets hidden whenever Settings or Setup is open; if a flow ever leaves it hidden, reload fixes it.</p>
-          <h4>B can't hear A's mic / system audio</h4>
-          <p>Check that A's <b>Voice</b> tab has both "Capture mic" and "Capture system audio" enabled. Verify the network pill shows <b>LIVE</b> on both sides. On A's machine, the loopback capture sometimes needs Windows to re-enumerate devices &mdash; toggle the recording dot off/on.</p>
-          <h4>C (meeting peer) can't hear me</h4>
-          <p>Make sure VB-Cable is installed, "CABLE Input" is selected as Output device in Network tab, and the meeting app's mic is set to "CABLE Output". Click <b>Test cable</b> &mdash; if no level appears in the meeting, the routing is broken.</p>
-          <h4>Voice mode transcripts not appearing in the chat input</h4>
-          <p>Voice transcripts are injected directly into the AI site loaded in the webview (ChatGPT, Claude, etc.) — make sure a site is loaded and the chat input is visible. The injection targets the chat input automatically, no click needed.</p>
-          <h4>Caption mode duplicates text</h4>
-          <p>The diff is word-based and tolerant to OCR variations, but if the OCR engine produces wildly different text for the same speech, some duplication is unavoidable. Press <span class="kbd">Ctrl+Q</span> to re-pick a tighter area &mdash; smaller and cleaner is better.</p>
-          <h4>Deepgram / xAI 401 / 429 errors</h4>
-          <p>Check the <b>Log</b> tab. 401 = the app's built-in API key was rejected; 429 = rate limit / out of credits. Contact your administrator.</p>
-          <h4>Hotkey shows red "register failed"</h4>
-          <p>Another app already owns that combo system-wide. Pick a different one.</p>
-          <h4>Sticky note isn't appearing on A's screen</h4>
-          <p>Press <span class="kbd">Ctrl+Shift+Right</span> to force-open it. If it's off-screen (e.g. after a monitor change), the saved position may be invalid &mdash; close it and reopen, or move the main window then reopen sticky.</p>
-          <h4>Supporter keeps reconnecting after I kick them</h4>
-          <p>Kick uses close code 4000 which suppresses auto-reconnect on the client. If they reconnect anyway, they likely opened a fresh app instance &mdash; ban by IP isn't implemented, only by session.</p>
-        </section>
-
       </div>
 
     </div>
   </section>
 
   <!-- Stage 1: choose New vs Continue -->
+  <!-- Step 0: Welcome -->
   <section class="setup-overlay mode-select-overlay" id="modeSelectOverlay" hidden>
     <div class="setup-card mode-select-card">
       <div class="setup-topbar">
-        <h2 class="setup-title">Start</h2>
-        <button class="setup-gear-btn" id="modeSelectSettingsBtn" title="Settings — providers, hotkeys">&#9881;</button>
+        <span class="setup-topbar-spacer"></span>
+        <button class="setup-gear-btn" id="modeSelectSettingsBtn" title="Settings &amp; user guide">&#9881;</button>
       </div>
-      <p class="setup-intro hint">Begin a new interview session, or continue a saved one with its materials.</p>
+      <div class="welcome-hero">
+        <div class="welcome-logo" aria-hidden="true">A</div>
+        <h1 class="welcome-heading">Welcome to RemoteDevJobsAce</h1>
+        <p class="welcome-meta"><span id="welcomeVersion">&nbsp;</span><span class="welcome-dot">·</span><span id="welcomeUpdated">&nbsp;</span></p>
+      </div>
       <div class="mode-choice-cards">
         <button class="mode-choice-card" id="modeNewBtn">
-          <span class="mode-choice-icon">✨</span>
+          <span class="mode-choice-icon">🎤</span>
           <span class="mode-choice-text">
-            <span class="mode-choice-name">New session</span>
-            <span class="mode-choice-desc">Attach materials, set your profile, and start fresh</span>
+            <span class="mode-choice-name">Interview mode</span>
+            <span class="mode-choice-desc">Live answer coaching while you are in the call</span>
           </span>
           <span class="mode-choice-arrow" aria-hidden="true">&#8250;</span>
         </button>
-        <button class="mode-choice-card" id="modeContinueBtn">
-          <span class="mode-choice-icon">📂</span>
+        <button class="mode-choice-card mode-choice-card--disabled" id="modeSupporterBtn" disabled title="Coming soon">
+          <span class="mode-choice-icon">🛡️</span>
           <span class="mode-choice-text">
-            <span class="mode-choice-name">Continue existing</span>
-            <span class="mode-choice-desc">Resume a saved session with its attached materials</span>
+            <span class="mode-choice-name">Join as supporter</span>
+            <span class="mode-choice-desc">Help someone else in their call · coming soon</span>
           </span>
           <span class="mode-choice-arrow" aria-hidden="true">&#8250;</span>
         </button>
+      </div>
+      <p class="welcome-foot">New here? <button class="link-btn" id="welcomeHelpBtn">Read the user guide</button></p>
+    </div>
+  </section>
+
+  <!-- Step 1: interview stage -->
+  <section class="setup-overlay" id="stageOverlay" hidden>
+    <div class="setup-card">
+      <div class="setup-topbar">
+        <button class="setup-back-btn" id="stageBackBtn" title="Back">&#8592;</button>
+        <h2 class="setup-title">Interview stage</h2>
+        <button class="setup-gear-btn" id="stageSettingsBtn" title="Settings &amp; user guide">&#9881;</button>
+      </div>
+      <p class="setup-intro">Pick the kind of call you are about to have. This shapes how your answers are written.</p>
+      <div class="stage-cards">
+        <label class="stage-card">
+          <input type="radio" name="setupHiringType" value="intro" id="setupHiringIntro" checked hidden />
+          <span class="stage-icon">🤝</span>
+          <span class="stage-text"><span class="stage-name">Intro call</span><span class="stage-desc">Recruiter screening. Friendly, plain language, your story in short.</span></span>
+        </label>
+        <label class="stage-card">
+          <input type="radio" name="setupHiringType" value="technical" id="setupHiringTechnical" hidden />
+          <span class="stage-icon">🛠️</span>
+          <span class="stage-text"><span class="stage-name">Technical interview</span><span class="stage-desc">What you built and how. Precise, factual, no buzzwords.</span></span>
+        </label>
+        <label class="stage-card">
+          <input type="radio" name="setupHiringType" value="hr" id="setupHiringHr" hidden />
+          <span class="stage-icon">💬</span>
+          <span class="stage-text"><span class="stage-name">HR interview</span><span class="stage-desc">Ownership, teamwork, communication, expectations.</span></span>
+        </label>
+        <label class="stage-card">
+          <input type="radio" name="setupHiringType" value="ceo" id="setupHiringCeo" hidden />
+          <span class="stage-icon">🎯</span>
+          <span class="stage-text"><span class="stage-name">CEO / leadership</span><span class="stage-desc">Product thinking, leadership, business impact, stakeholders.</span></span>
+        </label>
+      </div>
+      <div class="wizard-nav">
+        <span class="wizard-steps">Step 1 of 3</span>
+        <button class="action-btn wizard-next" id="stageNextBtn">Next &#8594;</button>
       </div>
     </div>
   </section>
 
-  <section class="setup-overlay" id="setupOverlay" hidden>
-    <div class="setup-card interview-setup">
+  <!-- Step 2: profile -->
+  <section class="setup-overlay" id="profileOverlay" hidden>
+    <div class="setup-card">
       <div class="setup-topbar">
-        <button class="setup-back-btn" id="setupBackBtn" title="Back">&#8592;</button>
-        <h2 class="setup-title">New Session</h2>
-        <button class="setup-gear-btn" id="setupSettingsBtn" title="Settings — providers, hotkeys">&#9881;</button>
+        <button class="setup-back-btn" id="profileBackBtn" title="Back">&#8592;</button>
+        <h2 class="setup-title">Your profile</h2>
+        <button class="setup-gear-btn" id="profileSettingsBtn" title="Settings &amp; user guide">&#9881;</button>
       </div>
-      <p class="setup-intro hint">Upload whatever you have — CV, JD, and/or support material. That is the knowledge base. Then pick the call type and press Start.</p>
-
+      <p class="setup-intro">Choose a saved profile or fill in a new one. Answers speak as this person, and the info panel uses the location.</p>
       <div class="setup-profile-row">
-        <p class="setup-roles-label">Your profile</p>
+        <p class="setup-roles-label">Saved profiles</p>
         <div class="profile-picker">
           <select id="profileSelect" class="profile-input"></select>
           <button id="profileSaveNewBtn" class="profile-mini-btn" title="Save current fields as a new profile">＋</button>
@@ -606,12 +514,33 @@
           <button id="profileSaveCancel" class="profile-mini-btn" title="Cancel">✕</button>
         </div>
         <div class="profile-inputs profile-inputs--vertical">
-          <input type="text" id="profileName" class="profile-input" placeholder="Name" spellcheck="false" />
-          <input type="text" id="profileCity" class="profile-input" placeholder="City" spellcheck="false" />
-          <input type="text" id="profileCountry" class="profile-input" placeholder="Country" spellcheck="false" />
+          <label class="field-label" for="profileName">Name</label>
+          <input type="text" id="profileName" class="profile-input" placeholder="Your name" spellcheck="false" />
+          <label class="field-label" for="profileCountry">Country</label>
+          <select id="profileCountry" class="profile-input profile-tz-select"></select>
+          <label class="field-label" for="profileCity">City</label>
+          <select id="profileCity" class="profile-input profile-tz-select"></select>
+          <input type="text" id="profileCityCustom" class="profile-input" placeholder="Type your city" spellcheck="false" hidden />
+          <label class="field-label" for="profileTimezone">Timezone</label>
           <select id="profileTimezone" class="profile-input profile-tz-select"></select>
         </div>
       </div>
+      <div class="wizard-nav">
+        <span class="wizard-steps">Step 2 of 3</span>
+        <button class="action-btn wizard-next" id="profileNextBtn">Next &#8594;</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Step 3: materials + salary, then start -->
+  <section class="setup-overlay" id="setupOverlay" hidden>
+    <div class="setup-card interview-setup">
+      <div class="setup-topbar">
+        <button class="setup-back-btn" id="setupBackBtn" title="Back">&#8592;</button>
+        <h2 class="setup-title">Materials</h2>
+        <button class="setup-gear-btn" id="setupSettingsBtn" title="Settings &amp; user guide">&#9881;</button>
+      </div>
+      <p class="setup-intro">Upload whatever you have — CV, job description, support material. That is what answers are built from. Missing files are fine.</p>
 
       <div class="upload-grid">
         <div class="upload-zone" id="dropCv" data-kind="cv"><div class="upload-zone-title">Resume / CV</div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="filesCv"></div><input type="file" id="fileCv" hidden /></div>
@@ -620,39 +549,32 @@
         <div class="upload-zone" id="dropMeetings" data-kind="meetings"><div class="upload-zone-title">Previous meeting records</div><div class="upload-zone-hint">Click or drag &amp; drop · multiple</div><div class="upload-files" id="filesMeetings"></div><input type="file" id="fileMeetings" hidden multiple /></div>
       </div>
 
-      <div class="setup-bottom">
-        <div class="setup-roles">
-          <p class="setup-roles-label">Call type</p>
-          <div class="field-row hiring-type-pills" id="setupHiringTypeRow">
-            <label class="radio"><input type="radio" name="setupHiringType" value="intro" id="setupHiringIntro" checked /> Intro</label>
-            <label class="radio"><input type="radio" name="setupHiringType" value="technical" id="setupHiringTechnical" /> Technical</label>
-            <label class="radio"><input type="radio" name="setupHiringType" value="ceo" id="setupHiringCeo" /> CEO</label>
-            <label class="radio"><input type="radio" name="setupHiringType" value="hr" id="setupHiringHr" /> HR</label>
-          </div>
+      <div class="salary-block">
+        <p class="setup-roles-label">Salary expectation <span class="hint-inline">(optional — used when they ask)</span></p>
+        <div class="salary-row">
+          <input type="number" id="salaryAmount" class="profile-input salary-amount" placeholder="e.g. 8000" min="0" step="100" />
+          <select id="salaryCurrency" class="profile-input salary-select">
+            <option value="USD" selected>USD</option>
+            <option value="PLN">PLN</option>
+            <option value="EUR">EUR</option>
+            <option value="GBP">GBP</option>
+            <option value="RON">RON</option>
+          </select>
+          <select id="salaryPeriod" class="profile-input salary-select">
+            <option value="month" selected>monthly</option>
+            <option value="annual">yearly</option>
+            <option value="hourly">hourly</option>
+          </select>
         </div>
-
-        <div class="setup-roles">
-          <p class="setup-roles-label">Select your role</p>
-          <div class="role-cards">
-            <label class="role-card" id="roleCardSpeaker">
-              <input type="radio" name="setupRoleV" value="speaker" id="setupRoleSpeakerV" checked hidden />
-              <span class="role-card-icon">🎤</span>
-              <span class="role-card-name">Speaker</span>
-              <span class="role-card-desc">You are in the call</span>
-            </label>
-            <label class="role-card" id="roleCardSupporter">
-              <input type="radio" name="setupRoleV" value="supporter" id="setupRoleSupporterV" hidden />
-              <span class="role-card-icon">🛡️</span>
-              <span class="role-card-name">Supporter</span>
-              <span class="role-card-desc">You assist a speaker remotely</span>
-            </label>
-          </div>
-          <input type="text" id="setupAddressV" class="setup-address-input" placeholder="172.16.98.11:2000" spellcheck="false" hidden />
-        </div>
-
-        <button class="action-btn setup-start-btn" id="setupStartBtnV">START</button>
       </div>
 
+      <!-- Role is always Speaker; kept as a hidden input for the existing start logic. -->
+      <input type="radio" name="setupRoleV" value="speaker" id="setupRoleSpeakerV" checked hidden />
+
+      <div class="wizard-nav">
+        <span class="wizard-steps">Step 3 of 3</span>
+        <button class="action-btn setup-start-btn wizard-next" id="setupStartBtnV">Start interview</button>
+      </div>
     </div>
   </section>
 
@@ -708,11 +630,13 @@
         <option value="ceo">CEO</option>
         <option value="hr">HR</option>
       </select>
-      <select id="answerProviderSelect" class="answer-provider-select" title="Answer API provider">
-        <option value="xai">xAI</option>
-        <option value="anthropic">Anthropic</option>
-        <option value="openai">OpenAI</option>
-      </select>
+      <div hidden>
+        <select id="answerProviderSelect" class="answer-provider-select" title="Answer API provider">
+          <option value="xai">xAI</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="openai">OpenAI</option>
+        </select>
+      </div>
       <div class="mode-seg" id="modeSeg">
         <button class="mode-seg-btn mode-seg-btn--active" data-mode="ANSWER" title="Plain text answer">Text</button>
         <button class="mode-seg-btn" data-mode="CODE" title="Force code answer">Code</button>
@@ -806,6 +730,7 @@
   <script src="lib/mermaid.min.js"></script>
   <script src="diagram-shared.js"></script>
   <script src="tooltip.js"></script>
+  <script src="geo.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

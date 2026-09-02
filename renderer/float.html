@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Toggle</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; background: transparent; overflow: hidden; }
+    /* The thin outer ring is the drag handle; the inner button takes clicks. */
+    .ring {
+      width: 100%; height: 100%; border-radius: 50%;
+      padding: 5px;
+      -webkit-app-region: drag;
+      -webkit-user-select: none; user-select: none;
+    }
+    .btn {
+      -webkit-app-region: no-drag;
+      width: 100%; height: 100%; border-radius: 50%; border: none; cursor: pointer;
+      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+      color: #fff; font: 700 17px/1 system-ui, -apple-system, 'Segoe UI', sans-serif;
+      box-shadow: 0 6px 16px rgba(15,18,34,.28), 0 0 0 2px rgba(255,255,255,.85);
+      display: flex; align-items: center; justify-content: center;
+      transition: transform .12s ease, filter .12s ease;
+    }
+    .btn:hover { filter: brightness(1.08); transform: scale(1.05); }
+    .btn:active { transform: scale(.96); }
+    /* Main window hidden: dim the button so the state is obvious. */
+    body.main-hidden .btn { background: linear-gradient(135deg, #64748b, #475569); }
+  </style>
+</head>
+<body>
+  <div class="ring">
+    <button class="btn" id="btn" title="Show / hide the app (Ctrl+Alt+H)">A</button>
+  </div>
+  <script>
+    const btn = document.getElementById('btn');
+    btn.addEventListener('click', () => window.floatApi.toggle());
+    window.floatApi.onState((visible) => {
+      document.body.classList.toggle('main-hidden', !visible);
+      btn.title = (visible ? 'Hide the app' : 'Show the app') + ' (Ctrl+Alt+H)';
+    });
+  </script>
+</body>
+</html>

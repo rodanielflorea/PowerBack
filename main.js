@@ -129,6 +129,7 @@ const DEFAULT_STATE = {
   profiles: [],            // [{ id, label, name, city, country, timezone }]
   activeProfileId: null,
   stickyAnchor: null,
+  floatPos: null,
   stickySize: null,
   hotkeys: { ...HOTKEY_DEFAULTS },
 };
@@ -593,9 +594,10 @@ function createWindow() {
 
   win.on('move', () => { saveState(); syncStickyPosition(); });
   win.on('resize', () => { saveState(); syncStickyPosition(); });
-  win.on('show', () => applyStickyState());
-  win.on('hide', () => applyStickyState());
+  win.on('show', () => { applyStickyState(); sendFloatState(); });
+  win.on('hide', () => { applyStickyState(); sendFloatState(); });
   win.on('closed', () => {
+    if (floatWin && !floatWin.isDestroyed()) { try { floatWin.close(); } catch {} }
     win = null;
     if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.close(); } catch {} }
   });
@@ -627,9 +629,58 @@ function setStealth(value) {
   win.setContentProtection(state.stealth);
   if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.setContentProtection(state.stealth); } catch {} }
   if (infoWin && !infoWin.isDestroyed()) { try { infoWin.setContentProtection(state.stealth); } catch {} }
+  if (floatWin && !floatWin.isDestroyed()) { try { floatWin.setContentProtection(state.stealth); } catch {} }
   saveState();
   win.webContents.send('stealth-changed', state.stealth);
 }
+
+// ── Floating toggle button ────────────────────────────────────────────────────
+// A tiny always-on-top, stealth window with one button that shows/hides the
+// main window — for users who hid the app and do not know the hotkey. It is
+// created right after the license check and never hides with the main window.
+let floatWin = null;
+const FLOAT_SIZE = 54;
+function floatDefaultPos() {
+  const a = screen.getPrimaryDisplay().workArea;
+  return { x: a.x + a.width - FLOAT_SIZE - 16, y: a.y + a.height - FLOAT_SIZE - 16 };
+}
+function floatSavedPos() {
+  const p = state.floatPos;
+  if (!p || typeof p.x !== 'number' || typeof p.y !== 'number') return null;
+  const onScreen = screen.getAllDisplays().some((d) => {
+    const b = d.workArea;
+    return p.x >= b.x && p.y >= b.y && p.x + FLOAT_SIZE <= b.x + b.width && p.y + FLOAT_SIZE <= b.y + b.height;
+  });
+  return onScreen ? p : null;
+}
+function createFloatWindow() {
+  if (floatWin && !floatWin.isDestroyed()) return;
+  const pos = floatSavedPos() || floatDefaultPos();
+  floatWin = new BrowserWindow({
+    width: FLOAT_SIZE, height: FLOAT_SIZE, x: pos.x, y: pos.y,
+    frame: false, transparent: true, hasShadow: false,
+    resizable: false, minimizable: false, maximizable: false, fullscreenable: false,
+    skipTaskbar: true, alwaysOnTop: true, focusable: false, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload-float.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  floatWin.setContentProtection(state.stealth);
+  floatWin.setAlwaysOnTop(true, 'screen-saver');
+  floatWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  floatWin.setMenuBarVisibility(false);
+  floatWin.loadFile(path.join(__dirname, 'renderer', 'float.html'));
+  const showFloat = () => { if (floatWin && !floatWin.isDestroyed() && !floatWin.isVisible()) floatWin.showInactive(); };
+  floatWin.once('ready-to-show', showFloat);
+  floatWin.webContents.once('did-finish-load', () => { setTimeout(showFloat, 100); sendFloatState(); });
+  floatWin.on('move', () => {
+    try { const [x, y] = floatWin.getPosition(); state.floatPos = { x, y }; saveState(); } catch {}
+  });
+  floatWin.on('closed', () => { floatWin = null; });
+}
+function sendFloatState() {
+  if (!floatWin || floatWin.isDestroyed()) return;
+  try { floatWin.webContents.send('float-state', !!(win && !win.isDestroyed() && win.isVisible())); } catch {}
+}
+ipcMain.handle('float-toggle', () => { toggleVisible(); });
 
 function computeDefaultStickyAnchor(mainW, mainH, stickyW, stickyH) {
   const [mx, my] = win.getPosition();
@@ -808,7 +859,7 @@ function createInfoWindow() {
     width: 280, height: 600,
     x: disp.x + disp.width - 300, y: disp.y + 20,
     minWidth: 220, minHeight: 280,
-    frame: false, backgroundColor: '#0f172a',
+    frame: false, backgroundColor: '#ffffff',
     skipTaskbar: true, alwaysOnTop: true, resizable: true, show: false,
     icon: path.join(__dirname, 'build', 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload-info.js'), contextIsolation: true, nodeIntegration: false },
@@ -820,6 +871,10 @@ function createInfoWindow() {
   infoWin.loadFile(path.join(__dirname, 'renderer', 'info.html'));
   infoWin.on('closed', () => { infoWin = null; });
   infoWin.once('ready-to-show', () => { if (infoWin && !infoWin.isDestroyed()) infoWin.showInactive(); });
+  // Some Linux/Wayland setups never fire ready-to-show; show on load instead.
+  infoWin.webContents.once('did-finish-load', () => setTimeout(() => {
+    if (infoWin && !infoWin.isDestroyed() && !infoWin.isVisible()) infoWin.showInactive();
+  }, 150));
   // The fetch is normally kicked off by the renderer's 'info-ready' handshake.
   // Fallback: also start it shortly after load in case the handshake is missed
   // (e.g. preload issue) — refreshInfoData no-ops if a fetch is already running
@@ -945,6 +1000,48 @@ async function fetchHolidays(country) {
 // Field convention: undefined = still loading, null = done-but-empty, value = data.
 let infoAcc = null;        // latest accumulator (also (re)sent on the ready handshake)
 let infoWatchdog = null;
+// ── CV summary for the info window ───────────────────────────────────────────
+// Work history + education extracted from the uploaded CV with the answer
+// model, once per distinct CV text (cached in state by content hash).
+function cvText() {
+  const c = state.knowledge && state.knowledge.cv;
+  return (c && c[0] && c[0].text) || '';
+}
+async function extractCvSummary() {
+  const text = cvText().slice(0, 30000);
+  if (!text.trim()) return null;
+  const h = require('crypto').createHash('sha1').update(text).digest('hex');
+  if (state.cvSummary && state.cvSummary.hash === h && state.cvSummary.data) return state.cvSummary.data;
+  const provider = getAnswerProvider();
+  const apiKey = getAnswerApiKey(provider.id);
+  if (!apiKey) return null;
+  const ac = new AbortController();
+  setTimeout(() => { try { ac.abort(); } catch {} }, 30000);
+  const prompt = 'Extract from this CV and reply with strict JSON only, no prose:\n' +
+    '{"work":[{"company":"","location":"","period":"","role":"","mode":""}],"education":[{"school":"","degree":"","period":""}]}\n' +
+    'Rules: work newest first; period like "2021 – 2023" or "2019 – present"; mode is one of remote, hybrid, onsite, or "" when the CV does not say; keep every value short; omit nothing that is a real job or degree.\n\nCV:\n' + text;
+  let raw = '';
+  try {
+    raw = await completeChat({
+      provider, apiKey, model: getAnswerModel(provider.id),
+      messages: [{ role: 'user', content: prompt }],
+      maxTokens: 1500, signal: ac.signal, convId: 'cv-' + h.slice(0, 8),
+    });
+  } catch (e) {
+    appendLogLine('[info] CV summary failed: ' + (e && e.message));
+    return null;
+  }
+  const m = String(raw || '').match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  let data = null;
+  try { data = JSON.parse(m[0]); } catch { return null; }
+  if (!data || typeof data !== 'object') return null;
+  data = { work: Array.isArray(data.work) ? data.work : [], education: Array.isArray(data.education) ? data.education : [] };
+  state.cvSummary = { hash: h, data };
+  saveState();
+  return data;
+}
+
 function sendInfoData() {
   if (infoWin && !infoWin.isDestroyed() && infoAcc) infoWin.webContents.send('info-data', infoAcc);
 }
@@ -953,7 +1050,7 @@ async function refreshInfoData() {
   const profile = infoProfile || {};
   const city = (profile.city || '').trim();
   const country = (profile.country || '').trim();
-  const acc = { profile, weather: undefined, holidays: undefined, events: undefined };
+  const acc = { profile, weather: undefined, holidays: undefined, events: undefined, cv: undefined };
   infoAcc = acc;
   sendInfoData(); // clock + "Loading…" immediately
 
@@ -967,6 +1064,9 @@ async function refreshInfoData() {
     if (acc.events === undefined) acc.events = null;
     sendInfoData();
   }, 18000);
+  // CV summary runs alongside the network fetches; it has its own timeout.
+  extractCvSummary().then((d) => { if (infoAcc === acc) { acc.cv = d || null; sendInfoData(); } })
+    .catch(() => { if (infoAcc === acc) { acc.cv = null; sendInfoData(); } });
 
   // ── Phase 1: weather + holidays (the important data) — concurrently ──
   let nameVariants = country ? [country] : [];
@@ -1852,6 +1952,15 @@ ipcMain.handle('install-update-now', () => {
 });
 
 ipcMain.handle('get-app-version', () => app.getVersion());
+ipcMain.handle('get-app-info', () => {
+  // Packaged: the executable's timestamp is the build date. Dev: main.js mtime.
+  let buildDate = null;
+  try {
+    const f = app.isPackaged ? app.getPath('exe') : path.join(__dirname, 'main.js');
+    buildDate = fs.statSync(f).mtime.toISOString();
+  } catch {}
+  return { version: app.getVersion(), buildDate };
+});
 
 // ── License gate ─────────────────────────────────────────────────────────────
 // The app only starts once a valid MAC-bound license is stored (license.js).
@@ -1864,6 +1973,7 @@ let licenseWin = null;
 
 function startApp() {
   createWindow();
+  createFloatWindow();
   registerHotkeys();
   setupAutoUpdater();
 }
@@ -2549,6 +2659,7 @@ loadSessions();
 
 // Profile (name/location) of the active session — folded into the answer context.
 let activeProfile = {};
+let activeSalary = null; // { amount, currency, period } from the materials step
 const KB_KIND_LIST = ['cv', 'jd', 'support', 'meetings'];
 // Deep snapshot of the current knowledge base so a session keeps its own copy.
 function snapshotKnowledge() {
@@ -2590,15 +2701,20 @@ ipcMain.handle('session-meta', (_e, id) => {
 });
 ipcMain.handle('session-new', (_e, meta) => {
   const p = (meta && meta.profile) || {};
+  const sal = meta && meta.salary && Number(meta.salary.amount) > 0
+    ? { amount: Number(meta.salary.amount), currency: String(meta.salary.currency || 'USD'), period: String(meta.salary.period || 'month') }
+    : null;
   const s = {
     id: genSessionId(), name: '', createdAt: Date.now(), updatedAt: Date.now(), turns: [],
     profile: { name: p.name || '', city: p.city || '', country: p.country || '', timezone: p.timezone || '' },
+    salary: sal,
     knowledge: snapshotKnowledge(), // freeze the materials attached for this session
   };
   sessions.push(s);
   currentSessionId = s.id;
   convoHistory = [];
   activeProfile = s.profile;
+  activeSalary = sal;
   state.profile = { ...s.profile }; // remember as the default for next time
   saveState();
   saveSessions();
@@ -2671,6 +2787,7 @@ ipcMain.handle('session-load', (_e, id) => {
   // Restore the session's own materials + profile (in-memory; global save untouched).
   if (s.knowledge) state.knowledge = JSON.parse(JSON.stringify(s.knowledge));
   activeProfile = s.profile || {};
+  activeSalary = s.salary || null;
   schedulePromptCacheWarm();
   return { id: s.id, name: s.name, turns: s.turns || [], profile: s.profile || {}, knowledgeMeta: knowledgeMeta(s.knowledge) };
 });
@@ -2759,6 +2876,10 @@ function buildKnowledgeContext(mode) {
   if (loc) profileParts.push(`Location: ${loc}`);
   // Timezone only — a live clock here would bust prompt-cache on every minute.
   if (p.timezone) profileParts.push(`Timezone: ${p.timezone}`);
+  if (activeSalary && activeSalary.amount) {
+    const per = { month: 'per month', annual: 'per year', hourly: 'per hour' }[activeSalary.period] || activeSalary.period;
+    profileParts.push(`Salary expectation: ${activeSalary.amount} ${activeSalary.currency} ${per} (state it plainly if asked; open to discussion)`);
+  }
 
   const blocks = [
     { title: 'CANDIDATE PROFILE', text: profileParts.join('\n'), weight: 0 },
@@ -2925,16 +3046,20 @@ function whoAmILine() {
   return 'The setup profile name, when present, is you.';
 }
 
+// Per-stage guidance, chosen on the "Interview stage" step of the wizard.
+const STAGE_GUIDANCE = {
+  intro: `STAGE — INTRO / RECRUITER SCREENING. The other person is usually a recruiter, not an engineer. Be warm, friendly and easy to talk to. Use plain everyday words; avoid technical jargon and acronyms unless they use them first, and when a technology must be named add a few words on what it is for. Keep your story short: who you are, what you do now, what you are looking for and why this role fits. Show real interest with one or two natural questions about the team, the process or the timeline. No lectures, no deep dives.`,
+  technical: `STAGE — TECHNICAL INTERVIEW. Show seniority through substance, never through buzzwords or self-praise: say what you actually did, which tools and techniques you used, which decisions you made and why, what went wrong and how you fixed it. Be accurate and concrete — real systems, real numbers, real tradeoffs from the knowledge base; if the knowledge base does not cover it, say what you do know and do not invent. Match the answer to the question: a short, simple question gets a short, simple answer (one or two sentences). A question about a project, a tricky part, an issue, a technical method, how you would handle a problem that comes up, or your past work gets a detailed, well-structured answer: context, what you did, how, and the result. When it helps, end with a short clarifying or follow-up question instead of only answering.`,
+  hr: `STAGE — HR INTERVIEW. Show ownership, reliability and maturity: how you take responsibility, work with a team, handle feedback and disagreement, and communicate with stakeholders and clients. Show seniority quietly — examples over adjectives. Be clear and honest on logistics: availability, notice period, working hours, remote setup, and salary expectation (use the profile salary when given). Keep it human and concise, and ask a real question back when it is natural.`,
+  ceo: `STAGE — CEO / LEADERSHIP CALL. Show ownership, leadership and product understanding: how your work moved the business, how you set priorities, how you handle ambiguity and risk, how you communicate with stakeholders and clients, and how you make the people around you better. Think like a partner, not an employee: tie answers to outcomes, users and money. Keep answers focused and confident rather than long, and ask sharp questions about vision, priorities and how success is measured.`,
+};
+const ANSWER_SHAPE = `LENGTH — fit the question. A simple or yes/no question gets one or two short sentences. A story, project, problem-solving or "tell me about" question gets a fuller answer with concrete facts, still spoken length (about 45–90 seconds). Never pad, and never cut substance the question deserves. Answer from the knowledge base first, then take a small position if it is natural. Sometimes, when it fits, finish with a short question of your own.`;
+
 function meetingStanceBlock() {
   const { hiringType } = getMeetingConfig();
   const kb = `${whoAmILine()} This is a 1:1 hiring call. Transcript lines tagged Interviewer are the other person. The setup profile name is you. Your knowledge base is whatever was uploaded (CV and/or JD and/or support). Missing files are fine. You are the candidate, not a helper who follows their lead.`;
-  const typeHint = {
-    intro: 'Intro / screening: chemistry, your story, why this role, a couple of real questions about the team. Not a lecture.',
-    technical: 'Technical: depth from the knowledge base, tradeoffs, real systems you have touched. Not a textbook dump.',
-    ceo: 'CEO / leadership: judgment, business, impact, what you would prioritize. Short. Not implementation dumps.',
-    hr: 'HR / recruiting: process, timeline, culture, logistics. Still a person with a stance, not a yes-machine.',
-  }[hiringType] || '';
-  return `MEETING STANCE — HIRING INTERVIEW (${hiringType}): ${kb} ${typeHint} If they ask, answer from the knowledge base then take a small position if it is natural. If they state an opinion, do not auto-agree. If they talk only among themselves and you should stay quiet, use [LISTEN] plus a short reason. If they want you to ask, ask a real question from a gap in the knowledge base. Never invent experience. One spoken turn only.`;
+  const typeHint = STAGE_GUIDANCE[hiringType] || '';
+  return `MEETING STANCE — HIRING INTERVIEW (${hiringType}): ${kb}\n${typeHint}\n${ANSWER_SHAPE} If they state an opinion, do not auto-agree. If they talk only among themselves and you should stay quiet, use [LISTEN] plus a short reason. Never invent experience. One spoken turn only.`;
 }
 
 function assembleStaticSystem(mode) {
@@ -3806,6 +3931,7 @@ ipcMain.handle('chat-send-image', (_e, dataUrl) => {
 ipcMain.handle('get-network-config', () => ({ ...state.network }));
 ipcMain.handle('set-network-config', (_e, cfg) => {
   state.network = { ...state.network, ...(cfg || {}) };
+  state.network.role = 'speaker'; // supporter mode is not offered in this build
   if (state.network.role === 'speaker') {
     state.network.address = `0.0.0.0:${state.network.speakerPort || 2000}`;
   } else if (state.network.role === 'supporter') {

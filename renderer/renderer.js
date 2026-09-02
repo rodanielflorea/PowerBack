@@ -290,10 +290,37 @@ const answerMain = document.getElementById("answerMain");
 const modeSelectOverlay = document.getElementById("modeSelectOverlay");
 const continueOverlay = document.getElementById("continueOverlay");
 
+const stageOverlay = document.getElementById("stageOverlay");
+const profileOverlay = document.getElementById("profileOverlay");
+
 function hideAllSetupOverlays() {
   if (modeSelectOverlay) modeSelectOverlay.hidden = true;
+  if (stageOverlay) stageOverlay.hidden = true;
+  if (profileOverlay) profileOverlay.hidden = true;
   if (setupOverlay) setupOverlay.hidden = true;
   if (continueOverlay) continueOverlay.hidden = true;
+}
+
+function leaveInterviewUi() {
+  if (settingsOverlay) settingsOverlay.hidden = true;
+  hideAllSetupOverlays();
+  document.body.classList.remove("in-interview");
+  endBtn.classList.remove("live");
+  applyRoleClass("");
+  if (answerMain) answerMain.hidden = true;
+}
+
+// Wizard step 1: interview stage.
+function showStage() {
+  leaveInterviewUi();
+  if (stageOverlay) stageOverlay.hidden = false;
+}
+
+// Wizard step 2: profile.
+function showProfile() {
+  leaveInterviewUi();
+  if (profileOverlay) profileOverlay.hidden = false;
+  if (typeof refreshProfiles === "function") refreshProfiles();
 }
 
 // Stage 1 — the New/Continue chooser shown on launch and after ending a session.
@@ -307,7 +334,7 @@ function showModeSelect() {
   if (answerMain) answerMain.hidden = true;
 }
 
-// New-session setup page (uploads, profile, role).
+// Wizard step 3: materials + salary, then Start.
 function showSetup() {
   if (settingsOverlay) settingsOverlay.hidden = true;
   hideAllSetupOverlays();
@@ -329,14 +356,67 @@ let _profiles = [];
 
 function readProfileFields() {
   const v = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ""; };
-  return { name: v("profileName"), city: v("profileCity"), country: v("profileCountry"), timezone: v("profileTimezone") };
+  const city = v("profileCity") === "__other" ? v("profileCityCustom") : v("profileCity");
+  return { name: v("profileName"), city, country: v("profileCountry"), timezone: v("profileTimezone") };
 }
+
+// Country / city pickers (renderer/geo.js). Picking a city fills the timezone.
+function setSelectValue(sel, val) {
+  if (!sel) return;
+  if (val && ![...sel.options].some((o) => o.value === val)) {
+    const o = document.createElement("option"); o.value = val; o.textContent = val; sel.appendChild(o);
+  }
+  sel.value = val || "";
+  if (sel._cselRefresh) sel._cselRefresh();
+}
+function populateCountrySelect() {
+  const sel = document.getElementById("profileCountry");
+  if (!sel || !window.GEO) return;
+  sel.innerHTML = '<option value="">Country…</option>' + window.GEO.map((g) => `<option value="${g.c}">${g.c}</option>`).join("");
+  if (sel._cselRefresh) sel._cselRefresh();
+}
+function populateCitySelect(country, current) {
+  const sel = document.getElementById("profileCity");
+  const custom = document.getElementById("profileCityCustom");
+  if (!sel) return;
+  const entry = (window.GEO || []).find((g) => g.c === country);
+  const cities = entry ? entry.cities.map((c) => c[0]) : [];
+  sel.innerHTML = '<option value="">City…</option>' + cities.map((c) => `<option value="${c}">${c}</option>`).join("") + '<option value="__other">Other (type it)…</option>';
+  const known = current && cities.includes(current);
+  sel.value = known ? current : (current ? "__other" : "");
+  if (custom) { custom.hidden = sel.value !== "__other"; custom.value = known ? "" : (current || ""); }
+  if (sel._cselRefresh) sel._cselRefresh();
+}
+function timezoneForCity(country, city) {
+  const entry = (window.GEO || []).find((g) => g.c === country);
+  const hit = entry && entry.cities.find((c) => c[0] === city);
+  return hit ? hit[1] : (entry && entry.cities[0] ? entry.cities[0][1] : "");
+}
+(function wireGeoPickers() {
+  const countrySel = document.getElementById("profileCountry");
+  const citySel = document.getElementById("profileCity");
+  const custom = document.getElementById("profileCityCustom");
+  const tz = document.getElementById("profileTimezone");
+  populateCountrySelect();
+  populateCitySelect("", "");
+  if (countrySel) countrySel.addEventListener("change", () => {
+    populateCitySelect(countrySel.value, "");
+    const z = timezoneForCity(countrySel.value, "");
+    if (tz && z) { tz.value = z; if (tz._cselRefresh) tz._cselRefresh(); }
+  });
+  if (citySel) citySel.addEventListener("change", () => {
+    if (custom) custom.hidden = citySel.value !== "__other";
+    if (citySel.value === "__other") { if (custom) custom.focus(); return; }
+    const z = timezoneForCity(countrySel ? countrySel.value : "", citySel.value);
+    if (tz && z) { tz.value = z; if (tz._cselRefresh) tz._cselRefresh(); }
+  });
+})();
 function fillProfileFields(p) {
   p = p || {};
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ""; };
   set("profileName", p.name);
-  set("profileCity", p.city);
-  set("profileCountry", p.country);
+  setSelectValue(document.getElementById("profileCountry"), p.country || "");
+  populateCitySelect(p.country || "", p.city || "");
   const tz = document.getElementById("profileTimezone");
   if (tz) { tz.value = p.timezone || ""; if (tz._cselRefresh) tz._cselRefresh(); }
 }
@@ -435,10 +515,9 @@ function hideSetup() {
   hideAllSetupOverlays();
   document.body.classList.add("in-interview");
   endBtn.classList.add("live");
-  const role = (setupRoleSupporterV && setupRoleSupporterV.checked) ? "supporter" : "speaker";
+  const role = "speaker";
   applyRoleClass(role);
-  // The speaker sees the answer panel; the supporter uses the chat panel.
-  if (answerMain) answerMain.hidden = role === "supporter";
+  if (answerMain) answerMain.hidden = false;
 }
 
 // Mode-chooser + back navigation.
@@ -450,10 +529,46 @@ const modeSelectSettingsBtn = document.getElementById("modeSelectSettingsBtn");
 if (modeNewBtn) modeNewBtn.addEventListener("click", async () => {
   // Start fresh: clear any carried-over materials (profile is still pre-filled).
   if (window.api.kbClear) await window.api.kbClear();
-  showSetup();
+  showStage();
 });
 if (modeContinueBtn) modeContinueBtn.addEventListener("click", () => showContinue());
-if (setupBackBtn) setupBackBtn.addEventListener("click", () => showModeSelect());
+if (setupBackBtn) setupBackBtn.addEventListener("click", () => showProfile());
+
+// Wizard navigation.
+const stageBackBtn = document.getElementById("stageBackBtn");
+const stageNextBtn = document.getElementById("stageNextBtn");
+const profileBackBtn = document.getElementById("profileBackBtn");
+const profileNextBtn = document.getElementById("profileNextBtn");
+if (stageBackBtn) stageBackBtn.addEventListener("click", () => showModeSelect());
+if (stageNextBtn) stageNextBtn.addEventListener("click", async () => {
+  const htEl = document.querySelector('input[name="setupHiringType"]:checked');
+  const hiringType = (htEl && htEl.value) || "intro";
+  if (window.api.setMeetingConfig) await window.api.setMeetingConfig({ kind: "hiring", hiringType });
+  if (typeof applyMeetingConfigUi === "function") applyMeetingConfigUi({ kind: "hiring", hiringType });
+  showProfile();
+});
+if (profileBackBtn) profileBackBtn.addEventListener("click", () => showStage());
+if (profileNextBtn) profileNextBtn.addEventListener("click", () => {
+  const nameEl = document.getElementById("profileName");
+  if (nameEl && !nameEl.value.trim()) { nameEl.focus(); nameEl.classList.add("input-error"); setTimeout(() => nameEl.classList.remove("input-error"), 1200); return; }
+  showSetup();
+});
+for (const id of ["stageSettingsBtn", "profileSettingsBtn"]) {
+  const b = document.getElementById(id);
+  if (b) b.addEventListener("click", () => openSettings());
+}
+const welcomeHelpBtn = document.getElementById("welcomeHelpBtn");
+if (welcomeHelpBtn) welcomeHelpBtn.addEventListener("click", () => { openSettings(); if (typeof activateTab === "function") activateTab("help"); });
+
+// Version + build date on the welcome screen.
+if (window.api.getAppInfo) {
+  window.api.getAppInfo().then((info) => {
+    const v = document.getElementById("welcomeVersion");
+    const u = document.getElementById("welcomeUpdated");
+    if (v) v.textContent = "Version " + (info.version || "");
+    if (u && info.buildDate) u.textContent = "Updated " + new Date(info.buildDate).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  }).catch(() => {});
+}
 if (continueBackBtn) continueBackBtn.addEventListener("click", () => showModeSelect());
 if (modeSelectSettingsBtn) modeSelectSettingsBtn.addEventListener("click", () => openSettings());
 
@@ -484,8 +599,8 @@ if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
   const hiringType = (htEl && htEl.value) || "intro";
   if (window.api.setMeetingConfig) await window.api.setMeetingConfig({ kind: "hiring", hiringType });
   if (typeof applyMeetingConfigUi === "function") applyMeetingConfigUi({ kind: "hiring", hiringType });
-  const sup = !!(setupRoleSupporterV && setupRoleSupporterV.checked);
-  const chosenRole = sup ? "supporter" : "speaker";
+  const sup = false; // supporter mode is not offered in this build
+  const chosenRole = "speaker";
   const patch = { role: chosenRole };
   if (sup) {
     const addr = (setupAddressV && setupAddressV.value.trim()) || "172.16.98.11:2000";
@@ -507,12 +622,16 @@ if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
   if (!sup) {
     clearAnswerPanel();
     const val = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ""; };
-    const profile = { name: val("profileName"), city: val("profileCity"), country: val("profileCountry"), timezone: val("profileTimezone") };
-    if (window.api.sessionNew) await window.api.sessionNew({ profile });
+    const profile = readProfileFields();
+    const amount = Number(val("salaryAmount"));
+    const salary = amount > 0 ? { amount, currency: val("salaryCurrency") || "USD", period: val("salaryPeriod") || "month" } : null;
+    if (window.api.sessionNew) await window.api.sessionNew({ profile, salary });
     maybeOpenInfoWindow(profile);
   }
   hideSetup();
   log(`Started: voice mode as ${chosenRole}`, "info");
+  // Transcription starts by itself once the interview screen is up.
+  setTimeout(() => { if (!recState && typeof startVoice === "function") startVoice(); }, 400);
 });
 
 // Runtime IANA timezones (offline). Used to fill the scrollable, searchable
@@ -1644,18 +1763,33 @@ function addMeetBubble(who, text, live) {
   const name = document.createElement("div");
   name.className = "meet-who";
   name.textContent = who;
-  const clr = document.createElement("button");
-  clr.type = "button";
-  clr.className = "meet-clear";
-  clr.title = "Clear this transcript (Shift+Z)";
-  clr.textContent = "×";
-  clr.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
+  const actions = document.createElement("div");
+  actions.className = "meet-actions";
+  const mkBtn = (cls, title, label, onClick) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "meet-clear " + cls;
+    b.title = title;
+    b.textContent = label;
+    b.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); onClick(); });
+    actions.appendChild(b);
+    return b;
+  };
+  const bubbleText = () => String((el._textEl && el._textEl.textContent) || el._committed || "").trim();
+  mkBtn("meet-retry", "Answer this again", "↻", () => {
+    const t = bubbleText();
+    if (!t) return;
+    if (el === lastMeetEl) sealMeetBubble();
+    resendTurn(t, []);
+  });
+  mkBtn("meet-edit", "Edit this transcript, then answer", "✎", () => beginMeetEdit(el));
+  mkBtn("meet-remove", "Remove this transcript (Shift+Z)", "×", () => {
     clearMeetBubble(el);
+    el.remove();
+    if (answerHistory && !answerHistory.querySelector(".answer-turn, .meet-turn") && answerEmpty) answerEmpty.hidden = false;
   });
   head.appendChild(name);
-  head.appendChild(clr);
+  head.appendChild(actions);
   const body = document.createElement("div");
   body.className = "meet-text";
   body.textContent = text;
@@ -1669,6 +1803,45 @@ function addMeetBubble(who, text, live) {
   answerHistory.insertBefore(el, answerSpacer);
   try { el.scrollIntoView({ block: "nearest" }); } catch {}
   return el;
+}
+
+// Inline edit of a transcript bubble: textarea + Send/Cancel. Send answers the
+// edited text and keeps it in the bubble.
+function beginMeetEdit(el) {
+  if (!el || el._editing) return;
+  el._editing = true;
+  if (el === lastMeetEl) sealMeetBubble();
+  const body = el._textEl;
+  const original = String(body.textContent || el._committed || "");
+  const ta = document.createElement("textarea");
+  ta.className = "meet-editbox";
+  ta.value = original;
+  ta.rows = Math.min(8, Math.max(2, original.split("\n").length + 1));
+  const row = document.createElement("div");
+  row.className = "meet-edit-row";
+  const cancel = document.createElement("button");
+  cancel.type = "button"; cancel.className = "meet-edit-btn"; cancel.textContent = "Cancel";
+  const send = document.createElement("button");
+  send.type = "button"; send.className = "meet-edit-btn meet-edit-btn--primary"; send.textContent = "Answer";
+  row.appendChild(cancel); row.appendChild(send);
+  body.hidden = true;
+  el.appendChild(ta); el.appendChild(row);
+  const finish = () => { ta.remove(); row.remove(); body.hidden = false; el._editing = false; };
+  cancel.addEventListener("click", finish);
+  send.addEventListener("click", () => {
+    const t = ta.value.trim();
+    if (!t) return;
+    body.textContent = t; el._committed = t;
+    if (el._turn) el._turn.text = t;
+    persistMeetBubble(el, true);
+    finish();
+    resendTurn(t, []);
+  });
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") finish();
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send.click();
+  });
+  ta.focus();
 }
 
 function sealMeetBubble() {
@@ -4865,8 +5038,8 @@ if (testCableBtnEl)
   try {
     const seen = await window.api.getWelcomeSeen().catch(() => true);
     if (!seen) {
-      const overlay = document.getElementById("welcomeOverlay");
-      if (overlay) overlay.hidden = false;
+      // The one-time popup is superseded by the Welcome screen; never show it.
+      window.api.setWelcomeSeen(true).catch(() => {});
     }
   } catch {}
 })();
