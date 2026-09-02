@@ -1,7 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('adminApi', {
-  keyStatus: () => ipcRenderer.invoke('key-status'),
-  gen: (mac, days) => ipcRenderer.invoke('gen', { mac, days }),
+  gen: (mac, days, date) => ipcRenderer.invoke('gen', { mac, days, date }),
   copy: (text) => ipcRenderer.invoke('copy', text),
 });

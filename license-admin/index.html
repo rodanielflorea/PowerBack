@@ -38,8 +38,16 @@
   <div id="err"></div>
   <label for="mac">Computer ID (MAC address, as the user sent it)</label>
   <input id="mac" placeholder="AA:BB:CC:DD:EE:FF" spellcheck="false" />
-  <label for="days">Valid for (days)</label>
-  <input id="days" type="number" value="30" min="1" max="3650" />
+  <div class="row">
+    <div>
+      <label for="days">Valid for (days)</label>
+      <input id="days" type="number" value="30" min="1" max="3650" />
+    </div>
+    <div>
+      <label for="date">…or expires on (date)</label>
+      <input id="date" type="date" />
+    </div>
+  </div>
   <button id="genBtn" class="primary">Generate license</button>
   <label for="out">License key</label>
   <textarea id="out" readonly spellcheck="false"></textarea>
@@ -47,10 +55,12 @@
   <button id="copyBtn">Copy license</button>
   <script>
     const $ = (id) => document.getElementById(id);
-    window.adminApi.keyStatus().then((err) => { if (err) { $('err').textContent = err; $('genBtn').disabled = true; } });
+    // Filling a date clears the day count and vice versa: only one applies.
+    $('date').oninput = () => { if ($('date').value) $('days').value = ''; };
+    $('days').oninput = () => { if ($('days').value) $('date').value = ''; };
     $('genBtn').onclick = async () => {
       $('err').textContent = ''; $('meta').textContent = ''; $('out').value = '';
-      const r = await window.adminApi.gen($('mac').value, $('days').value);
+      const r = await window.adminApi.gen($('mac').value, $('days').value, $('date').value);
       if (r.error) { $('err').textContent = r.error; return; }
       $('out').value = r.code;
       $('meta').textContent = 'For ' + r.mac.replace(/(..)(?=.)/g, '$1:') +

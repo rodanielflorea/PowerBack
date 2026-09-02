@@ -14,16 +14,8 @@
       "main.js",
       "preload.js",
       "index.html",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "keys",
-        "to": "keys",
-        "filter": [
-          "private.key"
-        ]
-      }
+      "package.json",
+      "private-key.js"
     ],
     "directories": {
       "output": "dist"
