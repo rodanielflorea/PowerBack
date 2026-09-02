@@ -11,7 +11,7 @@
        is the button. On Windows/macOS the inner disc can be dragged as well. */
     .ring {
       width: 100%; height: 100%; border-radius: 50%;
-      padding: 7px;
+      padding: 10px;
       background: linear-gradient(135deg, #1d4ed8 0%, #1e3a8a 100%);
       box-shadow: 0 6px 16px rgba(15,18,34,.30), 0 0 0 2px rgba(255,255,255,.85);
       cursor: move;
@@ -29,6 +29,9 @@
     }
     .btn:hover { filter: brightness(1.08); }
     .btn:active { transform: scale(.94); }
+    body.manual-drag .ring { -webkit-app-region: no-drag; padding: 4px; }
+    body.manual-drag .btn { cursor: grab; }
+    body.manual-drag .btn:active { cursor: grabbing; }
     /* Main window hidden: dim the button so the state is obvious. */
     body.main-hidden .ring { background: linear-gradient(135deg, #475569, #334155); }
     body.main-hidden .btn { background: linear-gradient(135deg, #64748b, #475569); }
@@ -40,26 +43,38 @@
   </div>
   <script>
     const btn = document.getElementById('btn');
-    // Press and move = drag the button; press and release in place = toggle.
+    const ring = document.querySelector('.ring');
+    // Whole-area drag (Windows/macOS/X11): main moves the window while the
+    // pointer is held; pointer capture keeps delivering events even when the
+    // cursor slips outside this tiny window. A press without movement toggles.
+    // On Wayland only the outer band (a native drag region) can move the window.
     let press = null;
-    btn.addEventListener('mousedown', (e) => {
-      if (e.button !== 0) return;
-      press = { x: e.screenX, y: e.screenY, moved: false };
+    const onDown = (e) => {
+      if (e.button !== 0 || !document.body.classList.contains('manual-drag')) return;
+      press = { x: e.screenX, y: e.screenY, moved: false, id: e.pointerId };
+      try { ring.setPointerCapture(e.pointerId); } catch {}
       window.floatApi.dragStart();
-    });
-    window.addEventListener('mousemove', (e) => {
+    };
+    const onMove = (e) => {
       if (!press) return;
       if (Math.abs(e.screenX - press.x) + Math.abs(e.screenY - press.y) > 4) press.moved = true;
-    });
-    const release = (e) => {
+    };
+    const onUp = (e) => {
       if (!press) return;
       const moved = press.moved;
+      try { ring.releasePointerCapture(press.id); } catch {}
       press = null;
       window.floatApi.dragEnd();
-      if (!moved && e && e.type === 'mouseup') window.floatApi.toggle();
+      if (!moved && e && e.type === 'pointerup' && e.target === btn) window.floatApi.toggle();
     };
-    window.addEventListener('mouseup', release);
-    window.addEventListener('blur', () => release(null));
+    ring.addEventListener('pointerdown', onDown);
+    ring.addEventListener('pointermove', onMove);
+    ring.addEventListener('pointerup', onUp);
+    ring.addEventListener('pointercancel', () => onUp(null));
+    window.addEventListener('blur', () => onUp(null));
+    // Wayland: the inner disc is a plain button.
+    btn.addEventListener('click', () => { if (!document.body.classList.contains('manual-drag')) window.floatApi.toggle(); });
+    window.floatApi.onCaps((caps) => { document.body.classList.toggle('manual-drag', !!(caps && caps.manualDrag)); });
     window.floatApi.onState((visible) => {
       document.body.classList.toggle('main-hidden', !visible);
       btn.title = (visible ? 'Click: hide the app' : 'Click: show the app') + ' (Ctrl+Alt+H) · Drag: move this button';

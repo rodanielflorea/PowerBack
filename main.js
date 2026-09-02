@@ -726,7 +726,11 @@ function createFloatWindow() {
   floatWin.loadFile(path.join(__dirname, 'renderer', 'float.html'));
   const showFloat = () => { if (floatWin && !floatWin.isDestroyed() && !floatWin.isVisible()) floatWin.showInactive(); };
   floatWin.once('ready-to-show', showFloat);
-  floatWin.webContents.once('did-finish-load', () => { setTimeout(showFloat, 100); sendFloatState(); });
+  floatWin.webContents.once('did-finish-load', () => {
+    setTimeout(showFloat, 100);
+    try { floatWin.webContents.send('float-caps', { manualDrag: !WAYLAND_SESSION }); } catch {}
+    sendFloatState();
+  });
   floatWin.on('move', () => {
     try { const [x, y] = floatWin.getPosition(); state.floatPos = { x, y }; saveState(); } catch {}
   });
