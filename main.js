@@ -83,7 +83,7 @@ const HOTKEY_DEFAULTS = {
 };
 
 const DEFAULT_STATE = {
-  x: null, y: null, width: 400, height: 700,
+  x: null, y: null, width: 380, height: 800,
   opacity: 1.0, stealth: true, clickThrough: false,
   mode: 'voice',
   transcription: {
