@@ -137,8 +137,8 @@ html { background: var(--bg); }
 .clickthrough-btn.on  .cursor-body { fill: var(--amber); stroke: #92400e; }
 .clickthrough-btn.on  .cursor-through { display: inline; }
 /* End = small stop icon at the left of the bar. */
-.end-icon circle { fill: none; stroke: var(--rec-on); stroke-width: 2; }
-.end-icon rect { fill: var(--rec-on); }
+.end-icon { width: 18px; height: 18px; }
+.end-icon path { fill: var(--rec-on); }
 #netStatusPill { display: none !important; }
 
 /* ── 5. RIGHT RAIL ─────────────────────────────────────────── */
@@ -548,7 +548,7 @@ body:not(.in-interview) .right-rail { display: none !important; }
   box-shadow: 0 1px 3px rgba(37,99,235,.35);
 }
 .end-btn:hover { background: rgba(220,38,38,.12); }
-body.in-interview .end-btn.live .end-icon rect { animation: endPulse 1.4s ease-in-out infinite; }
+body.in-interview .end-btn.live .end-icon path { animation: endPulse 1.4s ease-in-out infinite; }
 @keyframes endPulse {
   0%,100% { opacity: 1; transform: scale(1); }
   50%      { opacity: 0.5; transform: scale(0.85); }
