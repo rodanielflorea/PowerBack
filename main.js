@@ -13,6 +13,7 @@ const {
   friendlyAnswerError, modelAbbr,
 } = require('./llm-providers');
 const { createKeyInjector, pasteKeystroke } = require('./platform-input');
+const license = require('./license');
 let autoUpdater = null;
 try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
 let officeParser = null;
@@ -1817,10 +1818,68 @@ ipcMain.handle('install-update-now', () => {
 
 ipcMain.handle('get-app-version', () => app.getVersion());
 
-app.whenReady().then(() => {
+// ── License gate ─────────────────────────────────────────────────────────────
+// The app only starts once a valid MAC-bound license is stored (license.js).
+// First run (or after expiry) shows a small window with this PC's MAC address;
+// the user sends it to the admin, receives a key from the admin generator
+// (license-admin/), and enters it once. Verification is offline against the
+// embedded public key, so no network is needed to activate.
+
+let licenseWin = null;
+
+function startApp() {
   createWindow();
   registerHotkeys();
   setupAutoUpdater();
+}
+
+function openLicenseWindow(reason) {
+  licenseWin = new BrowserWindow({
+    width: 460,
+    height: 400,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    title: 'Activation',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-license.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  licenseWin.setMenuBarVisibility(false);
+  licenseWin.loadFile(path.join(__dirname, 'renderer', 'license.html'));
+  const showLicense = () => { if (licenseWin && !licenseWin.isDestroyed() && !licenseWin.isVisible()) licenseWin.show(); };
+  licenseWin.once('ready-to-show', showLicense);
+  licenseWin.webContents.once('did-finish-load', () => setTimeout(showLicense, 100));
+  licenseWin.on('closed', () => { licenseWin = null; });
+
+  ipcMain.removeHandler('license-info');
+  ipcMain.removeHandler('license-submit');
+  ipcMain.removeHandler('license-copy-mac');
+  ipcMain.removeHandler('license-quit');
+  ipcMain.handle('license-info', () => ({
+    mac: license.formatMac(license.primaryMac() || ''),
+    reason,
+  }));
+  ipcMain.handle('license-copy-mac', () => clipboard.writeText(license.formatMac(license.primaryMac() || '')));
+  ipcMain.handle('license-quit', () => app.quit());
+  ipcMain.handle('license-submit', (_e, code) => {
+    const r = license.verifyLicense(code, license.machineMacs(), Date.now());
+    if (!r.ok) return { ok: false, reason: r.reason };
+    license.saveStoredLicense(app.getPath('userData'), String(code).trim(), Date.now());
+    setTimeout(() => {
+      if (licenseWin && !licenseWin.isDestroyed()) { licenseWin.removeAllListeners('closed'); licenseWin.close(); licenseWin = null; }
+      startApp();
+    }, 900);
+    return { ok: true, expiresAt: r.expiresAt };
+  });
+}
+
+app.whenReady().then(() => {
+  const check = license.checkStoredLicense(app.getPath('userData'));
+  if (check.ok) startApp();
+  else openLicenseWindow(check.reason);
 });
 
 ipcMain.handle('set-opacity', (_e, value) => setOpacity(value));

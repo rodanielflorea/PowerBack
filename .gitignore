@@ -30,3 +30,6 @@ dist/
 build/
 out/
 !build/icon-source.png
+
+# License signing key — never commit; copy it to the admin machine by hand
+license-admin/keys/private.key
