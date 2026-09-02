@@ -268,6 +268,17 @@ if (clickThroughBtn) {
   })();
 }
 window.api.onClickThroughChanged((v) => updateClickThrough(v));
+// Keep the header bar usable while click-through is on (so it can be switched
+// off again and the window moved): re-enable mouse events over the header only.
+(() => {
+  const bar = document.querySelector(".titlebar");
+  if (!bar || !window.api.clickThroughHover) return;
+  let over = false;
+  const report = (v) => { if (over === v) return; over = v; window.api.clickThroughHover(v); };
+  bar.addEventListener("mouseenter", () => report(true));
+  bar.addEventListener("mouseleave", () => report(false));
+  document.addEventListener("mousemove", (e) => report(!!e.target.closest && !!e.target.closest(".titlebar")));
+})();
 
 hideBtn.addEventListener("click", () => window.api.hide());
 quitBtn.addEventListener("click", () => window.api.quit());

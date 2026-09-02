@@ -1667,6 +1667,14 @@ function setClickThrough(value) {
   if (win) win.webContents.send('click-through-changed', state.clickThrough);
 }
 
+// While click-through is on, the header bar stays clickable: the renderer
+// reports when the pointer is over it (mouse moves are still forwarded to the
+// page) and mouse events are re-enabled just for that time.
+ipcMain.handle('click-through-hover', (_e, overHeader) => {
+  if (!win || win.isDestroyed() || !state.clickThrough) return;
+  try { win.setIgnoreMouseEvents(!overHeader, { forward: true }); } catch {}
+});
+
 function sendHelpRequest() {
   if (state.network.role !== 'speaker') {
     if (win) win.webContents.send('capture-error', 'Help-me hotkey: only the speaker can send help requests');

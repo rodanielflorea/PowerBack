@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('api', {
   setClickThrough: (v) => ipcRenderer.invoke('set-click-through', v),
   getClickThrough: () => ipcRenderer.invoke('get-click-through'),
   onClickThroughChanged: (cb) => ipcRenderer.on('click-through-changed', (_e, v) => cb(v)),
+  clickThroughHover: (over) => ipcRenderer.invoke('click-through-hover', over),
   sendStickyText: (text) => ipcRenderer.invoke('sticky-send-text', text),
   sendStickyImage: (dataUrl) => ipcRenderer.invoke('sticky-send-image', dataUrl),
   sendStickyRich: (markdown) => ipcRenderer.invoke('sticky-send-rich', markdown),
