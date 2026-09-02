@@ -66,6 +66,7 @@ const HOTKEY_DEFAULTS = {
   screenshotToAI: 'Alt+A',
   areaSnip: 'Alt+S',
   toggleClickThrough: 'Alt+Q',
+  clearTranscriptBubble: 'Shift+Z',
 };
 
 const DEFAULT_STATE = {
@@ -100,7 +101,6 @@ const DEFAULT_STATE = {
     maxSupporters: 5,
   },
   welcomeSeen: false,
-  prompts: [],
   // Uploaded base-knowledge documents (extracted text), per category.
   knowledge: { cv: [], jd: [], support: [], meetings: [] },
   // Answer generation: provider + per-provider keys/models. `apiKey` is the
@@ -115,10 +115,12 @@ const DEFAULT_STATE = {
       anthropic: 'claude-haiku-4-5',
       openai: 'gpt-4o',
     },
-    activePromptId: null,
   },
-  avoidPhrases: '',   // filled from defaults/avoid.txt on seed
-  promptDefaultsVersion: 0,
+  meeting: {
+    kind: 'hiring',
+    hiringType: 'intro',     // intro | technical | ceo | hr
+  },
+  avoidPhrases: '',   // filled from defaults/avoid.txt on first run
   // Remembered personal profile, pre-filled into the New-session form.
   profile: { name: '', city: '', country: '', timezone: '' },
   // Named, switchable profiles for the New-session form.
@@ -357,6 +359,7 @@ function loadState() {
       network: { ...DEFAULT_STATE.network, ...(raw.network || {}) },
       answer: { ...DEFAULT_STATE.answer, ...(raw.answer || {}) },
       knowledge: { ...DEFAULT_STATE.knowledge, ...(raw.knowledge || {}) },
+      meeting: { ...DEFAULT_STATE.meeting, ...(raw.meeting || {}) },
       hotkeys: { ...HOTKEY_DEFAULTS, ...(raw.hotkeys || {}) },
     };
     for (const k of Object.keys(HOTKEY_DEFAULTS)) {
@@ -367,6 +370,14 @@ function loadState() {
     if (state.transcription.engine !== 'deepgram' && state.transcription.engine !== 'xai') {
       state.transcription.engine = 'deepgram';
     }
+    if (!state.meeting) state.meeting = { ...DEFAULT_STATE.meeting };
+    state.meeting.kind = 'hiring';
+    if (!['intro', 'technical', 'ceo', 'hr'].includes(state.meeting.hiringType)) state.meeting.hiringType = 'intro';
+    delete state.meeting.roster;
+    delete state.prompts;
+    delete state.promptDefaultsVersion;
+    delete state.promptsSeeded;
+    if (state.answer) delete state.answer.activePromptId;
   } catch {
     state = {
       ...DEFAULT_STATE,
@@ -374,11 +385,12 @@ function loadState() {
       capture: { ...DEFAULT_STATE.capture },
       network: { ...DEFAULT_STATE.network },
       answer: { ...DEFAULT_STATE.answer },
+      meeting: { ...DEFAULT_STATE.meeting },
       hotkeys: { ...HOTKEY_DEFAULTS },
     };
   }
   migrateAnswerConfig();
-  seedDefaultPromptsIfNeeded();
+  seedAvoidPhrasesIfNeeded();
   migrateProfilesIfNeeded();
 }
 
@@ -430,10 +442,6 @@ function migrateProfilesIfNeeded() {
   }
 }
 
-const DEFAULT_PROMPT_ID = 'preset-general';
-const DEFAULT_PROMPT_TITLE = 'General';
-const PROMPT_DEFAULTS_VERSION = 3;
-
 function loadBundledText(filename) {
   const dirs = [
     path.join(__dirname, '.claude'),
@@ -450,27 +458,11 @@ function loadBundledText(filename) {
   return '';
 }
 
-function builtinPromptDefaults() {
-  return {
-    prompt: loadBundledText('prompt.txt'),
-    avoid: loadBundledText('avoid.txt'),
-  };
-}
-
-// Replace the old multi-preset seed with the bundled general prompt + avoid list.
-function seedDefaultPromptsIfNeeded() {
-  if (state.promptDefaultsVersion === PROMPT_DEFAULTS_VERSION && state.promptsSeeded) return;
-  const bundled = builtinPromptDefaults();
-  state.prompts = [{
-    id: DEFAULT_PROMPT_ID,
-    title: DEFAULT_PROMPT_TITLE,
-    text: bundled.prompt,
-  }];
-  if (!state.answer) state.answer = { ...DEFAULT_STATE.answer };
-  state.answer.activePromptId = DEFAULT_PROMPT_ID;
-  state.avoidPhrases = bundled.avoid;
-  state.promptsSeeded = true;
-  state.promptDefaultsVersion = PROMPT_DEFAULTS_VERSION;
+function seedAvoidPhrasesIfNeeded() {
+  if (String(state.avoidPhrases || '').trim()) return;
+  const avoid = loadBundledText('avoid.txt');
+  if (!avoid) return;
+  state.avoidPhrases = avoid;
   try { saveState(); } catch {}
 }
 
@@ -1363,6 +1355,8 @@ const HOTKEY_HANDLERS = {
   screenshotToAI: () => { if (win && !win.isDestroyed()) win.webContents.send('trigger-screenshot'); },
   areaSnip: () => openSnipSelector(),
   toggleClickThrough: () => setClickThrough(!state.clickThrough),
+  reloadSite: () => { if (win && !win.isDestroyed()) win.webContents.send('reload-site'); },
+  clearTranscriptBubble: () => { if (win && !win.isDestroyed()) win.webContents.send('clear-meet-bubble'); },
 };
 
 function setClickThrough(value) {
@@ -1814,6 +1808,23 @@ ipcMain.handle('set-transcription-config', (_e, cfg) => {
   state.transcription = { ...state.transcription, ...(cfg || {}) };
   saveState();
 });
+
+function getMeetingConfig() {
+  const m = state.meeting || {};
+  const hiringType = ['intro', 'technical', 'ceo', 'hr'].includes(m.hiringType) ? m.hiringType : 'intro';
+  return { kind: 'hiring', hiringType };
+}
+ipcMain.handle('get-meeting-config', () => getMeetingConfig());
+ipcMain.handle('set-meeting-config', (_e, cfg) => {
+  const next = { ...getMeetingConfig(), ...(cfg || {}) };
+  next.kind = 'hiring';
+  if (!['intro', 'technical', 'ceo', 'hr'].includes(next.hiringType)) next.hiringType = 'intro';
+  delete next.roster;
+  state.meeting = next;
+  saveState();
+  schedulePromptCacheWarm();
+  return getMeetingConfig();
+});
 ipcMain.handle('transcribe', async (_e, wavArrayBuffer) => enqueueTranscribe(wavArrayBuffer));
 
 let deepgramActive = false;       // true between start and stop of voice
@@ -1840,6 +1851,19 @@ function scheduleDeepgramReconnect() {
   }, delay);
 }
 
+function defaultTranscriptWho() {
+  return 'Interviewer';
+}
+
+function parseTranscriptAlternative(alt) {
+  const transcript = String((alt && alt.transcript) || '').trim();
+  const words = (alt && alt.words) || [];
+  const text = transcript || words.map((w) => w.punctuated_word || w.word || '').join(' ').replace(/\s+/g, ' ').trim();
+  if (!text) return { text: '', labeled: '', speaker: 0, turns: [] };
+  const who = defaultTranscriptWho();
+  return { text, labeled: who + ': ' + text, speaker: 0, turns: [{ speaker: 0, who, text }] };
+}
+
 function startDeepgramWs(apiKey, language) {
   if (deepgramWs) return;
   const params = new URLSearchParams({
@@ -1848,10 +1872,8 @@ function startDeepgramWs(apiKey, language) {
     smart_format: 'true', interim_results: 'true',
     // VAD + utterance-end events for smoother, more natural finalization.
     vad_events: 'true', endpointing: '150', no_delay: 'true', utterance_end_ms: '1500',
+    punctuate: 'true',
   });
-  // nova-2 with a known language is the most accurate streaming setup (matches
-  // the reference project). Default to English; honor an explicit language pick.
-  // We avoid nova-3 'multi' — multilingual mode is noticeably worse for English.
   params.set('model', 'nova-2');
   params.set('language', (language && language !== 'auto') ? language : 'en-US');
 
@@ -1880,10 +1902,18 @@ function startDeepgramWs(apiKey, language) {
         return;
       }
       if (msg.type !== 'Results') return;
-      const text = (msg.channel?.alternatives?.[0]?.transcript || '').trim();
-      if (!text) return;
-      if (msg.is_final) sessionLog.push({ ts: Date.now(), kind: 'voice', text });
-      if (win && !win.isDestroyed()) win.webContents.send('transcript-live', { text, isFinal: !!msg.is_final });
+      const parsed = parseTranscriptAlternative(msg.channel?.alternatives?.[0]);
+      if (!parsed.text) return;
+      if (msg.is_final) sessionLog.push({ ts: Date.now(), kind: 'voice', text: parsed.labeled || parsed.text });
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('transcript-live', {
+          text: parsed.text,
+          labeled: parsed.labeled,
+          speaker: parsed.speaker,
+          turns: parsed.turns || [],
+          isFinal: !!msg.is_final,
+        });
+      }
     } catch {}
   });
   // A rejected WS handshake (bad key, bad params, no credits) comes through here
@@ -2002,11 +2032,22 @@ function startXaiWs(apiKey, language) {
         return;
       }
       if (msg.type === 'transcript.partial' || msg.type === 'transcript.done') {
-        const text = (msg.text || '').trim();
         const isFinal = msg.type === 'transcript.done' || !!msg.is_final;
-        if (text) {
-          if (isFinal) sessionLog.push({ ts: Date.now(), kind: 'voice', text });
-          if (win && !win.isDestroyed()) win.webContents.send('transcript-live', { text, isFinal });
+        const parsed = parseTranscriptAlternative({
+          transcript: msg.text || msg.transcript,
+          words: msg.words || (msg.channel && msg.channel.alternatives && msg.channel.alternatives[0] && msg.channel.alternatives[0].words),
+        });
+        if (parsed.text) {
+          if (isFinal) sessionLog.push({ ts: Date.now(), kind: 'voice', text: parsed.labeled || parsed.text });
+          if (win && !win.isDestroyed()) {
+            win.webContents.send('transcript-live', {
+              text: parsed.text,
+              labeled: parsed.labeled,
+              speaker: parsed.speaker,
+              turns: parsed.turns || [],
+              isFinal,
+            });
+          }
         }
         // speech_final marks an utterance boundary — same role as Deepgram's UtteranceEnd.
         if (msg.speech_final && win && !win.isDestroyed()) win.webContents.send('transcript-utterance-end');
@@ -2117,6 +2158,7 @@ ipcMain.handle('session-finalize', (_e, { company, position } = {}) => {
     s.position = String(position || '').trim();
     s.name = title;
     s.updatedAt = Date.now();
+    if (meetSaveTimer) { clearTimeout(meetSaveTimer); meetSaveTimer = null; }
     saveSessions();
   }
   return title;
@@ -2240,7 +2282,7 @@ function recordTurn(user, assistant, mode, images) {
     currentSessionId = s.id;
   }
   const imgs = Array.isArray(images) ? images.map(i => ({ base64: i.base64, mime: i.mime || 'image/png' })) : [];
-  s.turns.push({ ts: Date.now(), q: u, a, mode: mode || 'ANSWER', images: imgs });
+  s.turns.push({ kind: 'qa', ts: Date.now(), q: u, a, mode: mode || 'ANSWER', images: imgs });
   if (!s.name) {
     const d = new Date(s.createdAt || Date.now());
     const p = (n) => String(n).padStart(2, '0');
@@ -2289,6 +2331,48 @@ function saveSessions() {
   return _sessionsSaveQueue;
 }
 function currentSession() { return sessions.find(s => s.id === currentSessionId) || null; }
+
+let meetSaveTimer = null;
+function ensureSession() {
+  let s = currentSession();
+  if (s) return s;
+  s = { id: genSessionId(), name: '', createdAt: Date.now(), updatedAt: Date.now(), turns: [] };
+  sessions.push(s);
+  currentSessionId = s.id;
+  return s;
+}
+function recordMeetTurn(who, text, sealed) {
+  who = String(who || 'Interviewer').trim() || 'Interviewer';
+  text = String(text || '').trim();
+  const s = ensureSession();
+  if (!s.turns) s.turns = [];
+  const last = s.turns.length ? s.turns[s.turns.length - 1] : null;
+  if (!text) {
+    if (last && last.kind === 'meet' && !last.sealed) s.turns.pop();
+    s.updatedAt = Date.now();
+    if (meetSaveTimer) { clearTimeout(meetSaveTimer); meetSaveTimer = null; }
+    return saveSessions();
+  }
+  if (last && last.kind === 'meet' && !last.sealed) {
+    last.who = who;
+    last.text = text;
+    if (sealed) last.sealed = true;
+  } else {
+    s.turns.push({ kind: 'meet', ts: Date.now(), who, text, sealed: !!sealed });
+  }
+  s.updatedAt = Date.now();
+  if (sealed) {
+    if (meetSaveTimer) { clearTimeout(meetSaveTimer); meetSaveTimer = null; }
+    return saveSessions();
+  }
+  if (meetSaveTimer) clearTimeout(meetSaveTimer);
+  meetSaveTimer = setTimeout(() => { meetSaveTimer = null; saveSessions(); }, 400);
+  return Promise.resolve(true);
+}
+ipcMain.handle('session-record-meet', (_e, payload) => {
+  const p = payload || {};
+  return recordMeetTurn(p.who, p.text, !!p.sealed);
+});
 function genSessionId() { return 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 loadSessions();
 
@@ -2410,7 +2494,9 @@ ipcMain.handle('session-load', (_e, id) => {
   if (!s) return null;
   currentSessionId = id;
   // Rebuild grounding context from the saved turns.
-  convoHistory = (s.turns || []).map(t => ({ user: t.q || '', assistant: t.a || '', mode: t.mode || 'ANSWER' }));
+  convoHistory = (s.turns || [])
+    .filter((t) => t && t.kind !== 'meet')
+    .map((t) => ({ user: t.q || '', assistant: t.a || '', mode: t.mode || 'ANSWER' }));
   // Restore the session's own materials + profile (in-memory; global save untouched).
   if (s.knowledge) state.knowledge = JSON.parse(JSON.stringify(s.knowledge));
   activeProfile = s.profile || {};
@@ -2489,7 +2575,8 @@ function clipText(s, n) {
 }
 
 // Spoken answers need a small prompt so the first token isn't 2–3s of prefill.
-// CODE/DIAGRAM keep more material.
+// CODE/DIAGRAM keep more material. CV, JD, and support are all optional; whatever
+// is uploaded is the knowledge base (support is often the whole KB).
 function buildKnowledgeContext(mode) {
   const compact = !mode || mode === 'ANSWER';
   const k = state.knowledge || {};
@@ -2497,21 +2584,38 @@ function buildKnowledgeContext(mode) {
   const p = activeProfile || {};
   const loc = [p.city, p.country].filter(Boolean).join(', ');
   const profileParts = [];
-  if (p.name) profileParts.push(`Name: ${p.name}`);
+  if (p.name) profileParts.push(`Name: ${p.name} (this is YOU)`);
   if (loc) profileParts.push(`Location: ${loc}`);
   // Timezone only — a live clock here would bust prompt-cache on every minute.
   if (p.timezone) profileParts.push(`Timezone: ${p.timezone}`);
-  const sections = [
-    ['CANDIDATE PROFILE', profileParts.join('\n')],
-    ['CANDIDATE RESUME / CV', clipText(join(k.cv), compact ? 5000 : 16000)],
-    ['JOB DESCRIPTION', clipText(join(k.jd), compact ? 2200 : 12000)],
-    ['SUPPORTING MATERIAL', clipText(join(k.support), compact ? 1200 : 12000)],
-    ['PREVIOUS MEETING RECORDS', clipText(join(k.meetings), compact ? 0 : 8000)],
-  ];
-  return sections
-    .filter(([, body]) => body)
-    .map(([title, body]) => `${title}:\n${body}`)
-    .join('\n\n----\n\n');
+
+  const blocks = [
+    { title: 'CANDIDATE PROFILE', text: profileParts.join('\n'), weight: 0 },
+    { title: 'CANDIDATE RESUME / CV', text: join(k.cv), weight: 3 },
+    { title: 'JOB DESCRIPTION', text: join(k.jd), weight: 2 },
+    { title: 'SUPPORT / KNOWLEDGE BASE', text: join(k.support), weight: 3 },
+    { title: 'PREVIOUS MEETING RECORDS', text: join(k.meetings), weight: compact ? 0 : 1 },
+  ].filter((b) => b.text);
+
+  const present = blocks
+    .filter((b) => b.weight > 0)
+    .map((b) => b.title)
+    .join(', ');
+  const header = present
+    ? 'Uploaded knowledge (missing files are fine; use what is here as the whole base): ' + present
+    : 'No files uploaded. Use only the live meeting. Do not invent a career history.';
+
+  const totalCap = compact ? 10000 : 40000;
+  const weighted = blocks.filter((b) => b.weight > 0 && b.text);
+  const weightSum = weighted.reduce((s, b) => s + b.weight, 0) || 1;
+  const parts = [];
+  if (profileParts.length) parts.push('CANDIDATE PROFILE (this person is YOU):\n' + profileParts.join('\n'));
+  for (const b of weighted) {
+    const cap = Math.max(1200, Math.floor(totalCap * (b.weight / weightSum)));
+    parts.push(`${b.title}:\n${clipText(b.text, cap)}`);
+  }
+  if (!parts.length) return header;
+  return header + '\n\n' + parts.join('\n\n----\n\n');
 }
 
 ipcMain.handle('kb-add', async (_e, { kind, name, data }) => {
@@ -2591,7 +2695,6 @@ function publicAnswerConfig() {
   return {
     provider: provider.id,
     model: getAnswerModel(provider.id),
-    activePromptId: (state.answer && state.answer.activePromptId) || null,
     apiKey: keys.xai || ((state.answer && state.answer.apiKey) || ''),
     keys,
     models,
@@ -2616,7 +2719,7 @@ function applyAnswerConfig(cfg) {
     next.keys = { ...(next.keys || {}), xai: next.apiKey };
   }
   if (next.keys && next.keys.xai !== undefined) next.apiKey = next.keys.xai;
-  if (cfg.activePromptId !== undefined) next.activePromptId = cfg.activePromptId;
+  delete next.activePromptId;
 
   const nextProvider = (cfg.provider && PROVIDERS[cfg.provider]) ? cfg.provider : (next.provider || 'xai');
   if (nextProvider !== (prev.provider || 'xai')) {
@@ -2640,24 +2743,32 @@ function applyAnswerConfig(cfg) {
   return publicAnswerConfig();
 }
 
-function activePromptText() {
-  const id = state.answer && state.answer.activePromptId;
-  const p = (state.prompts || []).find((q) => q.id === id);
-  return p ? p.text : '';
+function whoAmILine() {
+  const p = activeProfile || {};
+  const name = String(p.name || '').trim();
+  const loc = [p.city, p.country].filter(Boolean).join(', ');
+  if (name && loc) return `You are ${name} from ${loc}.`;
+  if (name) return `You are ${name}.`;
+  return 'The setup profile name, when present, is you.';
+}
+
+function meetingStanceBlock() {
+  const { hiringType } = getMeetingConfig();
+  const kb = `${whoAmILine()} This is a 1:1 hiring call. Transcript lines tagged Interviewer are the other person. The setup profile name is you. Your knowledge base is whatever was uploaded (CV and/or JD and/or support). Missing files are fine. You are the candidate, not a helper who follows their lead.`;
+  const typeHint = {
+    intro: 'Intro / screening: chemistry, your story, why this role, a couple of real questions about the team. Not a lecture.',
+    technical: 'Technical: depth from the knowledge base, tradeoffs, real systems you have touched. Not a textbook dump.',
+    ceo: 'CEO / leadership: judgment, business, impact, what you would prioritize. Short. Not implementation dumps.',
+    hr: 'HR / recruiting: process, timeline, culture, logistics. Still a person with a stance, not a yes-machine.',
+  }[hiringType] || '';
+  return `MEETING STANCE — HIRING INTERVIEW (${hiringType}): ${kb} ${typeHint} If they ask, answer from the knowledge base then take a small position if it is natural. If they state an opinion, do not auto-agree. If they talk only among themselves and you should stay quiet, use [LISTEN] plus a short reason. If they want you to ask, ask a real question from a gap in the knowledge base. Never invent experience. One spoken turn only.`;
 }
 
 function assembleStaticSystem(mode) {
-  const sys = activePromptText();
   const staticParts = [];
   const kb = buildKnowledgeContext(mode);
   if (kb) {
-    staticParts.push('REFERENCE MATERIAL (facts only — do NOT copy its tone, phrasing, or style into your answer):\n\n' + kb);
-  }
-
-  if (sys && mode === 'ANSWER') {
-    staticParts.push(`PRIMARY DIRECTIVE — this overrides all previous instructions for style, tone, persona, and format. Follow it exactly and completely:\n\n${sys}`);
-  } else if (sys) {
-    staticParts.push(`PERSONA & CONTENT GUIDANCE — apply this only to WORDING and technical choices. It must NOT change the required output format below, and must NOT make you introduce yourself or describe your experience when a diagram or code is requested:\n\n${sys}`);
+    staticParts.push('KNOWLEDGE BASE for this candidate (home base for opinions, not a script to read). CV, JD, and support are all optional. Whatever is uploaded is the full base. Support is often the knowledge base by itself. Do NOT copy source wording. Use this base to agree, disagree, or ask. Live meeting talk can add facts or change your mind only when the other person is actually right.\n\n' + kb);
   }
 
   if (mode !== 'ANSWER') {
@@ -2675,33 +2786,58 @@ function assembleStaticSystem(mode) {
 
   if (mode === 'ANSWER') {
     staticParts.push('SPOKEN OUTPUT: Talk like a native American engineer in a real standup or 1:1. Short sentences. Contractions. Start naturally with So or Yeah so when it fits. Never output an em dash, en dash, or --. Use a new sentence, a comma, or the words so / and / which instead. No resume voice. No blog voice. Only paragraphs someone can say out loud.');
+    staticParts.push(meetingStanceBlock());
   }
 
   if (mode === 'DIAGRAM') {
-    staticParts.push('OUTPUT FORMAT — DIAGRAM MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above, INCLUDING the persona/content guidance. Draw a diagram of the system described in the USER MESSAGE below. Your VERY FIRST characters must be ```mermaid — no introduction, no greeting, no self-description, no "Sure!", no "Here is...", no preamble whatsoever. Do NOT introduce yourself or talk about your experience. Start the mermaid block immediately. Keep it readable at a glance: for a complex system, output a high-level overview diagram first, then separate ```mermaid blocks that drill into individual subsystems, rather than one dense diagram. After the closing ``` of EACH diagram, write a thorough explanation of THAT diagram in prose: (a) what every major component/node does, (b) why it is necessary — the specific role it plays and what would break without it, (c) how the parts connect (the data and control flow between them). Then, after the final diagram, add a "Workflow" section that walks through the end-to-end flow step by step, and a "Why this solves the problem" section that explicitly maps the design back to the original requirements — which requirement each major part satisfies and the key trade-offs. Be substantive and concrete; do not pad with filler.');
+    staticParts.push('OUTPUT FORMAT — DIAGRAM MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above. Draw a diagram of the system described in the USER MESSAGE below. Your VERY FIRST characters must be ```mermaid — no introduction, no greeting, no self-description, no "Sure!", no "Here is...", no preamble whatsoever. Do NOT introduce yourself or talk about your experience. Start the mermaid block immediately. Keep it readable at a glance: for a complex system, output a high-level overview diagram first, then separate ```mermaid blocks that drill into individual subsystems, rather than one dense diagram. After the closing ``` of EACH diagram, write a thorough explanation of THAT diagram in prose: (a) what every major component/node does, (b) why it is necessary — the specific role it plays and what would break without it, (c) how the parts connect (the data and control flow between them). Then, after the final diagram, add a "Workflow" section that walks through the end-to-end flow step by step, and a "Why this solves the problem" section that explicitly maps the design back to the original requirements — which requirement each major part satisfies and the key trade-offs. Be substantive and concrete; do not pad with filler.');
   } else if (mode === 'CODE') {
-    staticParts.push('OUTPUT FORMAT — LIVE CODING MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above, INCLUDING the persona/content guidance. Write code that solves the USER MESSAGE below. Your VERY FIRST characters must be ``` opening a code block — no introduction, no greeting, no self-description, no "Sure!", no "Here is...", no preamble of any kind. Do NOT introduce yourself or talk about your experience. Write clean, complete, runnable code with NO comments or docstrings of any kind — no inline comments, no block comments, no triple-quoted docstrings; output only executable code. After the closing ``` you may add a brief explanation only.');
+    staticParts.push('OUTPUT FORMAT — LIVE CODING MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above. Write code that solves the USER MESSAGE below. Your VERY FIRST characters must be ``` opening a code block — no introduction, no greeting, no self-description, no "Sure!", no "Here is...", no preamble of any kind. Do NOT introduce yourself or talk about your experience. Write clean, complete, runnable code with NO comments or docstrings of any kind — no inline comments, no block comments, no triple-quoted docstrings; output only executable code. After the closing ``` you may add a brief explanation only.');
   }
 
   return staticParts.join('\n\n');
 }
 
-function buildAnswerMessages(q, imgs, mode) {
+function clipMeetingTranscript(mt) {
+  const lines = String(mt || '').split(/\n/).map((l) => l.trim()).filter(Boolean).slice(-4);
+  let s = lines.join('\n');
+  if (s.length > 800) s = s.slice(-800);
+  return s;
+}
+
+function formatAnswerUserTurn(q, transcript, mode) {
+  const ask = String(q || '').trim();
+  const mt = clipMeetingTranscript(transcript);
+  if (mode !== 'ANSWER') return ask;
+  const parts = [];
+  if (mt) {
+    parts.push('Recent meeting transcript (last beats only; each line is Who: what they said):\n\n' + mt);
+  }
+  if (ask) {
+    parts.push('The candidate typed this question in the input box. Answer it from the knowledge base. Use the meeting transcript only if it helps.\n\n' + ask);
+  } else {
+    parts.push('The candidate did not type a question. This is live meeting talk. Decide now: speak, or [LISTEN]. If you speak, answer, take a position, push back, or ask. Use names when you know them. Do not only follow their idea.');
+  }
+  return parts.join('\n\n');
+}
+
+function buildAnswerMessages(q, imgs, mode, transcript) {
   const messages = [];
   const staticText = assembleStaticSystem(mode);
   if (staticText) messages.push({ role: 'system', content: staticText });
-  const convoBudget = mode === 'ANSWER' ? 2000 : CONVO_CHAR_BUDGET;
+  const convoBudget = mode === 'ANSWER' ? 3500 : CONVO_CHAR_BUDGET;
   for (const m of conversationContextMessages(convoBudget)) messages.push(m);
 
+  const body = formatAnswerUserTurn(q, transcript, mode);
   if (imgs) {
     const userContent = [];
-    if (q) userContent.push({ type: 'text', text: q });
+    if (body) userContent.push({ type: 'text', text: body });
     imgs.forEach(({ base64, mime }) => {
       userContent.push({ type: 'image_url', image_url: { url: `data:${mime || 'image/png'};base64,${base64}` } });
     });
     messages.push({ role: 'user', content: userContent });
   } else {
-    messages.push({ role: 'user', content: q });
+    messages.push({ role: 'user', content: body });
   }
   return messages;
 }
@@ -2720,19 +2856,19 @@ function spokenSanitize(text, mode) {
   return s;
 }
 
-async function generateAnswer(question, images, forcedMode) {
+async function generateAnswer(question, images, forcedMode, transcript) {
   // images: array of { base64, mime } or null/undefined
   // forcedMode: 'AUTO'|'CODE'|'DIAGRAM'|'ANSWER' — from the manual mode selector
   const imgs = Array.isArray(images) && images.length ? images : null;
   const q = String(question || '').trim();
-  if (!q && !imgs) return;
+  const mt = String(transcript || '').trim();
+  if (!q && !imgs && !mt) return;
   const provider = getAnswerProvider();
   const apiKey = getAnswerApiKey(provider.id);
   if (!apiKey) {
     if (win && !win.isDestroyed()) win.webContents.send('answer-error', `No ${provider.label} API key set (Settings → API keys → Answer generation).`);
     return;
   }
-  abortPromptCacheWarm();
   if (answerAbort) { try { answerAbort.abort(); } catch {} answerAbort = null; }
   const ac = new AbortController();
   answerAbort = ac;
@@ -2744,10 +2880,10 @@ async function generateAnswer(question, images, forcedMode) {
   // Show the bubble before we build/send the prompt so Send never looks idle.
   if (win && !win.isDestroyed()) win.webContents.send('answer-start', { question: displayQ, hasImage: !!imgs, mode });
 
-  const messages = buildAnswerMessages(q, imgs, mode);
-  const sys = activePromptText();
+  const messages = buildAnswerMessages(q, imgs, mode, mt);
   const promptChars = messages.reduce((n, m) => n + (typeof m.content === 'string' ? m.content.length : 0), 0);
-  appendLogLine(`[answer] provider=${provider.id} model=${model} mode=${mode} forced=${forcedMode || '-'} sysLen=${sys.length} promptChars=${promptChars} q="${q.slice(0, 80)}" sysMsgs=${messages.filter(m => m.role === 'system').length}`);
+  const sysLen = (messages.find((m) => m.role === 'system') && messages.find((m) => m.role === 'system').content.length) || 0;
+  appendLogLine(`[answer] provider=${provider.id} model=${model} mode=${mode} forced=${forcedMode || '-'} sysLen=${sysLen} promptChars=${promptChars} q="${q.slice(0, 80)}" sysMsgs=${messages.filter(m => m.role === 'system').length}`);
 
   let full = '';
   const t0 = Date.now();
@@ -2793,8 +2929,8 @@ async function generateAnswer(question, images, forcedMode) {
   if (win && !win.isDestroyed()) win.webContents.send('answer-done', { text: full });
 }
 
-ipcMain.handle('generate-answer', (_e, { question, images, forcedMode } = {}) => {
-  generateAnswer(question, images, forcedMode);
+ipcMain.handle('generate-answer', (_e, { question, images, forcedMode, transcript } = {}) => {
+  generateAnswer(question, images, forcedMode, transcript);
 });
 
 // ── Warm-up: pre-establish TLS to the active provider so the first real
@@ -2839,7 +2975,7 @@ function abortPromptCacheWarm() {
   if (promptCacheWarmAbort) { try { promptCacheWarmAbort.abort(); } catch {} promptCacheWarmAbort = null; }
 }
 async function warmPromptCache() {
-  if (answerAbort || speculativeCommitted) return;
+  if (answerAbort || speculativeCommitted || speculativeActive) return;
   const provider = getAnswerProvider();
   const apiKey = getAnswerApiKey(provider.id);
   if (!apiKey) return;
@@ -2876,31 +3012,32 @@ async function warmPromptCache() {
 
 // ── Speculative answer: start streaming before the user hits send.
 // Shares the same message-building logic as generateAnswer but is abortable.
-async function startSpeculative(question, forcedMode) {
+async function startSpeculative(question, forcedMode, transcript) {
   // Never kill a live, user-visible stream to prefetch the next question.
   if (speculativeCommitted || answerAbort) return;
   if (speculativeAbort) { try { speculativeAbort.abort(); } catch {} speculativeAbort = null; }
   speculativeActive = false;
   const q = (question || '').trim();
-  if (!q) return;
+  const mt = String(transcript || '').trim();
+  if (!q && !mt) return;
   const provider = getAnswerProvider();
   const apiKey = getAnswerApiKey(provider.id);
   if (!apiKey) return;
 
-  abortPromptCacheWarm();
-  speculativeQuestion = q;
+  speculativeQuestion = q || mt;
   speculativeActive = true;
   const ac = new AbortController();
   speculativeAbort = ac;
   ac._buffer = '';
   ac._flushed = false;
+  ac._transcript = mt;
 
   const model = getAnswerModel(provider.id);
 
-  const specMode = resolveAnswerMode(forcedMode, q);
+  const specMode = resolveAnswerMode(forcedMode, q || mt);
   ac._mode = specMode; // stash so commitSpeculative can read it
 
-  const messages = buildAnswerMessages(q, null, specMode);
+  const messages = buildAnswerMessages(q, null, specMode, mt);
   // Do NOT send answer-start yet — we buffer silently and only show the UI
   // when the user actually commits (or the text matches on submit).
 
@@ -2966,13 +3103,15 @@ function normQuestion(s) {
   return String(s || '').replace(/\s+/g, ' ').replace(/[.?!\s]+$/g, '').trim().toLowerCase();
 }
 
-function commitSpeculative(question, images, forcedMode) {
+function commitSpeculative(question, images, forcedMode, transcript) {
   const q = (question || '').trim();
+  const mt = String(transcript || '').trim();
   const hasImages = Array.isArray(images) && images.length > 0;
+  const matchKey = q || mt;
 
   // Only adopt a live or finished stream. If speculation failed (abort
   // cleared, not active), fall through and start a real request.
-  if (!hasImages && speculativeQuestion && normQuestion(speculativeQuestion) === normQuestion(q) && (speculativeAbort || speculativeActive)) {
+  if (!hasImages && speculativeQuestion && matchKey && normQuestion(speculativeQuestion) === normQuestion(matchKey) && (speculativeAbort || speculativeActive)) {
     const ac = speculativeAbort; // null if stream already finished naturally
     const streamDone = (ac && ac._done) || !ac;
 
@@ -3012,13 +3151,13 @@ function commitSpeculative(question, images, forcedMode) {
   speculativeActive = false;
   speculativeQuestion = null;
   speculativeCommitted = false;
-  generateAnswer(question, images, forcedMode);
+  generateAnswer(question, images, forcedMode, transcript);
 }
 
-ipcMain.handle('speculative-start', (_e, { question, forcedMode }) => {
-  startSpeculative(question, forcedMode);
+ipcMain.handle('speculative-start', (_e, { question, forcedMode, transcript } = {}) => {
+  startSpeculative(question, forcedMode, transcript);
 });
-ipcMain.handle('speculative-commit', (_e, { question, images, forcedMode } = {}) => commitSpeculative(question, images, forcedMode));
+ipcMain.handle('speculative-commit', (_e, { question, images, forcedMode, transcript } = {}) => commitSpeculative(question, images, forcedMode, transcript));
 ipcMain.handle('speculative-cancel', () => {
   if (speculativeCommitted) return;
   if (speculativeAbort) { try { speculativeAbort.abort(); } catch {} speculativeAbort = null; }
@@ -3055,58 +3194,13 @@ ipcMain.handle('get-avoid-phrases', () => state.avoidPhrases || '');
 ipcMain.handle('set-avoid-phrases', (_e, text) => {
   state.avoidPhrases = String(text || '').trim();
   saveState();
+  schedulePromptCacheWarm();
   return true;
 });
 
-// ---- Prompt library: saved prompt snippets, persisted in state.json ----
-ipcMain.handle('get-prompts', () => (state.prompts || []).slice());
-ipcMain.handle('save-prompt', (_e, prompt) => {
-  if (!prompt || typeof prompt.text !== 'string' || !prompt.text.trim()) {
-    return (state.prompts || []).slice();
-  }
-  if (!Array.isArray(state.prompts)) state.prompts = [];
-  const text = prompt.text;
-  const title = (prompt.title || '').trim() || text.trim().split('\n')[0].slice(0, 40) || 'Untitled';
-  if (prompt.id) {
-    const i = state.prompts.findIndex((p) => p.id === prompt.id);
-    if (i >= 0) state.prompts[i] = { id: prompt.id, title, text };
-    else state.prompts.push({ id: prompt.id, title, text });
-  } else {
-    const id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    state.prompts.push({ id, title, text });
-  }
-  saveState();
-  return state.prompts.slice();
-});
-ipcMain.handle('delete-prompt', (_e, id) => {
-  state.prompts = (state.prompts || []).filter((p) => p.id !== id);
-  if (!state.prompts.length) {
-    state.promptDefaultsVersion = 0;
-    seedDefaultPromptsIfNeeded();
-  } else if (state.answer && state.answer.activePromptId === id) {
-    state.answer.activePromptId = state.prompts[0].id;
-    saveState();
-  } else {
-    saveState();
-  }
-  return state.prompts.slice();
-});
 ipcMain.handle('copy-text', (_e, text) => {
   try { clipboard.writeText(String(text || '')); return true; } catch { return false; }
 });
-
-function showPromptMenu() {
-  if (!win) return;
-  const list = state.prompts || [];
-  const items = list.length === 0
-    ? [{ label: 'No saved prompts — add in Settings → Prompts', enabled: false }]
-    : list.map((p) => ({
-        label: p.title.length > 50 ? p.title.slice(0, 47) + '…' : p.title,
-        click: () => { if (win && !win.isDestroyed()) win.webContents.send('insert-prompt-text', p.text); },
-      }));
-  Menu.buildFromTemplate(items).popup({ window: win });
-}
-ipcMain.handle('show-prompt-menu', () => showPromptMenu());
 
 function emitAnswerConfig() {
   if (win && !win.isDestroyed()) win.webContents.send('answer-config-changed', publicAnswerConfig());
@@ -3180,55 +3274,6 @@ function showModelMenu(anchor) {
 }
 ipcMain.handle('show-model-menu', (_e, anchor) => showModelMenu(anchor));
 
-function importPromptsList(list) {
-  if (!Array.isArray(state.prompts)) state.prompts = [];
-  let added = 0, skipped = 0;
-  for (const p of (Array.isArray(list) ? list : [])) {
-    if (!p || typeof p.text !== 'string' || !p.text.trim()) { skipped++; continue; }
-    const text = p.text;
-    const title = (p.title || '').trim() || text.trim().split('\n')[0].slice(0, 40) || 'Untitled';
-    // Skip exact duplicates so re-importing the same file doesn't pile up copies.
-    if (state.prompts.some((q) => q.title === title && q.text === text)) { skipped++; continue; }
-    const id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    state.prompts.push({ id, title, text });
-    added++;
-  }
-  saveState();
-  return { added, skipped };
-}
-
-ipcMain.handle('prompts-export', async () => {
-  try {
-    const r = await dialog.showSaveDialog(win, {
-      title: 'Export prompts',
-      defaultPath: path.join(app.getPath('desktop'), `ace-prompts-${new Date().toISOString().slice(0, 10)}.json`),
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
-    if (r.canceled || !r.filePath) return { ok: false, canceled: true };
-    await fs.promises.writeFile(r.filePath, JSON.stringify(state.prompts || [], null, 2), 'utf8');
-    return { ok: true, count: (state.prompts || []).length };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
-});
-
-ipcMain.handle('prompts-import', async () => {
-  try {
-    const r = await dialog.showOpenDialog(win, {
-      title: 'Import prompts',
-      properties: ['openFile'],
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
-    if (r.canceled || !r.filePaths || !r.filePaths[0]) return { ok: false, canceled: true };
-    const raw = await fs.promises.readFile(r.filePaths[0], 'utf8');
-    let list;
-    try { list = JSON.parse(raw); } catch { return { ok: false, error: 'Not a valid prompts JSON file' }; }
-    const { added, skipped } = importPromptsList(list);
-    return { ok: true, added, skipped, prompts: (state.prompts || []).slice() };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
-});
 ipcMain.handle('get-capture-config', () => ({ ...state.capture }));
 ipcMain.handle('set-capture-config', (_e, cfg) => {
   state.capture = { ...state.capture, ...(cfg || {}) };

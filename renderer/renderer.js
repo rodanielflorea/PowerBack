@@ -195,7 +195,7 @@ function makeCustomSelect(sel, compact) {
 // Apply to every <select> in the document after DOM is ready.
 // compact=true for the small presetbar selects.
 (function applyCustomSelects() {
-  const compactIds = new Set(["presetSelect", "answerModelHeader", "answerProviderSelect"]);
+  const compactIds = new Set(["answerModelHeader", "answerProviderSelect", "hiringTypeSelect"]);
   document.querySelectorAll("select").forEach((sel) => {
     makeCustomSelect(sel, compactIds.has(sel.id));
     if (sel.id === "answerProviderSelect" && sel.parentElement) {
@@ -306,7 +306,7 @@ function showModeSelect() {
   if (answerMain) answerMain.hidden = true;
 }
 
-// New-session setup page (uploads, profile, role, prompt).
+// New-session setup page (uploads, profile, role).
 function showSetup() {
   if (settingsOverlay) settingsOverlay.hidden = true;
   hideAllSetupOverlays();
@@ -479,6 +479,10 @@ if (setupRoleSupporterV) setupRoleSupporterV.addEventListener("change", syncSetu
 syncSetupRoleV();
 
 if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
+  const htEl = document.querySelector('input[name="setupHiringType"]:checked');
+  const hiringType = (htEl && htEl.value) || "intro";
+  if (window.api.setMeetingConfig) await window.api.setMeetingConfig({ kind: "hiring", hiringType });
+  if (typeof applyMeetingConfigUi === "function") applyMeetingConfigUi({ kind: "hiring", hiringType });
   const sup = !!(setupRoleSupporterV && setupRoleSupporterV.checked);
   const chosenRole = sup ? "supporter" : "speaker";
   const patch = { role: chosenRole };
@@ -539,9 +543,13 @@ function maybeOpenInfoWindow(profile) {
 
 // ── Saved sessions: list / continue / delete in the setup screen ──────────────
 function clearAnswerPanel() {
-  if (answerHistory) answerHistory.querySelectorAll(".answer-turn").forEach((n) => n.remove());
+  if (answerHistory) answerHistory.querySelectorAll(".answer-turn, .meet-turn").forEach((n) => n.remove());
   if (answerEmpty) answerEmpty.hidden = false;
   if (answerSpacer) answerSpacer.style.height = "0px";
+  meetingTurns = [];
+  liveMeetEl = null;
+  lastMeetEl = null;
+  liveSeg = "";
 }
 
 // ── Continue overlay: searchable session list + materials preview ─────────────
@@ -750,6 +758,15 @@ async function continueSession(id) {
 // Rebuild saved turns in the answer panel (rendered, not streaming).
 function renderLoadedTurns(turns) {
   (turns || []).forEach((t) => {
+    if (t && t.kind === "meet") {
+      const who = t.who || "Interviewer";
+      const text = String(t.text || "").trim();
+      if (!text) return;
+      addMeetBubble(who, text, false);
+      meetingTurns.push({ who, text });
+      if (meetingTurns.length > 80) meetingTurns.shift();
+      return;
+    }
     const imgs = Array.isArray(t.images) && t.images.length ? t.images : null;
     const el = addAnswerTurn(t.q || "", imgs, t.mode || "ANSWER", t.ts);
     if (!el) return;
@@ -885,6 +902,7 @@ endBtn.addEventListener("click", showEndModal);
 endModalCancel.addEventListener("click", hideEndModal);
 endModalConfirm.addEventListener("click", async () => {
   endModal.hidden = true;
+  if (typeof persistMeetBubble === "function") await persistMeetBubble(lastMeetEl, true);
   // Compose the session title from company/position (+ date), then save the
   // transcript using that title as the suggested filename.
   const companyEl = document.getElementById("endCompany");
@@ -962,132 +980,6 @@ if (updaterInstallBtn)
   );
 
 
-// ---- Prompt library ----
-const promptListEl = document.getElementById("promptList");
-const promptTitleInput = document.getElementById("promptTitleInput");
-const promptTextInput = document.getElementById("promptTextInput");
-const promptSaveBtn = document.getElementById("promptSaveBtn");
-const promptNewBtn = document.getElementById("promptNewBtn");
-const promptStatusEl = document.getElementById("promptStatus");
-const promptEditorTitle = document.getElementById("promptEditorTitle");
-const promptRailBtn = document.getElementById("promptRailBtn");
-let editingPromptId = null;
-
-function setPromptStatus(msg) {
-  if (promptStatusEl) promptStatusEl.textContent = msg || "";
-}
-function clearPromptEditor() {
-  editingPromptId = null;
-  if (promptTitleInput) promptTitleInput.value = "";
-  if (promptTextInput) promptTextInput.value = "";
-  if (promptEditorTitle) promptEditorTitle.textContent = "New prompt";
-}
-function renderPrompts(list) {
-  // Keep the answer-panel preset dropdown in sync whenever prompts change.
-  if (typeof refreshPresetSelect === "function") refreshPresetSelect();
-  if (!promptListEl) return;
-  promptListEl.innerHTML = "";
-  if (!list || list.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "prompt-empty";
-    empty.textContent = "No saved prompts yet. Add one below.";
-    promptListEl.appendChild(empty);
-    return;
-  }
-  const mkBtn = (label, fn) => {
-    const b = document.createElement("button");
-    b.textContent = label;
-    b.addEventListener("click", fn);
-    return b;
-  };
-  for (const p of list) {
-    const row = document.createElement("div");
-    row.className = "prompt-item";
-    const title = document.createElement("span");
-    title.className = "prompt-item-title";
-    title.textContent = p.title;
-    title.title = p.text;
-    row.appendChild(title);
-    row.appendChild(
-      mkBtn("Insert", () => {
-        appendToComposer(p.text);
-        setPromptStatus('Inserted "' + p.title + '" into the question box.');
-      }),
-    );
-    row.appendChild(
-      mkBtn("Copy", async () => {
-        await window.api.copyText(p.text);
-        setPromptStatus('Copied "' + p.title + '".');
-      }),
-    );
-    row.appendChild(
-      mkBtn("Edit", () => {
-        editingPromptId = p.id;
-        if (promptTitleInput) promptTitleInput.value = p.title;
-        if (promptTextInput) promptTextInput.value = p.text;
-        if (promptEditorTitle) promptEditorTitle.textContent = "Edit prompt";
-        setPromptStatus('Editing "' + p.title + '".');
-      }),
-    );
-    row.appendChild(
-      mkBtn("Delete", async () => {
-        const updated = await window.api.deletePrompt(p.id);
-        renderPrompts(updated);
-        if (editingPromptId === p.id) clearPromptEditor();
-        setPromptStatus("Deleted.");
-      }),
-    );
-    promptListEl.appendChild(row);
-  }
-}
-if (promptSaveBtn)
-  promptSaveBtn.addEventListener("click", async () => {
-    const text = promptTextInput ? promptTextInput.value : "";
-    if (!text.trim()) {
-      setPromptStatus("Enter prompt text first.");
-      return;
-    }
-    const title = promptTitleInput ? promptTitleInput.value : "";
-    const updated = await window.api.savePrompt({ id: editingPromptId, title, text });
-    renderPrompts(updated);
-    clearPromptEditor();
-    setPromptStatus("Saved.");
-  });
-if (promptNewBtn)
-  promptNewBtn.addEventListener("click", () => {
-    clearPromptEditor();
-    setPromptStatus("");
-  });
-if (promptRailBtn)
-  promptRailBtn.addEventListener("click", () => window.api.showPromptMenu());
-
-const promptExportBtn = document.getElementById("promptExportBtn");
-const promptImportBtn = document.getElementById("promptImportBtn");
-const promptIoStatusEl = document.getElementById("promptIoStatus");
-function setPromptIoStatus(msg) {
-  if (promptIoStatusEl) promptIoStatusEl.textContent = msg || "";
-}
-if (promptExportBtn)
-  promptExportBtn.addEventListener("click", async () => {
-    setPromptIoStatus("Exporting…");
-    const r = await window.api.exportPrompts();
-    if (r && r.ok) setPromptIoStatus(`Exported ${r.count} prompt(s).`);
-    else if (r && r.canceled) setPromptIoStatus("");
-    else setPromptIoStatus("Export failed: " + ((r && r.error) || "error"));
-  });
-if (promptImportBtn)
-  promptImportBtn.addEventListener("click", async () => {
-    setPromptIoStatus("Importing…");
-    const r = await window.api.importPrompts();
-    if (r && r.ok) {
-      renderPrompts(r.prompts);
-      setPromptIoStatus(`Imported ${r.added}${r.skipped ? `, skipped ${r.skipped} duplicate(s)` : ""}.`);
-    } else if (r && r.canceled) setPromptIoStatus("");
-    else setPromptIoStatus("Import failed: " + ((r && r.error) || "error"));
-  });
-
-if (window.api && window.api.getPrompts) window.api.getPrompts().then(renderPrompts);
-
 // ---- Avoid-phrases UI ----
 const avoidPhrasesInput  = document.getElementById("avoidPhrasesInput");
 const avoidPhrasesSaveBtn = document.getElementById("avoidPhrasesSaveBtn");
@@ -1151,6 +1043,7 @@ function openSettings() {
   activateTab("apikeys");
   refreshModeUI();
   refreshTranscriptionUI();
+  refreshMeetingUI();
   loadAvoidPhrases();
   refreshCaptureUI();
   refreshMicList();
@@ -1275,6 +1168,43 @@ async function refreshTranscriptionUI() {
   syncTxSourceUi();
 }
 
+function applyMeetingConfigUi(cfg) {
+  cfg = cfg || {};
+  const hiringType = ["intro", "technical", "ceo", "hr"].includes(cfg.hiringType) ? cfg.hiringType : "intro";
+  document.querySelectorAll('input[name="hiringType"]').forEach((el) => {
+    el.checked = el.value === hiringType;
+  });
+  const typeSel = document.getElementById("hiringTypeSelect");
+  if (typeSel) {
+    typeSel.value = hiringType;
+    if (typeof typeSel._cselRefresh === "function") typeSel._cselRefresh();
+  }
+  document.querySelectorAll('input[name="setupHiringType"]').forEach((el) => {
+    el.checked = el.value === hiringType;
+  });
+}
+
+async function refreshMeetingUI() {
+  if (!window.api.getMeetingConfig) return;
+  applyMeetingConfigUi(await window.api.getMeetingConfig());
+}
+
+async function persistMeeting(patch) {
+  if (!window.api.setMeetingConfig) return;
+  applyMeetingConfigUi(await window.api.setMeetingConfig(patch));
+}
+
+document.querySelectorAll('input[name="hiringType"]').forEach((el) => {
+  el.addEventListener("change", () => {
+    if (el.checked) persistMeeting({ hiringType: el.value });
+  });
+});
+const hiringTypeSelect = document.getElementById("hiringTypeSelect");
+if (hiringTypeSelect) {
+  hiringTypeSelect.addEventListener("change", () => persistMeeting({ hiringType: hiringTypeSelect.value }));
+}
+refreshMeetingUI();
+
 async function persistTx(patch) {
   txCfg = { ...(txCfg || {}), ...patch };
   await window.api.setTranscriptionConfig(patch);
@@ -1385,6 +1315,7 @@ const HOTKEY_LABELS = {
   scrollUp: "Scroll answers up",
   scrollDown: "Scroll answers down",
   resetCaptureArea: "Reset capture area (re-pick)",
+  reloadSite: "Reload window",
   toggleStealth: "Toggle stealth",
   toggleRecording: "Start/stop voice or caption",
   toggleMode: "Toggle OCR ↔ Voice mode",
@@ -1395,7 +1326,10 @@ const HOTKEY_LABELS = {
   stickyScrollDown: "Scroll sticky note down",
   helpRequest: "Send help request (speaker → supporter)",
   submitPrompt: "Get answer (send to selected API)",
+  screenshotToAI: "Screenshot to composer",
+  areaSnip: "Area snip to composer",
   toggleClickThrough: "Toggle click-through (mouse passes through)",
+  clearTranscriptBubble: "Clear current transcript bubble",
 };
 
 function eventToBinding(e) {
@@ -1440,15 +1374,37 @@ async function refreshHotkeysUI() {
   renderHotkeyList();
 }
 
+function hotkeyLabel(action) {
+  if (HOTKEY_LABELS[action]) return HOTKEY_LABELS[action];
+  return String(action || "")
+    .replace(/([A-Z])/g, " $1")
+    .replace(/^./, (c) => c.toUpperCase())
+    .trim();
+}
+
+function hotkeyActionList() {
+  const seen = new Set();
+  const out = [];
+  const add = (k) => {
+    if (!k || seen.has(k)) return;
+    seen.add(k);
+    out.push(k);
+  };
+  Object.keys(HOTKEY_LABELS).forEach(add);
+  Object.keys(hotkeyState.defaults || {}).forEach(add);
+  Object.keys(hotkeyState.current || {}).forEach(add);
+  return out;
+}
+
 function renderHotkeyList() {
   hotkeyList.innerHTML = "";
-  for (const action of Object.keys(HOTKEY_LABELS)) {
+  for (const action of hotkeyActionList()) {
     const row = document.createElement("div");
     row.className = "hotkey-row";
 
     const label = document.createElement("span");
     label.className = "hotkey-label";
-    label.textContent = HOTKEY_LABELS[action];
+    label.textContent = hotkeyLabel(action);
     row.appendChild(label);
 
     const binding = document.createElement("button");
@@ -1550,6 +1506,13 @@ window.api.onToggleMode(() => {
   doToggleMode();
 });
 
+if (window.api.onClearMeetBubble) {
+  window.api.onClearMeetBubble(() => {
+    const el = currentMeetBubble();
+    if (el) clearMeetBubble(el);
+  });
+}
+
 window.api.onSelectorClosed(() => {
   if (!settingsOverlay.hidden) closeSettings();
 });
@@ -1573,7 +1536,7 @@ function showInterimPreview(text) {
 }
 const composerInput = document.getElementById("composerInput");
 
-// One-shot append (OCR, prompt-insert): drop text onto the end of the composer.
+// One-shot append (OCR): drop text onto the end of the composer.
 function appendToComposer(text) {
   const t = (text || "").trim();
   if (!t || !composerInput) return;
@@ -1583,28 +1546,243 @@ function appendToComposer(text) {
   kickSpeculative(false);
 }
 
-// Live word-by-word streaming of the CURRENT speech segment into the composer
-// (like v1.0.0). `liveSeg` is the not-yet-finalized tail at the end of the box;
-// each update replaces just that tail, so revised interim words self-correct
-// instead of dumping a whole 1–2s block when the segment finalizes.
+// Meeting talk goes into speaker bubbles, not the composer. The input box
+// stays free for the user's own questions.
 let liveSeg = "";
-function resetLiveSeg() { liveSeg = ""; }
-function streamSegment(text, isFinal) {
-  if (!composerInput) return;
-  const v = composerInput.value;
-  const base = liveSeg && v.endsWith(liveSeg) ? v.slice(0, v.length - liveSeg.length) : v;
-  const needSpace = base && !/\s$/.test(base);
-  if (isFinal) {
-    composerInput.value = base + (needSpace ? " " : "") + text.trim() + " ";
-    liveSeg = "";
-  } else {
-    composerInput.value = base + (needSpace ? " " : "") + text;
-    liveSeg = (needSpace ? " " : "") + text;
+let liveMeetEl = null;
+let lastMeetEl = null;
+let meetingTurns = [];
+function resetLiveSeg() {
+  liveSeg = "";
+  liveMeetEl = null;
+}
+
+function speakerLineBlock(text) {
+  return String(text || "")
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((ln) => ln.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function liveMeetText() {
+  if (!lastMeetEl) return "";
+  return String(
+    (lastMeetEl._textEl && lastMeetEl._textEl.textContent) || lastMeetEl._committed || "",
+  ).trim();
+}
+
+function persistMeetBubble(el, sealed) {
+  if (!window.api.sessionRecordMeet) return;
+  const who = (el && (el._who || (el._whoEl && el._whoEl.textContent))) || "Interviewer";
+  const text = el
+    ? String((el._textEl && el._textEl.textContent) || el._committed || "").trim()
+    : "";
+  return window.api.sessionRecordMeet({ who, text, sealed: !!sealed });
+}
+
+function meetingTranscriptText() {
+  const turns = meetingTurns.slice();
+  if (lastMeetEl) {
+    const who = lastMeetEl._who || (lastMeetEl._whoEl && lastMeetEl._whoEl.textContent) || "Interviewer";
+    const text = liveMeetText();
+    if (text) {
+      if (turns.length && turns[turns.length - 1].who === who) {
+        turns[turns.length - 1] = { who, text };
+      } else {
+        turns.push({ who, text });
+      }
+    }
   }
-  composerInput.scrollTop = composerInput.scrollHeight;
-  // Pause-detect only: continuous speech keeps resetting the timer so we
-  // don't abort a half-prefilled request on every Deepgram final.
-  kickSpeculative(false);
+  const slice = turns.slice(-4);
+  return slice
+    .map((t) => {
+      const body = t.text.length > 400 ? t.text.slice(-400) : t.text;
+      return t.who + ": " + body;
+    })
+    .join("\n");
+}
+
+function currentMeetBubble() {
+  if (lastMeetEl && lastMeetEl.isConnected) return lastMeetEl;
+  if (!answerHistory) return null;
+  const all = answerHistory.querySelectorAll(".meet-turn");
+  return all.length ? all[all.length - 1] : null;
+}
+
+function clearMeetBubble(el) {
+  if (!el) return;
+  if (el._textEl) el._textEl.textContent = "";
+  el._committed = "";
+  if (el._turn) el._turn.text = "";
+  if (el === lastMeetEl || el === liveMeetEl) {
+    liveSeg = "";
+    pendingInterim = null;
+    if (interimFlushTimer) {
+      clearTimeout(interimFlushTimer);
+      interimFlushTimer = null;
+    }
+  }
+  if (el === liveMeetEl) liveMeetEl = null;
+  if (el === lastMeetEl) persistMeetBubble(el, false);
+  if (!composerInput || !composerInput.value.trim()) {
+    _speculativeText = null;
+    if (window.api.speculativeCancel) window.api.speculativeCancel();
+  }
+  if (typeof syncSendEnabled === "function") syncSendEnabled();
+}
+
+function addMeetBubble(who, text, live) {
+  if (!answerHistory) return null;
+  if (answerEmpty) answerEmpty.hidden = true;
+  const el = document.createElement("div");
+  el.className = "meet-turn" + (live ? " meet-live" : "");
+  const head = document.createElement("div");
+  head.className = "meet-head";
+  const name = document.createElement("div");
+  name.className = "meet-who";
+  name.textContent = who;
+  const clr = document.createElement("button");
+  clr.type = "button";
+  clr.className = "meet-clear";
+  clr.title = "Clear this transcript (Shift+Z)";
+  clr.textContent = "×";
+  clr.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    clearMeetBubble(el);
+  });
+  head.appendChild(name);
+  head.appendChild(clr);
+  const body = document.createElement("div");
+  body.className = "meet-text";
+  body.textContent = text;
+  el.appendChild(head);
+  el.appendChild(body);
+  el._whoEl = name;
+  el._textEl = body;
+  el._who = who;
+  el._committed = live ? "" : text;
+  ensureSpacer();
+  answerHistory.insertBefore(el, answerSpacer);
+  try { el.scrollIntoView({ block: "nearest" }); } catch {}
+  return el;
+}
+
+function sealMeetBubble() {
+  if (lastMeetEl) {
+    lastMeetEl.classList.remove("meet-live");
+    const vis = String(
+      (lastMeetEl._textEl && lastMeetEl._textEl.textContent) || lastMeetEl._committed || "",
+    ).trim();
+    if (vis) {
+      lastMeetEl._committed = vis;
+      if (meetingTurns.length) meetingTurns[meetingTurns.length - 1].text = vis;
+      persistMeetBubble(lastMeetEl, true);
+    }
+  }
+  lastMeetEl = null;
+  liveMeetEl = null;
+  liveSeg = "";
+}
+
+function speakerKey(who, id) {
+  if (Number.isFinite(id)) return "id:" + id;
+  return "name:" + String(who || "").toLowerCase();
+}
+
+function joinSpeech(a, b) {
+  a = String(a || "").trim();
+  b = String(b || "").trim();
+  if (!a) return b;
+  if (!b) return a;
+  if (b.startsWith(a)) return b;
+  if (a.endsWith(b)) return a;
+  const max = Math.min(a.length, b.length, 80);
+  for (let n = max; n >= 12; n--) {
+    if (a.slice(-n) === b.slice(0, n)) return a + b.slice(n);
+  }
+  return a + " " + b;
+}
+
+function applyMeetLine(who, text, speakerId, isFinal) {
+  who = "Interviewer";
+  speakerId = 0;
+  const key = speakerKey(who, speakerId);
+  const same = lastMeetEl && lastMeetEl._key === key;
+  if (same) {
+    if (lastMeetEl._whoEl) lastMeetEl._whoEl.textContent = who;
+    lastMeetEl._who = who;
+    if (isFinal) {
+      lastMeetEl._committed = joinSpeech(lastMeetEl._committed, text);
+      lastMeetEl._textEl.textContent = lastMeetEl._committed;
+      lastMeetEl.classList.remove("meet-live");
+      liveSeg = "";
+      liveMeetEl = null;
+      if (lastMeetEl._turn) {
+        lastMeetEl._turn.text = lastMeetEl._committed;
+        lastMeetEl._turn.who = who;
+      } else if (meetingTurns.length) {
+        meetingTurns[meetingTurns.length - 1].text = lastMeetEl._committed;
+        meetingTurns[meetingTurns.length - 1].who = who;
+      }
+      persistMeetBubble(lastMeetEl, false);
+    } else {
+      liveSeg = text;
+      liveMeetEl = lastMeetEl;
+      lastMeetEl._textEl.textContent = joinSpeech(lastMeetEl._committed, text);
+      lastMeetEl.classList.add("meet-live");
+      if (lastMeetEl._turn) {
+        lastMeetEl._turn.text = lastMeetEl._textEl.textContent;
+        lastMeetEl._turn.who = who;
+      } else if (meetingTurns.length) {
+        meetingTurns[meetingTurns.length - 1].text = lastMeetEl._textEl.textContent;
+        meetingTurns[meetingTurns.length - 1].who = who;
+      }
+    }
+    try { lastMeetEl.scrollIntoView({ block: "nearest" }); } catch {}
+    if (typeof syncSendEnabled === "function") syncSendEnabled();
+    return;
+  }
+  const speakerChanged = !!lastMeetEl;
+  if (lastMeetEl) lastMeetEl.classList.remove("meet-live");
+  liveMeetEl = null;
+  if (isFinal) {
+    lastMeetEl = addMeetBubble(who, text, false);
+    lastMeetEl._committed = text;
+    lastMeetEl._key = key;
+    const turn = { who, text };
+    lastMeetEl._turn = turn;
+    meetingTurns.push(turn);
+    if (meetingTurns.length > 80) meetingTurns.shift();
+    liveSeg = "";
+    persistMeetBubble(lastMeetEl, false);
+  } else {
+    lastMeetEl = addMeetBubble(who, text, true);
+    lastMeetEl._committed = "";
+    lastMeetEl._key = key;
+    liveMeetEl = lastMeetEl;
+    liveSeg = text;
+    const turn = { who, text };
+    lastMeetEl._turn = turn;
+    meetingTurns.push(turn);
+    if (meetingTurns.length > 80) meetingTurns.shift();
+  }
+  if (speakerChanged && (!composerInput || !composerInput.value.trim())) {
+    kickSpeculative(true);
+  } else if (typeof syncSendEnabled === "function") {
+    syncSendEnabled();
+  }
+}
+
+function streamSegment(text, isFinal, speakerId, turns) {
+  const rows = Array.isArray(turns) && turns.length
+    ? turns.filter((t) => t && String(t.text || "").trim())
+    : speakerLineBlock(text).split("\n").filter(Boolean).map((ln) => ({ text: ln.replace(/^Interviewer:\s*/i, "") }));
+  if (!rows.length) return;
+  const body = rows.map((r) => String(r.text || "").trim()).filter(Boolean).join(" ");
+  if (body) applyMeetLine("Interviewer", body, 0, isFinal);
 }
 
 // Coalesce the stream of interim hypotheses to a steady ~12fps so the input
@@ -1619,21 +1797,35 @@ function scheduleInterimFlush() {
     if (pendingInterim != null) {
       const t = pendingInterim;
       pendingInterim = null;
-      streamSegment(t, false);
-      showInterimPreview(t);
+      const display = typeof t === "string" ? t : t.display;
+      streamSegment(
+        display,
+        false,
+        t && t.speaker,
+        t && t.turns,
+      );
+      showInterimPreview(display);
     }
   }, CAPTION_FLUSH_MS);
 }
-window.api.onTranscriptLive(({ text, isFinal }) => {
-  if (!text) return;
-  if (isFinal) {
+window.api.onTranscriptLive((payload) => {
+  const display = speakerLineBlock(
+    (payload && payload.labeled) || (payload && payload.text) || "",
+  );
+  if (!display && !(payload && payload.turns && payload.turns.length)) return;
+  const pack = {
+    display,
+    speaker: payload && payload.speaker,
+    turns: (payload && payload.turns) || [],
+  };
+  if (payload.isFinal) {
     if (interimFlushTimer) { clearTimeout(interimFlushTimer); interimFlushTimer = null; }
     pendingInterim = null;
-    streamSegment(text, true);
+    streamSegment(pack.display, true, pack.speaker, pack.turns);
     clearInterimPreview();
-    log(text.trim());
+    log(display.replace(/\n/g, " · "));
   } else {
-    pendingInterim = text;
+    pendingInterim = pack;
     scheduleInterimFlush();
   }
 });
@@ -1641,11 +1833,25 @@ window.api.onTranscriptLive(({ text, isFinal }) => {
 // words aren't left dangling, and clear the live preview.
 window.api.onUtteranceEnd(() => {
   if (interimFlushTimer) { clearTimeout(interimFlushTimer); interimFlushTimer = null; }
-  if (pendingInterim != null) { streamSegment(pendingInterim, true); pendingInterim = null; }
-  else if (liveSeg) { streamSegment(liveSeg, true); }
+  if (pendingInterim != null) {
+    const t = pendingInterim;
+    pendingInterim = null;
+    const display = typeof t === "string" ? t : t.display;
+    streamSegment(display, true, t && t.speaker, t && t.turns);
+  } else if (lastMeetEl && liveSeg) {
+    lastMeetEl._committed = joinSpeech(lastMeetEl._committed, liveSeg);
+    if (lastMeetEl._textEl) lastMeetEl._textEl.textContent = lastMeetEl._committed;
+    if (meetingTurns.length) meetingTurns[meetingTurns.length - 1].text = lastMeetEl._committed;
+  }
+  if (lastMeetEl) {
+    lastMeetEl.classList.remove("meet-live");
+    persistMeetBubble(lastMeetEl, false);
+  }
+  liveSeg = "";
+  liveMeetEl = null;
   clearInterimPreview();
-  // Question is complete — start the answer immediately so send is often a cache hit.
-  kickSpeculative(true);
+  // Prefetch a meeting reaction only if the user is not already typing a question.
+  if (!composerInput || !composerInput.value.trim()) kickSpeculative(true);
 });
 window.api.onTranscriptLiveError((msg) => {
   log("Transcription error: " + msg, "err");
@@ -1679,7 +1885,6 @@ const answerHistory = document.getElementById("answerHistory");
 const answerEmpty = document.getElementById("answerEmpty");
 const getAnswerBtn = document.getElementById("getAnswerBtn");
 const answerClearBtn = document.getElementById("answerClearBtn");
-const presetSelect = document.getElementById("presetSelect");
 const answerKeyEl = document.getElementById("answerKey");
 const answerKeyAnthropicEl = document.getElementById("answerKeyAnthropic");
 const answerKeyOpenaiEl = document.getElementById("answerKeyOpenai");
@@ -1905,11 +2110,13 @@ function renderImgStrip() {
 function addAttachedImage(base64, mime) {
   attachedImages.push({ base64, mime: mime || "image/png" });
   renderImgStrip();
+  if (typeof syncSendEnabled === "function") syncSendEnabled();
 }
 
 function clearAttachedImages() {
   attachedImages = [];
   renderImgStrip();
+  if (typeof syncSendEnabled === "function") syncSendEnabled();
 }
 
 // Screenshot via Alt+A hotkey.
@@ -1996,7 +2203,7 @@ let _apiConnectionWarmed = false;
 let _speculativeTimer = null;
 let _speculativeText = null;
 const SPECULATE_MIN_CHARS = 6;
-const SPECULATE_DEBOUNCE_MS = 500;
+const SPECULATE_DEBOUNCE_MS = 150;
 
 function normQuestion(s) {
   return String(s || "").replace(/\s+/g, " ").replace(/[.?!\s]+$/g, "").trim().toLowerCase();
@@ -2012,32 +2219,54 @@ function answerIsStreaming() {
   return !!(currentAnswerEl && currentAnswerEl.classList.contains("streaming"));
 }
 
+function specSnapshot() {
+  const t = composerInput ? composerInput.value.trim() : "";
+  const live = liveMeetText();
+  const mt = meetingTranscriptText();
+  return { t, mt, live, key: t || live };
+}
+
+function composerCanSubmit() {
+  const q = composerInput ? composerInput.value.trim() : "";
+  const live = liveMeetText();
+  const imgs = typeof attachedImages !== "undefined" && attachedImages.length > 0;
+  return !!(q || live || imgs);
+}
+
+function syncSendEnabled() {
+  if (getAnswerBtn) getAnswerBtn.disabled = !composerCanSubmit();
+}
+
+function startSpeculativeNow() {
+  if (_optimisticAnswer || answerIsStreaming()) return;
+  if (typeof attachedImages !== "undefined" && attachedImages.length > 0) return;
+  const { t, mt, live, key } = specSnapshot();
+  if (t && t.length < SPECULATE_MIN_CHARS) return;
+  if (!t && (!live || live.length < SPECULATE_MIN_CHARS)) return;
+  if (!key) return;
+  if (normQuestion(_speculativeText) === normQuestion(key)) return;
+  _speculativeText = key;
+  if (window.api.speculativeStart) {
+    window.api.speculativeStart({ question: t, forcedMode: manualMode, transcript: mt });
+  }
+}
+
 function kickSpeculative(immediate) {
-  if (!composerInput) return;
+  syncSendEnabled();
   if (_optimisticAnswer || answerIsStreaming()) return;
   ensureApiWarmed();
   if (_speculativeTimer) { clearTimeout(_speculativeTimer); _speculativeTimer = null; }
-  const text = composerInput.value.trim();
-  if (!text || text.length < SPECULATE_MIN_CHARS) {
+  const { t, live } = specSnapshot();
+  if (t && t.length < SPECULATE_MIN_CHARS) return;
+  if (!t && (!live || live.length < SPECULATE_MIN_CHARS)) {
     if (_speculativeText) {
       _speculativeText = null;
       if (window.api.speculativeCancel) window.api.speculativeCancel();
     }
     return;
   }
-  const start = () => {
-    _speculativeTimer = null;
-    if (typeof attachedImages !== "undefined" && attachedImages.length > 0) return;
-    const t = composerInput.value.trim();
-    if (!t || t.length < SPECULATE_MIN_CHARS) return;
-    if (normQuestion(_speculativeText) === normQuestion(t)) return;
-    _speculativeText = t;
-    if (window.api.speculativeStart) {
-      window.api.speculativeStart({ question: t, forcedMode: manualMode });
-    }
-  };
-  if (immediate) start();
-  else _speculativeTimer = setTimeout(start, SPECULATE_DEBOUNCE_MS);
+  if (immediate) startSpeculativeNow();
+  else _speculativeTimer = setTimeout(startSpeculativeNow, SPECULATE_DEBOUNCE_MS);
 }
 
 if (composerInput) {
@@ -2054,7 +2283,7 @@ function dropEmptyStreamingTurn() {
   if (!(streamContent || "").trim()) {
     const oldTurn = currentAnswerEl.parentElement;
     if (oldTurn && oldTurn.classList.contains("answer-turn")) oldTurn.remove();
-    if (answerHistory && !answerHistory.querySelector(".answer-turn") && answerEmpty) answerEmpty.hidden = false;
+    if (answerHistory && !answerHistory.querySelector(".answer-turn, .meet-turn") && answerEmpty) answerEmpty.hidden = false;
     currentAnswerEl = null;
   } else {
     currentAnswerEl.classList.remove("streaming");
@@ -2065,34 +2294,43 @@ function dropEmptyStreamingTurn() {
 
 function submitComposer() {
   if (!composerInput) return;
-  const q = composerInput.value.trim();
-  if (!q && attachedImages.length === 0) return;
+  const { t: q, mt, live, key: matchKey } = specSnapshot();
+  if (!q && attachedImages.length === 0 && !live) return;
 
-  if (_speculativeTimer) { clearTimeout(_speculativeTimer); _speculativeTimer = null; }
+  if (_speculativeTimer) {
+    clearTimeout(_speculativeTimer);
+    _speculativeTimer = null;
+    startSpeculativeNow();
+  }
 
   pendingBubbleImages = attachedImages.slice();
   const hasImages = attachedImages.length > 0;
+  const extra = { transcript: mt };
 
   dropEmptyStreamingTurn();
-  currentAnswerEl = addAnswerTurn(q || "", pendingBubbleImages.slice(), manualMode);
+  sealMeetBubble();
+  currentAnswerEl = addAnswerTurn(q, pendingBubbleImages.slice(), manualMode);
   _optimisticAnswer = true;
 
-  const specHit = !hasImages && _speculativeText && normQuestion(_speculativeText) === normQuestion(q);
+  const specHit = !hasImages && _speculativeText && matchKey && normQuestion(_speculativeText) === normQuestion(matchKey);
   if (specHit && window.api.speculativeCommit) {
     _speculativeText = null;
-    window.api.speculativeCommit({ question: q, images: null, forcedMode: manualMode });
+    window.api.speculativeCommit({ question: q, images: null, forcedMode: manualMode, transcript: mt });
   } else {
     _speculativeText = null;
     if (window.api.speculativeCancel) window.api.speculativeCancel();
-    window.api.generateAnswer(q, hasImages ? attachedImages : null, manualMode);
+    window.api.generateAnswer(q, hasImages ? attachedImages : null, manualMode, extra);
   }
 
   composerInput.value = "";
   clearAttachedImages();
-  if (typeof resetLiveSeg === "function") resetLiveSeg();
+  syncSendEnabled();
 }
 
-if (getAnswerBtn) getAnswerBtn.addEventListener("click", submitComposer);
+if (getAnswerBtn) getAnswerBtn.addEventListener("click", (e) => {
+  e.preventDefault();
+  submitComposer();
+});
 if (composerInput) {
   composerInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -2101,10 +2339,21 @@ if (composerInput) {
     }
   });
 }
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey)) return;
+  if (!document.body.classList.contains("in-interview")) return;
+  if (e.target === composerInput) return;
+  e.preventDefault();
+  submitComposer();
+});
 if (answerClearBtn) {
   answerClearBtn.addEventListener("click", () => {
     if (answerHistory)
-      answerHistory.querySelectorAll(".answer-turn").forEach((n) => n.remove());
+      answerHistory.querySelectorAll(".answer-turn, .meet-turn").forEach((n) => n.remove());
+    meetingTurns = [];
+    liveMeetEl = null;
+    lastMeetEl = null;
+    liveSeg = "";
     if (answerEmpty) answerEmpty.hidden = false;
     // Reset spacer so first new turn starts flush
     if (answerSpacer) answerSpacer.style.height = "0px";
@@ -2139,6 +2388,7 @@ function addAnswerTurn(question, imgs, mode, ts) {
 
   const turn = document.createElement("div");
   turn.className = "answer-turn";
+  const showQ = !!(question && String(question).trim()) || (imgs && imgs.length);
   const q = document.createElement("div");
   q.className = "answer-q";
   if (imgs && imgs.length) {
@@ -2155,35 +2405,33 @@ function addAnswerTurn(question, imgs, mode, ts) {
     });
     q.appendChild(strip);
   }
-  const qText = document.createElement("span");
-  qText.className = "answer-q-text";
-  if (question) qText.textContent = question;
-  q.appendChild(qText);
-
-  // Edit / Resend controls (ChatGPT/Claude-style). Shown on hover.
   const turnMode = mode || 'ANSWER';
-  const qActions = document.createElement("div");
-  qActions.className = "answer-q-actions";
-  const editBtn = document.createElement("button");
-  editBtn.className = "answer-q-action";
-  editBtn.title = "Edit & resend";
-  editBtn.textContent = "✎";
-  editBtn.addEventListener("click", () => beginInlineEdit(q, question, imgs, turnMode));
-  const resendBtn = document.createElement("button");
-  resendBtn.className = "answer-q-action";
-  resendBtn.title = "Resend (regenerate)";
-  resendBtn.textContent = "↻";
-  resendBtn.addEventListener("click", () => resendTurn(question, imgs));
-  qActions.appendChild(editBtn);
-  qActions.appendChild(resendBtn);
-  q.appendChild(qActions);
-
-  // Timestamp on the question bubble (when the turn was asked).
   const turnTs = ts || Date.now();
-  const qTime = document.createElement("div");
-  qTime.className = "answer-time answer-time--q";
-  qTime.textContent = fmtTime(turnTs);
-  q.appendChild(qTime);
+  if (showQ) {
+    const qText = document.createElement("span");
+    qText.className = "answer-q-text";
+    if (question) qText.textContent = question;
+    q.appendChild(qText);
+    const qActions = document.createElement("div");
+    qActions.className = "answer-q-actions";
+    const editBtn = document.createElement("button");
+    editBtn.className = "answer-q-action";
+    editBtn.title = "Edit & resend";
+    editBtn.textContent = "✎";
+    editBtn.addEventListener("click", () => beginInlineEdit(q, question, imgs, turnMode));
+    const resendBtn = document.createElement("button");
+    resendBtn.className = "answer-q-action";
+    resendBtn.title = "Resend (regenerate)";
+    resendBtn.textContent = "↻";
+    resendBtn.addEventListener("click", () => resendTurn(question, imgs));
+    qActions.appendChild(editBtn);
+    qActions.appendChild(resendBtn);
+    q.appendChild(qActions);
+    const qTime = document.createElement("div");
+    qTime.className = "answer-time answer-time--q";
+    qTime.textContent = fmtTime(turnTs);
+    q.appendChild(qTime);
+  }
 
   const a = document.createElement("div");
   a.className = "answer-a streaming";
@@ -2207,23 +2455,19 @@ function addAnswerTurn(question, imgs, mode, ts) {
   // Double-click an answer to push it (text, code, and any diagrams) to the sticky note.
   a.title = "Double-click to send to sticky note";
   a.addEventListener("dblclick", () => injectAnswerToSticky(a));
-  turn.appendChild(q);
+  if (showQ) turn.appendChild(q);
   turn.appendChild(a);
 
-  // Ensure the spacer exists and is tall enough, then insert turn before it
   ensureSpacer();
   answerHistory.insertBefore(turn, answerSpacer);
 
-  // After layout settles, scroll so the last few lines of the question are
-  // visible at the top of the panel, with the answer starting just below.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     const cRect = answerHistory.getBoundingClientRect();
-    const qRect = q.getBoundingClientRect();
-    const qTopInScroll    = answerHistory.scrollTop + (qRect.top  - cRect.top);
-    const qBottomInScroll = answerHistory.scrollTop + (qRect.bottom - cRect.top);
-    // Show up to 72px of the question tail (≈3 lines); if question is shorter show all of it
-    const tail = Math.min(72, qRect.height);
-    answerHistory.scrollTop = qBottomInScroll - tail;
+    const target = showQ ? q : a;
+    const tRect = target.getBoundingClientRect();
+    const tBottomInScroll = answerHistory.scrollTop + (tRect.bottom - cRect.top);
+    const tail = Math.min(72, tRect.height);
+    answerHistory.scrollTop = tBottomInScroll - tail;
   }));
   return a;
 }
@@ -2247,7 +2491,7 @@ function resendTurn(question, imgs) {
   if (window.api.speculativeCancel) window.api.speculativeCancel();
   // onAnswerStart embeds these into the new question bubble.
   pendingBubbleImages = hasImgs ? imgs.slice() : [];
-  window.api.generateAnswer(question || "", hasImgs ? imgs : null, manualMode);
+  window.api.generateAnswer(question || "", hasImgs ? imgs : null, manualMode, { transcript: meetingTranscriptText() });
 }
 
 // Edit inline in the question bubble (ChatGPT-style): swap the text for a
@@ -2316,6 +2560,7 @@ window.api.onAnswerStart((data) => {
     return;
   }
   dropEmptyStreamingTurn();
+  sealMeetBubble();
   const imgs = pendingBubbleImages.slice();
   pendingBubbleImages = [];
   currentAnswerEl = addAnswerTurn(question, imgs, answerMode);
@@ -2352,6 +2597,20 @@ window.api.onAnswerDone(() => {
     // Read raw streamed text from the child stream div (keeps badge untouched)
     const streamEl = currentAnswerEl._streamEl || currentAnswerEl;
     let rawText = streamEl.textContent || '';
+
+    const listenMatch = rawText.trim().match(/^\[LISTEN\]\s*([\s\S]*)$/i);
+    if (listenMatch) {
+      currentAnswerEl.classList.add("answer-listen");
+      const reason = (listenMatch[1] || "").trim();
+      streamEl.textContent = "";
+      const chip = document.createElement("div");
+      chip.className = "listen-chip";
+      chip.textContent = reason ? ("Stay quiet — " + reason) : "Stay quiet — not your turn";
+      streamEl.appendChild(chip);
+      currentAnswerEl._rawText = "";
+      currentAnswerEl = null;
+      return;
+    }
 
     // Strip intro prose for CODE/DIAGRAM before any further processing
     if (answerMode === 'CODE' || answerMode === 'DIAGRAM') {
@@ -2719,47 +2978,6 @@ if (window.api.onTriggerGetAnswer) window.api.onTriggerGetAnswer(() => submitCom
 if (window.api.onScrollAnswer) window.api.onScrollAnswer((dir) => {
   if (answerHistory) answerHistory.scrollTop += (dir || 0) * 120;
 });
-// Prompt-insert rail menu (✎) drops a saved prompt into the composer.
-if (window.api.onInsertPromptText) window.api.onInsertPromptText((text) => appendToComposer(text));
-
-// ---- Preset bar + answer settings (reuse the saved prompt store) ----
-const setupPresetSelect = document.getElementById("setupPresetSelect");
-
-async function refreshPresetSelect() {
-  const cfg = await window.api.getAnswerConfig();
-  const prompts = await window.api.getPrompts();
-  const fallbackId = (prompts[0] && prompts[0].id) || "";
-  const activeId = (cfg.activePromptId && prompts.some((p) => p.id === cfg.activePromptId))
-    ? cfg.activePromptId
-    : fallbackId;
-
-  for (const sel of [presetSelect, setupPresetSelect]) {
-    if (!sel) continue;
-    sel.innerHTML = "";
-    for (const p of prompts) {
-      const opt = document.createElement("option");
-      opt.value = p.id;
-      opt.textContent = p.title || "(untitled)";
-      sel.appendChild(opt);
-    }
-    sel.value = activeId;
-    if (sel._cselRefresh) sel._cselRefresh();
-  }
-
-  await applyAnswerConfigUi(cfg, { refreshLive: true });
-}
-
-function onPresetChange(sourceSelect) {
-  const id = sourceSelect.value || null;
-  if (!id) return;
-  window.api.setAnswerConfig({ activePromptId: id });
-  for (const sel of [presetSelect, setupPresetSelect]) {
-    if (sel && sel !== sourceSelect) sel.value = id;
-  }
-}
-
-if (presetSelect) presetSelect.addEventListener("change", () => onPresetChange(presetSelect));
-if (setupPresetSelect) setupPresetSelect.addEventListener("change", () => onPresetChange(setupPresetSelect));
 function collectAnswerKeys() {
   return {
     xai: answerKeyEl ? answerKeyEl.value.trim() : "",
@@ -2796,7 +3014,9 @@ function bindAnswerKeyField(el, providerId) {
 bindAnswerKeyField(answerKeyEl, "xai");
 bindAnswerKeyField(answerKeyAnthropicEl, "anthropic");
 bindAnswerKeyField(answerKeyOpenaiEl, "openai");
-refreshPresetSelect();
+if (window.api.getAnswerConfig) {
+  window.api.getAnswerConfig().then((cfg) => applyAnswerConfigUi(cfg, { refreshLive: true }));
+}
 
 async function refreshMicList() {
   try {
