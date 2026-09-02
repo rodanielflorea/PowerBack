@@ -18,7 +18,7 @@
   --rec-on:      #dc2626;
   --green:       #16a34a;
   --amber:       #d97706;
-  --header-h:    0px;
+  --header-h:    30px;
   --url-bar-h:   30px;
   --rail-w:      32px;
   --radius-sm:   6px;
@@ -144,8 +144,6 @@ html, body {
   padding: 6px 0;
   gap: 2px;
   z-index: 10;
-  /* The rail is the window's drag handle now that there is no title bar. */
-  -webkit-app-region: drag;
 }
 .rail-sep { width: 16px; height: 1px; background: var(--border-hi); margin: 4px 0; }
 .rail-spacer { flex: 1; }
@@ -187,6 +185,7 @@ html, body {
 .rail-btn:hover { background: rgba(0,0,0,.08); }
 
 body:not(.in-interview) .iv-btn  { display: none !important; }
+body:not(.in-interview) .right-rail { display: none !important; }
 
 /* Model popup button in the right rail */
 .rail-model-btn {
@@ -1458,7 +1457,7 @@ textarea.meet-editbox {
 /* ── 14. SETUP OVERLAY ─────────────────────────────────────── */
 .setup-overlay {
   position: fixed;
-  top: var(--header-h); left: 0; right: var(--rail-w); bottom: 0;
+  top: var(--header-h); left: 0; right: 0; bottom: 0;
   background:
     radial-gradient(600px 320px at 15% -10%, rgba(37,99,235,.08), transparent 70%),
     linear-gradient(180deg, #f8f9fd 0%, #ffffff 60%);

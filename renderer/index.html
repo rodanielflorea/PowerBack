@@ -12,53 +12,51 @@
     <button class="cable-nudge-dismiss" id="cableNudgeDismiss" title="Dismiss">&times;</button>
   </div>
 
-  <!-- Legacy header controls kept (hidden) because renderer.js binds to them. -->
-  <header class="titlebar" hidden>
+  <header class="titlebar">
     <div class="drag"></div>
     <span class="net-status-pill iv-btn" id="netStatusPill" title="Network connection state">--</span>
     <div class="slider" id="slider" title="Click and drag horizontally to change opacity">
       <div class="slider-fill" id="sliderFill"></div>
     </div>
-    <button class="btn mic-pill iv-btn" id="micPill" title="Cycle B's mic mode: mute → A only → A+C">
-      <span class="mic-pill-icon" id="micPillIcon">🔒</span><span class="mic-pill-label" id="micPillLabel">TO A</span>
-    </button>
-  </header>
-
-  <aside class="right-rail" id="rightRail">
-    <button class="rail-btn" id="settingsBtn" title="Settings &amp; user guide">&#9881;</button>
-    <button class="rail-btn stealth-btn" id="stealthBtn" title="Toggle stealth (hidden from screen capture)">
+    <button class="btn stealth-btn" id="stealthBtn" title="Toggle stealth (hidden from screen capture)">
       <svg class="stealth-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path class="shield-body" d="M12 2 L4 5 L4 12 C4 16.5 7.5 20.5 12 22 C16.5 20.5 20 16.5 20 12 L20 5 Z" />
         <path class="shield-check" d="M8.5 12.5 l2.5 2.5 l4.5 -5.5" />
         <path class="shield-slash" d="M7 7 l10 10" />
       </svg>
     </button>
-    <button class="rail-btn clickthrough-btn" id="clickThroughBtn" title="Toggle click-through (Alt+Q) — when on, mouse passes through this window">
+    <button class="btn clickthrough-btn" id="clickThroughBtn" title="Toggle click-through (Alt+Q) — when on, mouse passes through this window">
       <svg class="cursor-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path class="cursor-body" d="M5 3 L5 17 L9 13 L11.5 19 L13.5 18 L11 12 L17 12 Z" />
         <path class="cursor-slash" d="M4 4 L20 20" />
       </svg>
     </button>
-    <div class="rail-sep iv-btn"></div>
-    <button class="rail-btn rec-btn iv-btn" id="recBtn" title="Start transcription (Alt+C)">
+    <!-- The "To A" mic-mode pill is retired (supporter mode is not offered); kept hidden for renderer bindings. -->
+    <button class="btn mic-pill iv-btn" id="micPill" hidden>
+      <span class="mic-pill-icon" id="micPillIcon">🔒</span><span class="mic-pill-label" id="micPillLabel">TO A</span>
+    </button>
+    <button class="btn end-btn iv-btn" id="endBtn" title="End session — back to the start screen">End</button>
+    <button class="btn" id="hideBtn" title="Hide (Ctrl+Alt+H)">&minus;</button>
+    <button class="btn" id="quitBtn" title="Quit">&times;</button>
+  </header>
+
+  <aside class="right-rail iv-btn" id="rightRail">
+    <button class="rail-btn" id="settingsBtn" title="Settings &amp; user guide">&#9881;</button>
+    <button class="rail-btn mode-toggle-btn" id="modeToggleBtn" title="Toggle mode: OCR ↔ Voice (Alt+D)">OCR</button>
+    <button class="rail-btn rec-btn" id="recBtn" title="Start transcription (Alt+C)">
       <svg class="mic-icon" viewBox="0 0 24 24" aria-hidden="true">
         <rect x="9" y="3" width="6" height="11" rx="3" />
         <path d="M6 11 a6 6 0 0 0 12 0" fill="none" />
         <path d="M12 17 v3 M9 20 h6" fill="none" />
       </svg>
     </button>
-    <button class="rail-btn mode-toggle-btn iv-btn" id="modeToggleBtn" title="Toggle mode: OCR ↔ Voice (Alt+D)">OCR</button>
-    <button class="rail-btn rail-model-btn iv-btn" id="railModelBtn" title="Select answer model">M</button>
-    <div class="rail-speed-wrap iv-btn" title="Typing speed (1=slow · 5=fast)">
+    <button class="rail-btn rail-model-btn" id="railModelBtn" title="Select answer model">M</button>
+    <div class="rail-speed-wrap" title="Typing speed (1=slow · 5=fast)">
       <span class="rail-speed-label">5</span>
       <input type="range" id="ideSpeedSlider" class="rail-speed-slider"
              min="1" max="5" step="1" value="3" orient="vertical">
       <span class="rail-speed-label">1</span>
     </div>
-    <div class="rail-spacer"></div>
-    <button class="rail-btn end-btn iv-btn" id="endBtn" title="End session — back to the start screen">&#9632;</button>
-    <button class="rail-btn" id="hideBtn" title="Hide window (Ctrl+Alt+H)">&minus;</button>
-    <button class="rail-btn rail-quit" id="quitBtn" title="Quit">&times;</button>
   </aside>
 
   <section class="settings-overlay" id="settingsOverlay" hidden>
