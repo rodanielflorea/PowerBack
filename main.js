@@ -82,7 +82,7 @@ const DEFAULT_STATE = {
     language: 'auto',
     micDeviceId: '',
     captureSystem: true,
-    captureMic: true,
+    captureMic: false,
   },
   capture: {
     rect: null,
@@ -427,6 +427,13 @@ function loadState() {
     };
   }
   migrateAnswerConfig();
+  // One-time switch to the new audio-source defaults (system audio on, mic off)
+  // for installs that saved the old defaults before this change.
+  if (!state.audioDefaultsV2) {
+    state.transcription.captureSystem = true;
+    state.transcription.captureMic = false;
+    state.audioDefaultsV2 = true;
+  }
   applyBuiltinKeys();
   seedAvoidPhrasesIfNeeded();
   migrateProfilesIfNeeded();
