@@ -620,6 +620,8 @@ function createWindow() {
   win.on('resize', () => { saveState(); syncStickyPosition(); });
   win.on('show', () => { applyStickyState(); sendFloatState(); });
   win.on('hide', () => { applyStickyState(); sendFloatState(); });
+  win.on('minimize', () => { applyStickyState(); sendFloatState(); });
+  win.on('restore', () => { applyStickyState(); sendFloatState(); });
   win.on('closed', () => {
     if (floatWin && !floatWin.isDestroyed()) { try { floatWin.close(); } catch {} }
     win = null;
@@ -647,39 +649,26 @@ function nudge(dx, dy) {
 // ── Hide / show the main window, returning it to where it was ───────────────
 // On Windows/macOS/X11 the bounds are saved before hiding and re-applied after
 // showing. Wayland ignores app-set positions (a re-shown window lands under
-// the pointer), so there the window is never unmapped: it collapses to an
-// invisible 1×1 px and expands back in place.
+// the pointer), so there the window is minimized instead and the compositor
+// restores it in place — hiding + re-showing (unmap/map) and collapsing to a
+// tiny size were both tried and came back at the wrong place or half-painted.
 const WAYLAND_SESSION = process.platform === 'linux' && !LINUX_X11_SESSION;
 let hiddenBounds = null;
-let mainCollapsed = false;
+const mainCollapsed = false; // kept for saveState; the collapse approach is retired
 function isMainShown() {
-  return !!win && !win.isDestroyed() && win.isVisible() && !mainCollapsed;
+  return !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized();
 }
 function hideMain() {
   if (!win || win.isDestroyed() || !isMainShown()) return;
   hiddenBounds = win.getBounds();
-  if (WAYLAND_SESSION) {
-    mainCollapsed = true;
-    win.setMinimumSize(1, 1);
-    win.setSize(1, 1);
-    win.webContents.send('opacity-css', 0);
-    try { win.blur(); } catch {}
-    applyStickyState();
-    sendFloatState();
-  } else {
-    win.hide();
-  }
+  if (WAYLAND_SESSION) win.minimize();
+  else win.hide();
 }
 function showMain() {
   if (!win || win.isDestroyed()) return;
-  if (WAYLAND_SESSION && mainCollapsed) {
-    mainCollapsed = false;
-    win.setMinimumSize(360, 200);
-    if (hiddenBounds) win.setSize(hiddenBounds.width, hiddenBounds.height);
-    win.webContents.send('opacity-css', Math.max(MIN_OPACITY, state.opacity || 1));
-    win.show();
-    applyStickyState();
-    sendFloatState();
+  if (WAYLAND_SESSION) {
+    if (win.isMinimized()) win.restore();
+    if (!win.isVisible()) win.show();
   } else {
     win.show();
     if (hiddenBounds) { try { win.setBounds(hiddenBounds); } catch {} }
