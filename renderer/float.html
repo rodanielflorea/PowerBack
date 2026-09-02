@@ -65,7 +65,9 @@
       try { ring.releasePointerCapture(press.id); } catch {}
       press = null;
       window.floatApi.dragEnd();
-      if (!moved && e && e.type === 'pointerup' && e.target === btn) window.floatApi.toggle();
+      // Pointer capture re-targets the release to the ring, so do not check the
+      // target: any press-and-release without movement toggles the app.
+      if (!moved && e && e.type === 'pointerup') window.floatApi.toggle();
     };
     ring.addEventListener('pointerdown', onDown);
     ring.addEventListener('pointermove', onMove);
