@@ -23,21 +23,6 @@ const engineDeepgram = document.getElementById("engineDeepgram");
 const engineXai = document.getElementById("engineXai");
 const deepgramKeyEl = document.getElementById("deepgramKey");
 
-// Providers with a key built into the app (defaults/api-keys.json) need no
-// key from the user: hide their key fields entirely.
-if (window.api.getBuiltinKeys) {
-  window.api.getBuiltinKeys().then((b) => {
-    const hideField = (id) => {
-      const el = document.getElementById(id);
-      const field = el && el.closest(".field");
-      if (field) field.hidden = true;
-    };
-    if (b.deepgram) hideField("deepgramKey");
-    if (b.xai) { hideField("xaiKey"); hideField("answerKey"); }
-    if (b.anthropic) hideField("answerKeyAnthropic");
-    if (b.openai) hideField("answerKeyOpenai");
-  }).catch(() => {});
-}
 const xaiKeyEl = document.getElementById("xaiKey");
 const languageSelect = document.getElementById("languageSelect");
 
@@ -1170,7 +1155,7 @@ async function refreshTranscriptionUI() {
   txCfg = await window.api.getTranscriptionConfig();
   engineDeepgram.checked = txCfg.engine !== "xai";
   if (engineXai) engineXai.checked = txCfg.engine === "xai";
-  deepgramKeyEl.value = txCfg.deepgramApiKey || "";
+  if (deepgramKeyEl) deepgramKeyEl.value = txCfg.deepgramApiKey || "";
   if (xaiKeyEl) xaiKeyEl.value = txCfg.xaiApiKey || "";
   languageSelect.value = txCfg.language || "auto";
   captureMicEl.checked = txCfg.captureMic !== false;
@@ -1236,7 +1221,7 @@ if (engineXai) engineXai.addEventListener("change", () => {
   persistTx({ engine: "xai" });
   updateEngineBlocks("xai");
 });
-deepgramKeyEl.addEventListener("change", () =>
+if (deepgramKeyEl) deepgramKeyEl.addEventListener("change", () =>
   persistTx({ deepgramApiKey: deepgramKeyEl.value.trim() }),
 );
 if (xaiKeyEl) xaiKeyEl.addEventListener("change", () =>
@@ -2057,7 +2042,7 @@ async function populateModelSelects() {
 
 async function setAnswerProvider(provider) {
   if (!provider) return;
-  const cfg = await window.api.setAnswerConfig({ provider, keys: collectAnswerKeys() });
+  const cfg = await window.api.setAnswerConfig({ provider });
   await applyAnswerConfigUi(cfg || await window.api.getAnswerConfig(), { refreshLive: true });
 }
 
@@ -2994,12 +2979,15 @@ if (window.api.onTriggerGetAnswer) window.api.onTriggerGetAnswer(() => submitCom
 if (window.api.onScrollAnswer) window.api.onScrollAnswer((dir) => {
   if (answerHistory) answerHistory.scrollTop += (dir || 0) * 120;
 });
+// Keys are built into the app (defaults/api-keys.json); there are no key
+// inputs any more. Only report a key for an input that actually exists so a
+// provider switch never overwrites stored keys with empty strings.
 function collectAnswerKeys() {
-  return {
-    xai: answerKeyEl ? answerKeyEl.value.trim() : "",
-    anthropic: answerKeyAnthropicEl ? answerKeyAnthropicEl.value.trim() : "",
-    openai: answerKeyOpenaiEl ? answerKeyOpenaiEl.value.trim() : "",
-  };
+  const keys = {};
+  if (answerKeyEl) keys.xai = answerKeyEl.value.trim();
+  if (answerKeyAnthropicEl) keys.anthropic = answerKeyAnthropicEl.value.trim();
+  if (answerKeyOpenaiEl) keys.openai = answerKeyOpenaiEl.value.trim();
+  return keys;
 }
 
 function persistAnswerKeys() {
