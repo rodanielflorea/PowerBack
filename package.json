@@ -43,7 +43,6 @@
         "nsis"
       ],
       "icon": "build/icon.ico",
-      "artifactName": "${productName}-${version}-portable.${ext}",
       "extraResources": [
         {
           "from": "caption2text",
@@ -81,12 +80,28 @@
     },
     "mac": {
       "target": [
-        "dmg",
-        "zip"
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
       "category": "public.app-category.productivity",
       "icon": "build/icon.png",
       "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "artifactName": "${productName}-${version}-setup.${ext}",
+      "oneClick": true
     }
   },
   "dependencies": {
