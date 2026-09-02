@@ -2139,12 +2139,19 @@ if (window.api.onAnswerConfigChanged) {
 
 // Manual mode — default Text; CODE/DIAGRAM force specific output format.
 let manualMode = 'ANSWER';
+// The typing-speed slider only matters for Write-to-IDE, i.e. Code answers.
+function syncSpeedSlider() {
+  const wrap = document.querySelector(".rail-speed-wrap");
+  if (wrap) wrap.hidden = manualMode !== "CODE";
+}
+syncSpeedSlider();
 if (modeSeg) {
   modeSeg.addEventListener('click', (e) => {
     const btn = e.target.closest('.mode-seg-btn');
     if (!btn) return;
     manualMode = btn.dataset.mode;
     modeSeg.querySelectorAll('.mode-seg-btn').forEach(b => b.classList.toggle('mode-seg-btn--active', b === btn));
+    syncSpeedSlider();
     _speculativeText = null;
     kickSpeculative(true);
   });
@@ -2694,6 +2701,7 @@ function setManualMode(mode) {
   manualMode = mode || 'ANSWER';
   if (modeSeg) modeSeg.querySelectorAll('.mode-seg-btn').forEach((b) =>
     b.classList.toggle('mode-seg-btn--active', b.dataset.mode === manualMode));
+  syncSpeedSlider();
 }
 
 // Resend (regenerate): re-submit the same question/images as a new turn, in

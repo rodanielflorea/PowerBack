@@ -13,9 +13,7 @@
   </div>
 
   <header class="titlebar">
-    <button class="btn end-btn iv-btn" id="endBtn" title="End session — back to the start screen">
-      <svg class="end-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><rect x="8.5" y="8.5" width="7" height="7" rx="1.5" /></svg>
-    </button>
+    <div class="app-logo" title="RemoteDevJobsAce" aria-hidden="true">A</div>
     <span class="net-status-pill iv-btn" id="netStatusPill" hidden>--</span>
     <div class="drag"></div>
     <div class="slider" id="slider" title="Click and drag horizontally to change opacity">
@@ -37,6 +35,9 @@
     <!-- The "To A" mic-mode pill is retired (supporter mode is not offered); kept hidden for renderer bindings. -->
     <button class="btn mic-pill iv-btn" id="micPill" hidden>
       <span class="mic-pill-icon" id="micPillIcon">🔒</span><span class="mic-pill-label" id="micPillLabel">TO A</span>
+    </button>
+    <button class="btn end-btn iv-btn" id="endBtn" title="End session — back to the start screen">
+      <svg class="end-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><rect x="8.5" y="8.5" width="7" height="7" rx="1.5" /></svg>
     </button>
     <button class="btn" id="hideBtn" title="Hide (Ctrl+Alt+H)">&minus;</button>
     <button class="btn" id="quitBtn" title="Quit">&times;</button>
@@ -335,8 +336,8 @@
             <tr><td>Microphone</td><td>Start / stop listening. Red and pulsing = listening. It starts by itself when the interview begins.</td></tr>
             <tr><td>Voice / OCR</td><td>Where questions come from: <i>Voice</i> listens to the call audio (normal). <i>OCR</i> reads text from an area of your screen instead — useful for written tests.</td></tr>
             <tr><td>Model letters</td><td>Choose which AI model writes the answers. The default is fine.</td></tr>
-            <tr><td>1 – 5 slider</td><td>Typing speed for <i>Write to IDE</i> (see below).</td></tr>
-            <tr><td>&#9209; (red, top-left)</td><td>End the interview and go back to the welcome screen.</td></tr>
+            <tr><td>1 – 5 slider</td><td>Typing speed for <i>Write to IDE</i> — only shown in <b>Code</b> mode.</td></tr>
+            <tr><td>&#9209; (red)</td><td>End the interview and go back to the welcome screen.</td></tr>
             <tr><td>&minus;</td><td>Hide the app. Bring it back with <span class="kbd">Ctrl+Alt+H</span> or the round <b>A</b> button.</td></tr>
             <tr><td>&times;</td><td>Quit.</td></tr>
           </table>
