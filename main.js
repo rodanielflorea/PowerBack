@@ -523,7 +523,7 @@ function seedAvoidPhrasesIfNeeded() {
 }
 
 function saveState() {
-  if (win && !win.isDestroyed()) {
+  if (win && !win.isDestroyed() && !mainCollapsed) {
     const [x, y] = win.getPosition();
     const [width, height] = win.getSize();
     state.x = x; state.y = y;
@@ -644,9 +644,51 @@ function nudge(dx, dy) {
   win.setPosition(x + dx, y + dy);
 }
 
+// ── Hide / show the main window, returning it to where it was ───────────────
+// On Windows/macOS/X11 the bounds are saved before hiding and re-applied after
+// showing. Wayland ignores app-set positions (a re-shown window lands under
+// the pointer), so there the window is never unmapped: it collapses to an
+// invisible 1×1 px and expands back in place.
+const WAYLAND_SESSION = process.platform === 'linux' && !LINUX_X11_SESSION;
+let hiddenBounds = null;
+let mainCollapsed = false;
+function isMainShown() {
+  return !!win && !win.isDestroyed() && win.isVisible() && !mainCollapsed;
+}
+function hideMain() {
+  if (!win || win.isDestroyed() || !isMainShown()) return;
+  hiddenBounds = win.getBounds();
+  if (WAYLAND_SESSION) {
+    mainCollapsed = true;
+    win.setMinimumSize(1, 1);
+    win.setSize(1, 1);
+    win.webContents.send('opacity-css', 0);
+    try { win.blur(); } catch {}
+    applyStickyState();
+    sendFloatState();
+  } else {
+    win.hide();
+  }
+}
+function showMain() {
+  if (!win || win.isDestroyed()) return;
+  if (WAYLAND_SESSION && mainCollapsed) {
+    mainCollapsed = false;
+    win.setMinimumSize(360, 200);
+    if (hiddenBounds) win.setSize(hiddenBounds.width, hiddenBounds.height);
+    win.webContents.send('opacity-css', Math.max(MIN_OPACITY, state.opacity || 1));
+    win.show();
+    applyStickyState();
+    sendFloatState();
+  } else {
+    win.show();
+    if (hiddenBounds) { try { win.setBounds(hiddenBounds); } catch {} }
+  }
+  try { win.focus(); } catch {}
+}
 function toggleVisible() {
   if (!win) return;
-  if (win.isVisible()) win.hide(); else win.show();
+  if (isMainShown()) hideMain(); else showMain();
 }
 
 function setStealth(value) {
@@ -704,9 +746,37 @@ function createFloatWindow() {
 }
 function sendFloatState() {
   if (!floatWin || floatWin.isDestroyed()) return;
-  try { floatWin.webContents.send('float-state', !!(win && !win.isDestroyed() && win.isVisible())); } catch {}
+  try { floatWin.webContents.send('float-state', isMainShown()); } catch {}
 }
 ipcMain.handle('float-toggle', () => { toggleVisible(); });
+// Drag the floating button by pressing and moving it: the renderer reports
+// press/release, main follows the cursor. Wayland cannot position windows, so
+// there the button's outer ring (a native drag region) does the moving.
+let floatDrag = null;
+ipcMain.handle('float-drag-start', () => {
+  if (!floatWin || floatWin.isDestroyed() || WAYLAND_SESSION || floatDrag) return false;
+  const c = screen.getCursorScreenPoint();
+  const [x, y] = floatWin.getPosition();
+  floatDrag = {
+    dx: c.x - x, dy: c.y - y,
+    timer: setInterval(() => {
+      if (!floatWin || floatWin.isDestroyed()) return;
+      const p = screen.getCursorScreenPoint();
+      floatWin.setPosition(Math.round(p.x - floatDrag.dx), Math.round(p.y - floatDrag.dy));
+    }, 16),
+    // Safety: never follow the cursor forever if the release is missed.
+    stop: setTimeout(() => ipcMain.emit('float-drag-stop'), 15000),
+  };
+  return true;
+});
+function endFloatDrag() {
+  if (!floatDrag) return;
+  clearInterval(floatDrag.timer);
+  clearTimeout(floatDrag.stop);
+  floatDrag = null;
+}
+ipcMain.on('float-drag-stop', endFloatDrag);
+ipcMain.handle('float-drag-end', () => { endFloatDrag(); });
 
 function computeDefaultStickyAnchor(mainW, mainH, stickyW, stickyH) {
   const [mx, my] = win.getPosition();
@@ -796,7 +866,7 @@ function syncStickyPosition(force) {
 
 function applyStickyState() {
   if (!stickyWin || stickyWin.isDestroyed() || !win) return;
-  const wantShow = stickyWantOpen && win.isVisible();
+  const wantShow = stickyWantOpen && isMainShown();
   if (wantShow) {
     if (!stickyWin.isVisible()) stickyWin.showInactive();
     syncStickyPosition();
@@ -2069,7 +2139,7 @@ ipcMain.handle('set-stealth', (_e, value) => setStealth(value));
 ipcMain.handle('get-stealth', () => state.stealth);
 ipcMain.handle('set-click-through', (_e, value) => setClickThrough(value));
 ipcMain.handle('get-click-through', () => state.clickThrough);
-ipcMain.handle('hide', () => win?.hide());
+ipcMain.handle('hide', () => hideMain());
 ipcMain.handle('quit', () => app.quit());
 ipcMain.handle('get-desktop-source-id', async () => {
   try {
