@@ -60,6 +60,7 @@
   </aside>
 
   <section class="settings-overlay" id="settingsOverlay" hidden>
+   <div class="settings-modal" role="dialog" aria-modal="true" aria-label="Settings">
     <div class="settings-header">
       <span>Settings</span>
       <button class="btn" id="settingsCloseBtn" title="Close settings">&times;</button>
@@ -74,10 +75,7 @@
       <div class="settings-tab" data-tab="apikeys">
         <section class="settings-section">
           <h3>Transcription</h3>
-          <div class="field-row">
-            <label class="radio"><input type="radio" name="engine" value="deepgram" id="engineDeepgram" /> Deepgram API</label>
-            <label class="radio"><input type="radio" name="engine" value="xai" id="engineXai" /> xAI (Grok) API</label>
-          </div>
+          <input type="radio" name="engine" value="deepgram" id="engineDeepgram" checked hidden />
           <h3 class="settings-subhead">Call type</h3>
           <p class="hint">1:1 hiring call. Transcription is one interviewer stream.</p>
           <div class="field-row" id="hiringTypeRow">
@@ -416,6 +414,7 @@
       </div>
 
     </div>
+   </div>
   </section>
 
   <!-- Stage 1: choose New vs Continue -->

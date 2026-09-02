@@ -1200,6 +1200,9 @@ function closeSettings() {
 
 settingsBtn.addEventListener("click", openSettings);
 settingsCloseBtn.addEventListener("click", closeSettings);
+// Modal behaviour: click on the dimmed backdrop or press Escape to close.
+settingsOverlay.addEventListener("click", (e) => { if (e.target === settingsOverlay) closeSettings(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !settingsOverlay.hidden) closeSettings(); });
 
 function log(msg, kind = "") {
   const line = document.createElement("div");

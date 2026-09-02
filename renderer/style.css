@@ -252,11 +252,27 @@ body:not(.in-interview) .right-rail { display: none !important; }
 .settings-overlay {
   position: fixed;
   top: var(--header-h); left: 0; right: 0; bottom: 0;
-  background: var(--bg);
+  background: rgba(15,18,34,.42);
   z-index: 25;
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
 }
+.settings-modal {
+  width: 100%;
+  max-width: 560px;
+  max-height: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modalIn .16s var(--ease);
+}
+@keyframes modalIn { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
 
 .settings-header {
   height: 34px;

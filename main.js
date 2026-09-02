@@ -415,9 +415,8 @@ function loadState() {
     }
     state.network.role = '';
     // Migrate any retired engine value (e.g. the removed local whisper) to deepgram.
-    if (state.transcription.engine !== 'deepgram' && state.transcription.engine !== 'xai') {
-      state.transcription.engine = 'deepgram';
-    }
+    // Deepgram is the only transcription engine offered.
+    state.transcription.engine = 'deepgram';
     if (!state.meeting) state.meeting = { ...DEFAULT_STATE.meeting };
     state.meeting.kind = 'hiring';
     if (!['intro', 'technical', 'ceo', 'hr'].includes(state.meeting.hiringType)) state.meeting.hiringType = 'intro';
