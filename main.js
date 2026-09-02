@@ -350,6 +350,40 @@ function smartDiff(curr) {
   return ' ' + toEmit.join(' ');
 }
 
+// ── Built-in API keys ─────────────────────────────────────────────────────────
+// defaults/api-keys.json is shipped inside the app so users need no keys of
+// their own. A non-empty entry always wins over whatever is in state.json and
+// the matching settings field is hidden in the UI; an empty entry leaves that
+// provider user-configurable. (Anything shipped in the app can be extracted by
+// a user — rotate at the provider if a key leaks.)
+const BUILTIN_KEYS_FILE = path.join(__dirname, 'defaults', 'api-keys.json');
+let builtinKeys = null;
+function getBuiltinKeys() {
+  if (builtinKeys) return builtinKeys;
+  let raw = {};
+  try { raw = JSON.parse(fs.readFileSync(BUILTIN_KEYS_FILE, 'utf8')); } catch {}
+  builtinKeys = {};
+  for (const k of ['deepgram', 'xai', 'anthropic', 'openai']) {
+    const v = String(raw[k] || '').trim();
+    if (v) builtinKeys[k] = v;
+  }
+  return builtinKeys;
+}
+function applyBuiltinKeys() {
+  const b = getBuiltinKeys();
+  if (!state.transcription) state.transcription = { ...DEFAULT_STATE.transcription };
+  if (!state.answer) state.answer = { ...DEFAULT_STATE.answer };
+  if (!state.answer.keys) state.answer.keys = { ...DEFAULT_STATE.answer.keys };
+  if (b.deepgram) state.transcription.deepgramApiKey = b.deepgram;
+  if (b.xai) { state.transcription.xaiApiKey = b.xai; state.answer.keys.xai = b.xai; state.answer.apiKey = b.xai; }
+  if (b.anthropic) state.answer.keys.anthropic = b.anthropic;
+  if (b.openai) state.answer.keys.openai = b.openai;
+}
+ipcMain.handle('get-builtin-keys', () => {
+  const b = getBuiltinKeys();
+  return { deepgram: !!b.deepgram, xai: !!b.xai, anthropic: !!b.anthropic, openai: !!b.openai };
+});
+
 function loadState() {
   try {
     const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
@@ -392,6 +426,7 @@ function loadState() {
     };
   }
   migrateAnswerConfig();
+  applyBuiltinKeys();
   seedAvoidPhrasesIfNeeded();
   migrateProfilesIfNeeded();
 }
@@ -1940,6 +1975,7 @@ ipcMain.handle('set-mode', (_e, mode) => {
 ipcMain.handle('get-transcription-config', () => ({ ...state.transcription }));
 ipcMain.handle('set-transcription-config', (_e, cfg) => {
   state.transcription = { ...state.transcription, ...(cfg || {}) };
+  applyBuiltinKeys();
   saveState();
 });
 
@@ -2872,6 +2908,8 @@ function applyAnswerConfig(cfg) {
   }
 
   state.answer = next;
+
+  applyBuiltinKeys();
   saveState();
   schedulePromptCacheWarm();
   return publicAnswerConfig();
