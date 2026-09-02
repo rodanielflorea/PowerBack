@@ -111,15 +111,23 @@ function saveStoredLicense(userDataDir, code, lastSeen) {
   fs.writeFileSync(licenseFile(userDataDir), JSON.stringify({ code, lastSeen }));
 }
 
-// -> { ok, expiresAt? , reason? } and bumps lastSeen when valid.
+// -> { ok, expiresAt? , reason? }. lastSeen is bumped on EVERY check, valid or
+// not, so that once expiry has been observed, turning the clock back cannot
+// bring the license back to life.
 function checkStoredLicense(userDataDir) {
   const stored = loadStoredLicense(userDataDir);
   if (!stored || !stored.code) return { ok: false, reason: 'missing' };
   const now = Math.max(Date.now(), Number(stored.lastSeen) || 0);
-  const r = verifyLicense(stored.code, machineMacs(), now);
-  if (!r.ok) return r;
   saveStoredLicense(userDataDir, stored.code, now);
-  return r;
+  return verifyLicense(stored.code, machineMacs(), now);
+}
+
+// Called periodically while the app runs so lastSeen tracks real usage time.
+function touchStoredLicense(userDataDir) {
+  const stored = loadStoredLicense(userDataDir);
+  if (!stored || !stored.code) return;
+  const now = Math.max(Date.now(), Number(stored.lastSeen) || 0);
+  saveStoredLicense(userDataDir, stored.code, now);
 }
 
 module.exports = {
@@ -130,5 +138,6 @@ module.exports = {
   primaryMac,
   verifyLicense,
   checkStoredLicense,
+  touchStoredLicense,
   saveStoredLicense,
 };

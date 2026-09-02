@@ -2068,6 +2068,8 @@ ipcMain.handle('get-app-info', () => {
 let licenseWin = null;
 
 function startApp() {
+  // Keep the license's last-seen time moving while the app runs (10 min).
+  setInterval(() => { try { license.touchStoredLicense(app.getPath('userData')); } catch {} }, 10 * 60 * 1000);
   createWindow();
   createFloatWindow();
   registerHotkeys();
