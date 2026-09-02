@@ -77,17 +77,9 @@
 
       <div class="settings-tab" data-tab="apikeys">
         <section class="settings-section">
-          <h3>Transcription</h3>
+          <!-- Deepgram is the only engine; kept as a hidden input for existing bindings. -->
           <input type="radio" name="engine" value="deepgram" id="engineDeepgram" checked hidden />
-          <h3 class="settings-subhead">Call type</h3>
-          <p class="hint">1:1 hiring call. Transcription is one interviewer stream.</p>
-          <div class="field-row" id="hiringTypeRow">
-            <label class="radio"><input type="radio" name="hiringType" value="intro" id="hiringTypeIntro" /> Intro</label>
-            <label class="radio"><input type="radio" name="hiringType" value="technical" id="hiringTypeTechnical" /> Technical</label>
-            <label class="radio"><input type="radio" name="hiringType" value="ceo" id="hiringTypeCeo" /> CEO</label>
-            <label class="radio"><input type="radio" name="hiringType" value="hr" id="hiringTypeHr" /> HR</label>
-          </div>
-          <h3 class="settings-subhead">Audio sources</h3>
+          <h3>Audio sources</h3>
           <p class="hint">Choose what Voice mode transcribes. Microphone is your voice; system audio is meeting or speaker output (Zoom, Teams, browser). Enable one or both. Changes apply the next time you start transcription.</p>
           <div class="field-row tx-source-row">
             <label class="checkbox"><input type="checkbox" id="captureMic" /> Microphone</label>
