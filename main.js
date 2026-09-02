@@ -1871,7 +1871,8 @@ function startApp() {
 function openLicenseWindow(reason) {
   licenseWin = new BrowserWindow({
     width: 460,
-    height: 400,
+    height: 392,
+    useContentSize: true,
     resizable: false,
     maximizable: false,
     minimizable: false,
