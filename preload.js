@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld('api', {
   resetHotkey: (action) => ipcRenderer.invoke('reset-hotkey', action),
   resetAllHotkeys: () => ipcRenderer.invoke('reset-all-hotkeys'),
   onOpacityChanged: (cb) => ipcRenderer.on('opacity-changed', (_e, v) => cb(v)),
+  onOpacityCss: (cb) => ipcRenderer.on('opacity-css', (_e, v) => cb(v)),
+  getPlatformCaps: () => ipcRenderer.invoke('get-platform-caps'),
   onStealthChanged: (cb) => ipcRenderer.on('stealth-changed', (_e, v) => cb(v)),
   onCaptureText: (cb) => ipcRenderer.on('capture-text', (_e, v) => cb(v)),
   onCaptureError: (cb) => ipcRenderer.on('capture-error', (_e, v) => cb(v)),

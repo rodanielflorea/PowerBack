@@ -112,6 +112,10 @@ html, body {
   transition: background var(--t) var(--ease);
 }
 .btn:hover { background: rgba(0,0,0,.07); }
+.btn--unsupported { opacity: .35; cursor: not-allowed !important; }
+.btn--unsupported:hover { background: transparent; }
+/* Linux emulates window opacity on the page, so the page must paint its own background. */
+html { background: var(--bg); }
 .btn:active { background: rgba(0,0,0,.12); }
 
 /* ── 4. ICONS (stealth / click-through) ───────────────────── */

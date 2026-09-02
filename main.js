@@ -25,6 +25,17 @@ try { officeParser = require('officeparser'); } catch {}
 // disable-backgrounding-occluded-windows switch below only stops priority
 // lowering, not the paint pause.)
 app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns,CalculateNativeWinOcclusion');
+// Linux notes. Window opacity is a no-op in every Linux backend, so it is
+// emulated with a transparent window + CSS opacity (LINUX_CSS_OPACITY).
+// Click-through (setIgnoreMouseEvents) is implemented with XShape, i.e. X11
+// sessions only — Wayland has no equivalent. Content protection (stealth)
+// has no Linux desktop API at all. Forcing XWayland was tried and rejected:
+// on some setups (VMs) the X11 window never presents on screen.
+// ACE_OZONE / ACE_NO_TRANSPARENT are troubleshooting overrides.
+if (process.platform === 'linux' && process.env.ACE_OZONE) app.commandLine.appendSwitch('ozone-platform', process.env.ACE_OZONE);
+const LINUX_CSS_OPACITY = process.platform === 'linux' && process.env.ACE_NO_TRANSPARENT !== '1';
+const LINUX_X11_SESSION = process.platform === 'linux' &&
+  (process.env.ACE_OZONE === 'x11' || (!process.env.WAYLAND_DISPLAY && (process.env.XDG_SESSION_TYPE || 'x11') !== 'wayland'));
 // Keep the audio capture pipeline alive when the window is hidden (stealth) or
 // occluded by a fullscreen app — otherwise Chromium throttles the renderer and
 // the AudioWorklet feeding Deepgram stalls, so voice stops transcribing.
@@ -517,7 +528,7 @@ function saveState() {
     const [width, height] = win.getSize();
     state.x = x; state.y = y;
     state.width = width; state.height = height;
-    state.opacity = win.getOpacity();
+    if (!LINUX_CSS_OPACITY) state.opacity = win.getOpacity();
   }
   try {
     fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
@@ -556,7 +567,8 @@ function createWindow() {
     minHeight: 200,
     useContentSize: true,
     frame: false,
-    backgroundColor: '#ffffff',
+    transparent: LINUX_CSS_OPACITY,
+    backgroundColor: LINUX_CSS_OPACITY ? '#00ffffff' : '#ffffff',
     skipTaskbar: true,
     alwaysOnTop: true,
     resizable: true,
@@ -578,7 +590,12 @@ function createWindow() {
   // window into a layered window (WS_EX_LAYERED), which disables GPU compositing
   // and makes the webview render in software. Skip it when fully opaque.
   const startOpacity = Math.max(MIN_OPACITY, state.opacity);
-  if (startOpacity < 1) win.setOpacity(startOpacity);
+  if (startOpacity < 1 && !LINUX_CSS_OPACITY) win.setOpacity(startOpacity);
+  if (LINUX_CSS_OPACITY) {
+    win.webContents.on('did-finish-load', () => {
+      if (state.opacity < 1) win.webContents.send('opacity-css', Math.max(MIN_OPACITY, state.opacity));
+    });
+  }
   win.setMenuBarVisibility(false);
   if (state.clickThrough) try { win.setIgnoreMouseEvents(true, { forward: true }); } catch {}
 
@@ -613,7 +630,9 @@ function createWindow() {
 function setOpacity(value) {
   if (!win) return;
   const v = Math.max(MIN_OPACITY, Math.min(1, value));
-  win.setOpacity(v);
+  state.opacity = v;
+  if (LINUX_CSS_OPACITY) win.webContents.send('opacity-css', v);
+  else win.setOpacity(v);
   if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.setOpacity(v); } catch {} }
   saveState();
   win.webContents.send('opacity-changed', v);
@@ -2036,7 +2055,16 @@ app.whenReady().then(() => {
 });
 
 ipcMain.handle('set-opacity', (_e, value) => setOpacity(value));
-ipcMain.handle('get-opacity', () => win?.getOpacity() ?? 1);
+ipcMain.handle('get-opacity', () => (LINUX_CSS_OPACITY ? (state.opacity ?? 1) : (win?.getOpacity() ?? 1)));
+// What the OS can actually do, so the UI can say so instead of silently failing.
+ipcMain.handle('get-platform-caps', () => ({
+  platform: process.platform,
+  stealth: process.platform !== 'linux',
+  stealthNote: process.platform === 'darwin'
+    ? 'On macOS, apps that capture with ScreenCaptureKit (recent Zoom/Teams) may still see this window — hide it (Ctrl+Alt+H) to be sure.'
+    : (process.platform === 'linux' ? 'Not available on Linux: no desktop API can hide a window from screen capture. Hide the window (Ctrl+Alt+H) while sharing.' : ''),
+  clickThrough: process.platform !== 'linux' || LINUX_X11_SESSION,
+}));
 ipcMain.handle('set-stealth', (_e, value) => setStealth(value));
 ipcMain.handle('get-stealth', () => state.stealth);
 ipcMain.handle('set-click-through', (_e, value) => setClickThrough(value));

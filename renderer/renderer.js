@@ -1051,6 +1051,17 @@ document.addEventListener("keydown", (e) => {
 showModeSelect();
 
 window.api.onOpacityChanged((v) => updateFill(v));
+// Linux: the window is transparent and opacity is applied to the page itself.
+if (window.api.onOpacityCss) window.api.onOpacityCss((v) => { document.documentElement.style.opacity = String(v); });
+// Grey out controls the OS cannot support, with an explanation.
+if (window.api.getPlatformCaps) {
+  window.api.getPlatformCaps().then((caps) => {
+    if (!caps) return;
+    if (!caps.stealth && stealthBtn) { stealthBtn.disabled = true; stealthBtn.classList.add("btn--unsupported"); stealthBtn.title = caps.stealthNote || "Not available on this system"; }
+    else if (caps.stealthNote && stealthBtn) stealthBtn.title = "Toggle stealth (hidden from screen capture). " + caps.stealthNote;
+    if (!caps.clickThrough && clickThroughBtn) { clickThroughBtn.disabled = true; clickThroughBtn.classList.add("btn--unsupported"); clickThroughBtn.title = "Click-through is not available on Wayland (Linux); it works in an X11 session."; }
+  }).catch(() => {});
+}
 window.api.onStealthChanged((v) => updateStealth(v));
 window.api.getOpacity().then(updateFill);
 window.api.getStealth().then(updateStealth);
