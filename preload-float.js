@@ -5,4 +5,5 @@ contextBridge.exposeInMainWorld('floatApi', {
   dragStart: () => ipcRenderer.invoke('float-drag-start'),
   dragEnd: () => ipcRenderer.invoke('float-drag-end'),
   onState: (cb) => ipcRenderer.on('float-state', (_e, visible) => cb(visible)),
+  onCaps: (cb) => ipcRenderer.on('float-caps', (_e, caps) => cb(caps)),
 });
