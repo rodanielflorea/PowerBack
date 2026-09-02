@@ -336,6 +336,7 @@ function showProfile() {
 
 // Stage 1 — the New/Continue chooser shown on launch and after ending a session.
 function showModeSelect() {
+  if (typeof setResumeMode === "function") setResumeMode(null);
   if (settingsOverlay) settingsOverlay.hidden = true;
   hideAllSetupOverlays();
   if (modeSelectOverlay) modeSelectOverlay.hidden = false;
@@ -541,6 +542,7 @@ const modeSelectSettingsBtn = document.getElementById("modeSelectSettingsBtn");
 if (modeNewBtn) modeNewBtn.addEventListener("click", async () => {
   // Start fresh: clear any carried-over materials (profile is still pre-filled).
   if (window.api.kbClear) await window.api.kbClear();
+  setResumeMode(null);
   showStage();
 });
 if (modeContinueBtn) modeContinueBtn.addEventListener("click", () => showContinue());
@@ -569,6 +571,88 @@ for (const id of ["stageSettingsBtn", "profileSettingsBtn"]) {
   const b = document.getElementById(id);
   if (b) b.addEventListener("click", () => openSettings());
 }
+// ── Session history: resume a saved interview from the materials step ────────
+let resumeSessionId = null;
+const historyOverlay = document.getElementById("historyOverlay");
+const historyList = document.getElementById("historyList");
+const historySearch = document.getElementById("historySearch");
+const historyEmpty = document.getElementById("historyEmpty");
+let _historyItems = [];
+
+function setResumeMode(id) {
+  resumeSessionId = id || null;
+  if (setupStartBtnV) setupStartBtnV.textContent = resumeSessionId ? "Resume interview" : "Start interview";
+  const title = setupOverlay && setupOverlay.querySelector(".setup-title");
+  if (title) title.textContent = resumeSessionId ? "Materials · resume" : "Materials";
+}
+
+function renderHistory() {
+  if (!historyList) return;
+  const q = (historySearch && historySearch.value.trim().toLowerCase()) || "";
+  const items = _historyItems.filter((s) => {
+    if (!q) return true;
+    const p = s.profile || {};
+    return [s.company, s.position, s.name, p.name, p.timezone, p.city, p.country].join(" ").toLowerCase().includes(q);
+  });
+  historyList.innerHTML = "";
+  if (historyEmpty) historyEmpty.hidden = items.length > 0;
+  if (historyEmpty && !items.length && _historyItems.length) historyEmpty.textContent = "Nothing matches your search.";
+  if (historyEmpty && !_historyItems.length) historyEmpty.textContent = "No saved interviews yet. A session is saved when you end an interview.";
+  const esc = (t) => String(t || "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+  items.forEach((s) => {
+    const p = s.profile || {};
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "history-item";
+    const head = [s.company, s.position].filter(Boolean).map(esc).join(" · ");
+    const when = s.updatedAt ? new Date(s.updatedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "";
+    b.innerHTML =
+      `<span class="history-title">${head || '<span class="history-untitled">Untitled interview</span>'}</span>` +
+      `<span class="history-meta">` +
+        (p.name ? `<span>👤 ${esc(p.name)}</span>` : "") +
+        (p.timezone ? `<span>🕒 ${esc(p.timezone)}</span>` : "") +
+        (when ? `<span>${esc(when)}</span>` : "") +
+        `<span>${s.turnCount || 0} turns</span>` +
+      `</span>`;
+    b.addEventListener("click", () => resumeFromHistory(s));
+    historyList.appendChild(b);
+  });
+}
+
+async function openHistory() {
+  if (!historyOverlay || !window.api.sessionList) return;
+  // Sessions that were started but never used (no turns, never ended) are noise.
+  _historyItems = ((await window.api.sessionList()) || []).filter((s) => s.company || s.position || (s.turnCount || 0) > 0);
+  if (historySearch) historySearch.value = "";
+  renderHistory();
+  historyOverlay.hidden = false;
+  if (historySearch) historySearch.focus();
+}
+function closeHistory() { if (historyOverlay) historyOverlay.hidden = true; }
+
+// Load the saved session's materials + profile and go to the materials step.
+async function resumeFromHistory(item) {
+  const data = await window.api.sessionLoad(item.id);
+  if (!data) return;
+  closeHistory();
+  fillProfileFields(data.profile || {});
+  const sal = item.salary || {};
+  const set = (id, v) => { const el = document.getElementById(id); if (el) { el.value = v; if (el._cselRefresh) el._cselRefresh(); } };
+  set("salaryAmount", sal.amount || "");
+  set("salaryCurrency", sal.currency || "USD");
+  set("salaryPeriod", sal.period || "month");
+  setResumeMode(item.id);
+  showSetup();
+}
+
+const historyBtn = document.getElementById("historyBtn");
+const historyCloseBtn = document.getElementById("historyCloseBtn");
+if (historyBtn) historyBtn.addEventListener("click", openHistory);
+if (historyCloseBtn) historyCloseBtn.addEventListener("click", closeHistory);
+if (historySearch) historySearch.addEventListener("input", renderHistory);
+if (historyOverlay) historyOverlay.addEventListener("click", (e) => { if (e.target === historyOverlay) closeHistory(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && historyOverlay && !historyOverlay.hidden) closeHistory(); });
+
 const welcomeHelpBtn = document.getElementById("welcomeHelpBtn");
 if (welcomeHelpBtn) welcomeHelpBtn.addEventListener("click", () => { openSettings(); if (typeof activateTab === "function") activateTab("help"); });
 
@@ -637,7 +721,13 @@ if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
     const profile = readProfileFields();
     const amount = Number(val("salaryAmount"));
     const salary = amount > 0 ? { amount, currency: val("salaryCurrency") || "USD", period: val("salaryPeriod") || "month" } : null;
-    if (window.api.sessionNew) await window.api.sessionNew({ profile, salary });
+    if (resumeSessionId && window.api.sessionResume) {
+      const data = await window.api.sessionResume(resumeSessionId, { profile, salary });
+      if (data) renderLoadedTurns(data.turns || []);
+      setResumeMode(null);
+    } else if (window.api.sessionNew) {
+      await window.api.sessionNew({ profile, salary });
+    }
     maybeOpenInfoWindow(profile);
   }
   hideSetup();
@@ -2139,12 +2229,19 @@ if (window.api.onAnswerConfigChanged) {
 
 // Manual mode — default Text; CODE/DIAGRAM force specific output format.
 let manualMode = 'ANSWER';
+// The typing-speed slider only matters for Write-to-IDE, i.e. Code answers.
+function syncSpeedSlider() {
+  const wrap = document.querySelector(".rail-speed-wrap");
+  if (wrap) wrap.hidden = manualMode !== "CODE";
+}
+syncSpeedSlider();
 if (modeSeg) {
   modeSeg.addEventListener('click', (e) => {
     const btn = e.target.closest('.mode-seg-btn');
     if (!btn) return;
     manualMode = btn.dataset.mode;
     modeSeg.querySelectorAll('.mode-seg-btn').forEach(b => b.classList.toggle('mode-seg-btn--active', b === btn));
+    syncSpeedSlider();
     _speculativeText = null;
     kickSpeculative(true);
   });
@@ -2694,6 +2791,7 @@ function setManualMode(mode) {
   manualMode = mode || 'ANSWER';
   if (modeSeg) modeSeg.querySelectorAll('.mode-seg-btn').forEach((b) =>
     b.classList.toggle('mode-seg-btn--active', b.dataset.mode === manualMode));
+  syncSpeedSlider();
 }
 
 // Resend (regenerate): re-submit the same question/images as a new turn, in

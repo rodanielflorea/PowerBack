@@ -33,7 +33,7 @@
     { screen: "welcome", target: "#modeSelectSettingsBtn", title: "Settings and guide",
       text: "The gear opens Settings: which audio to listen to, hotkeys, and the written user guide you can read any time." },
     { screen: "welcome", target: "#stealthBtn", title: "Staying invisible",
-      text: "The eye is Stealth: a crossed-out green eye means the app is hidden from screen sharing and recordings (Windows). Next to it: click-through, the − button to hide the window, and × to quit. The red stop icon at the left ends the interview. Bring a hidden window back with Ctrl+Alt+H or the round A button on your screen." },
+      text: "The eye is Stealth: a crossed-out green eye means the app is hidden from screen sharing and recordings (Windows). Next to it: click-through, the − button to hide the window, and × to quit. The red power icon next to them ends the interview. Bring a hidden window back with Ctrl+Alt+H or the round A button on your screen." },
     { screen: "stage", target: ".stage-cards", title: "Step 1 — what kind of call?",
       text: "Pick Intro, Technical, HR or CEO. This changes how every answer is written: simple and friendly for a recruiter, precise and factual for engineers, ownership and leadership for HR and CEO. Then press Next." },
     { screen: "profile", target: ".profile-inputs", title: "Step 2 — who you are",
@@ -70,30 +70,53 @@
   function place(step) {
     const target = step.target ? document.querySelector(step.target) : null;
     const vw = window.innerWidth, vh = window.innerHeight;
-    const cardW = Math.min(330, vw - 24);
+    const M = 12;
+    const cardW = Math.min(330, vw - 2 * M);
     card.style.width = cardW + "px";
-    const cardH = card.offsetHeight;
+    card.style.maxHeight = "";
     if (!target) {
       spot.hidden = true;
+      const cardH = card.offsetHeight;
       card.style.left = Math.round((vw - cardW) / 2) + "px";
-      card.style.top = Math.round(clamp((vh - cardH) / 2, 12, vh - cardH - 12)) + "px";
+      card.style.top = Math.round(clamp((vh - cardH) / 2, M, vh - cardH - M)) + "px";
       return;
     }
-    try { target.scrollIntoView({ block: "center", inline: "nearest" }); } catch {}
-    const r = target.getBoundingClientRect();
+    // Scroll the control into view first: to the top when it is tall, so the
+    // card can sit below it without hiding it.
+    let r = target.getBoundingClientRect();
+    const tall = r.height > vh * 0.5;
+    try { target.scrollIntoView({ block: tall ? "start" : "center", inline: "nearest" }); } catch {}
+    r = target.getBoundingClientRect();
     spot.hidden = false;
     spot.style.left = (r.left - 6) + "px";
     spot.style.top = (r.top - 6) + "px";
     spot.style.width = (r.width + 12) + "px";
     spot.style.height = (r.height + 12) + "px";
-    const below = r.bottom + 12;
-    const above = r.top - 12 - cardH;
+
+    // Pick the side with more free space and never cover the control:
+    // the card shrinks (and scrolls inside) to fit the space it is given.
+    const spaceBelow = vh - r.bottom - 8 - M;
+    const spaceAbove = r.top - 8 - M;
+    const natural = card.offsetHeight;
+    const MIN_CARD = 150;
     let top;
-    if (below + cardH <= vh - 12) top = below;
-    else if (above >= 12) top = above;
-    else top = clamp((vh - cardH) / 2, 12, vh - cardH - 12);
+    if (spaceBelow >= natural) {
+      top = r.bottom + 8;
+    } else if (spaceAbove >= natural) {
+      top = r.top - 8 - natural;
+    } else if (Math.max(spaceBelow, spaceAbove) >= MIN_CARD) {
+      const below = spaceBelow >= spaceAbove;
+      card.style.maxHeight = (below ? spaceBelow : spaceAbove) + "px";
+      const h = card.offsetHeight;
+      top = below ? r.bottom + 8 : r.top - 8 - h;
+    } else {
+      // Control fills the window: pin the card to the bottom edge, capped to
+      // 40% of the height, so the upper part of the control stays visible.
+      card.style.maxHeight = Math.round(vh * 0.4) + "px";
+      top = vh - M - card.offsetHeight;
+    }
     card.style.top = Math.round(top) + "px";
-    card.style.left = Math.round(clamp(r.left, 12, vw - cardW - 12)) + "px";
+    card.style.left = Math.round(clamp(r.left, M, vw - cardW - M)) + "px";
   }
 
   function render() {

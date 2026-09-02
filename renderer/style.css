@@ -137,8 +137,8 @@ html { background: var(--bg); }
 .clickthrough-btn.on  .cursor-body { fill: var(--amber); stroke: #92400e; }
 .clickthrough-btn.on  .cursor-through { display: inline; }
 /* End = small stop icon at the left of the bar. */
-.end-icon circle { fill: none; stroke: var(--rec-on); stroke-width: 2; }
-.end-icon rect { fill: var(--rec-on); }
+.end-icon { width: 16px; height: 16px; }
+.end-icon path { fill: none; stroke: var(--rec-on); stroke-width: 2.4; stroke-linecap: round; }
 #netStatusPill { display: none !important; }
 
 /* ── 5. RIGHT RAIL ─────────────────────────────────────────── */
@@ -540,8 +540,14 @@ body:not(.in-interview) .right-rail { display: none !important; }
 }
 
 .end-btn { width: 28px; margin: 0 2px 0 2px; }
+.app-logo {
+  -webkit-app-region: drag;
+  width: 18px; height: 18px; margin-left: 8px; border-radius: 5px; flex-shrink: 0;
+  background: var(--accent-grad); color: #fff;
+  font: 700 11px/18px system-ui, -apple-system, 'Segoe UI', sans-serif; text-align: center;
+  box-shadow: 0 1px 3px rgba(37,99,235,.35);
+}
 .end-btn:hover { background: rgba(220,38,38,.12); }
-body.in-interview .end-btn.live .end-icon rect { animation: endPulse 1.4s ease-in-out infinite; }
 @keyframes endPulse {
   0%,100% { opacity: 1; transform: scale(1); }
   50%      { opacity: 0.5; transform: scale(0.85); }
@@ -2606,9 +2612,10 @@ body.role-supporter .mode-toggle-btn { display: none !important; }
 .tour-spot[hidden] { display: none; }
 .tour-card {
   position: fixed; z-index: 61; box-sizing: border-box;
+  display: flex; flex-direction: column; overflow: hidden;
   background: var(--bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-lg);
-  padding: 12px 14px 12px;
+  padding: 10px 14px 10px;
   transition: left .2s var(--ease), top .2s var(--ease);
   -webkit-app-region: no-drag;
 }
@@ -2616,8 +2623,8 @@ body.role-supporter .mode-toggle-btn { display: none !important; }
 .tour-step { font-size: 11px; font-weight: 700; letter-spacing: .4px; color: var(--muted); text-transform: uppercase; }
 .tour-skip { font-size: 12px; font-weight: 500; color: var(--muted); }
 .tour-title { margin: 0 0 4px; font-size: 15px; font-weight: 700; letter-spacing: -0.2px; }
-.tour-text { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text); }
-.tour-check { display: flex; align-items: center; gap: 7px; margin-top: 12px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.tour-text { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--text); overflow-y: auto; min-height: 0; }
+.tour-check { display: flex; align-items: center; gap: 7px; margin-top: 8px; flex-shrink: 0; font-size: 12px; color: var(--muted); cursor: pointer; }
 .tour-check input { accent-color: var(--accent); }
 .tour-nav { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 10px; }
 .tour-back {
@@ -2626,3 +2633,25 @@ body.role-supporter .mode-toggle-btn { display: none !important; }
 }
 .tour-back:disabled { opacity: .4; cursor: default; }
 .tour-next { padding: 7px 16px; font-size: 13px; }
+
+/* ── Session history modal ─────────────────────────────────── */
+.history-icon { width: 16px; height: 16px; display: block; }
+.history-icon path { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.history-body { display: flex; flex-direction: column; gap: 10px; }
+.history-search { width: 100%; }
+.history-list { display: flex; flex-direction: column; gap: 8px; }
+.history-item {
+  -webkit-app-region: no-drag;
+  text-align: left; width: 100%;
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--bg); color: var(--text); box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease), transform var(--t) var(--ease);
+}
+.history-item:hover { border-color: rgba(37,99,235,.45); box-shadow: var(--shadow); transform: translateY(-1px); }
+.history-title { font-size: 14px; font-weight: 650; }
+.history-title .history-untitled { color: var(--muted); font-weight: 500; }
+.history-meta { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.history-empty { text-align: center; padding: 14px 0; }

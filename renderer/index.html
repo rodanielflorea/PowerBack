@@ -13,9 +13,7 @@
   </div>
 
   <header class="titlebar">
-    <button class="btn end-btn iv-btn" id="endBtn" title="End session — back to the start screen">
-      <svg class="end-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><rect x="8.5" y="8.5" width="7" height="7" rx="1.5" /></svg>
-    </button>
+    <div class="app-logo" title="RemoteDevJobsAce" aria-hidden="true">A</div>
     <span class="net-status-pill iv-btn" id="netStatusPill" hidden>--</span>
     <div class="drag"></div>
     <div class="slider" id="slider" title="Click and drag horizontally to change opacity">
@@ -37,6 +35,9 @@
     <!-- The "To A" mic-mode pill is retired (supporter mode is not offered); kept hidden for renderer bindings. -->
     <button class="btn mic-pill iv-btn" id="micPill" hidden>
       <span class="mic-pill-icon" id="micPillIcon">🔒</span><span class="mic-pill-label" id="micPillLabel">TO A</span>
+    </button>
+    <button class="btn end-btn iv-btn" id="endBtn" title="End session — back to the start screen">
+      <svg class="end-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 v9" /><path d="M6.4 6.4 a8 8 0 1 0 11.2 0" /></svg>
     </button>
     <button class="btn" id="hideBtn" title="Hide (Ctrl+Alt+H)">&minus;</button>
     <button class="btn" id="quitBtn" title="Quit">&times;</button>
@@ -76,17 +77,9 @@
 
       <div class="settings-tab" data-tab="apikeys">
         <section class="settings-section">
-          <h3>Transcription</h3>
+          <!-- Deepgram is the only engine; kept as a hidden input for existing bindings. -->
           <input type="radio" name="engine" value="deepgram" id="engineDeepgram" checked hidden />
-          <h3 class="settings-subhead">Call type</h3>
-          <p class="hint">1:1 hiring call. Transcription is one interviewer stream.</p>
-          <div class="field-row" id="hiringTypeRow">
-            <label class="radio"><input type="radio" name="hiringType" value="intro" id="hiringTypeIntro" /> Intro</label>
-            <label class="radio"><input type="radio" name="hiringType" value="technical" id="hiringTypeTechnical" /> Technical</label>
-            <label class="radio"><input type="radio" name="hiringType" value="ceo" id="hiringTypeCeo" /> CEO</label>
-            <label class="radio"><input type="radio" name="hiringType" value="hr" id="hiringTypeHr" /> HR</label>
-          </div>
-          <h3 class="settings-subhead">Audio sources</h3>
+          <h3>Audio sources</h3>
           <p class="hint">Choose what Voice mode transcribes. Microphone is your voice; system audio is meeting or speaker output (Zoom, Teams, browser). Enable one or both. Changes apply the next time you start transcription.</p>
           <div class="field-row tx-source-row">
             <label class="checkbox"><input type="checkbox" id="captureMic" /> Microphone</label>
@@ -335,8 +328,8 @@
             <tr><td>Microphone</td><td>Start / stop listening. Red and pulsing = listening. It starts by itself when the interview begins.</td></tr>
             <tr><td>Voice / OCR</td><td>Where questions come from: <i>Voice</i> listens to the call audio (normal). <i>OCR</i> reads text from an area of your screen instead — useful for written tests.</td></tr>
             <tr><td>Model letters</td><td>Choose which AI model writes the answers. The default is fine.</td></tr>
-            <tr><td>1 – 5 slider</td><td>Typing speed for <i>Write to IDE</i> (see below).</td></tr>
-            <tr><td>&#9209; (red, top-left)</td><td>End the interview and go back to the welcome screen.</td></tr>
+            <tr><td>1 – 5 slider</td><td>Typing speed for <i>Write to IDE</i> — only shown in <b>Code</b> mode.</td></tr>
+            <tr><td>Red power icon</td><td>End the interview and go back to the welcome screen.</td></tr>
             <tr><td>&minus;</td><td>Hide the app. Bring it back with <span class="kbd">Ctrl+Alt+H</span> or the round <b>A</b> button.</td></tr>
             <tr><td>&times;</td><td>Quit.</td></tr>
           </table>
@@ -425,6 +418,9 @@
     <div class="setup-card mode-select-card">
       <div class="setup-topbar">
         <span class="setup-topbar-spacer"></span>
+        <button class="setup-gear-btn" id="historyBtn" title="Session history — resume a saved interview">
+          <svg class="history-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12 a8.5 8.5 0 1 0 2.6 -6.1" /><path d="M3 4.5 v4.5 h4.5" /><path d="M12 8 v4.5 l3 2" /></svg>
+        </button>
         <button class="setup-gear-btn" id="modeSelectSettingsBtn" title="Settings &amp; user guide">&#9881;</button>
       </div>
       <div class="welcome-hero">
@@ -731,6 +727,21 @@
   <script src="lib/mermaid.min.js"></script>
   <script src="diagram-shared.js"></script>
   <script src="tooltip.js"></script>
+  <!-- Session history: pick a saved interview to resume -->
+  <section class="settings-overlay" id="historyOverlay" hidden>
+   <div class="settings-modal" role="dialog" aria-modal="true" aria-label="Session history">
+    <div class="settings-header">
+      <span>Session history</span>
+      <button class="btn" id="historyCloseBtn" title="Close">&times;</button>
+    </div>
+    <div class="settings-body history-body">
+      <input type="search" id="historySearch" class="profile-input history-search" placeholder="Search company, position, name, timezone…" spellcheck="false" />
+      <div class="history-list" id="historyList"></div>
+      <p class="hint history-empty" id="historyEmpty" hidden>No saved interviews yet. A session is saved when you end an interview.</p>
+    </div>
+   </div>
+  </section>
+
   <!-- First-run tour (renderer/tour.js) -->
   <div id="tour" hidden>
     <div class="tour-spot"></div>
