@@ -2066,7 +2066,8 @@ window.api.onCaptureText((text) => {
     return;
   }
   log("OCR: " + text);
-  appendToComposer(text);
+  // Same path as voice transcripts: an Interviewer bubble with retry/edit/remove.
+  applyMeetLine("Interviewer", text, 0, true);
   window.api.sessionLogAdd({ ts: Date.now(), kind: "ocr", text });
 });
 window.api.onCaptureError((msg) => log("OCR error: " + msg, "err"));
@@ -2608,21 +2609,29 @@ function addAnswerTurn(question, imgs, mode, ts) {
     qText.className = "answer-q-text";
     if (question) qText.textContent = question;
     q.appendChild(qText);
-    const qActions = document.createElement("div");
-    qActions.className = "answer-q-actions";
-    const editBtn = document.createElement("button");
-    editBtn.className = "answer-q-action";
-    editBtn.title = "Edit & resend";
-    editBtn.textContent = "✎";
-    editBtn.addEventListener("click", () => beginInlineEdit(q, question, imgs, turnMode));
-    const resendBtn = document.createElement("button");
-    resendBtn.className = "answer-q-action";
-    resendBtn.title = "Resend (regenerate)";
-    resendBtn.textContent = "↻";
-    resendBtn.addEventListener("click", () => resendTurn(question, imgs));
-    qActions.appendChild(editBtn);
-    qActions.appendChild(resendBtn);
-    q.appendChild(qActions);
+    // Header row above the bubble — same layout and buttons as transcript bubbles.
+    const head = document.createElement("div");
+    head.className = "meet-head answer-q-head";
+    const who = document.createElement("div");
+    who.className = "meet-who";
+    who.textContent = "You";
+    const actions = document.createElement("div");
+    actions.className = "meet-actions";
+    const mk = (cls, title, label, onClick) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "meet-clear " + cls; b.title = title; b.textContent = label;
+      b.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); onClick(); });
+      actions.appendChild(b);
+    };
+    mk("meet-retry", "Answer this again", "↻", () => resendTurn(question, imgs));
+    mk("meet-edit", "Edit this question, then answer", "✎", () => beginInlineEdit(q, question, imgs, turnMode));
+    mk("meet-remove", "Remove this question and its answer", "×", () => {
+      turn.remove();
+      if (answerHistory && !answerHistory.querySelector(".answer-turn, .meet-turn") && answerEmpty) answerEmpty.hidden = false;
+    });
+    head.appendChild(who);
+    head.appendChild(actions);
+    turn.appendChild(head);
     const qTime = document.createElement("div");
     qTime.className = "answer-time answer-time--q";
     qTime.textContent = fmtTime(turnTs);
@@ -3250,7 +3259,9 @@ const selectAreaRailBtn = document.getElementById("selectAreaRailBtn");
 function updateModeToggleBtn() {
   if (!modeToggleBtn) return;
   const isVoice = mode === "voice";
-  modeToggleBtn.textContent = isVoice ? "Voice" : "OCR";
+  modeToggleBtn.innerHTML = isVoice
+    ? '<svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 v0 M8 8 v8 M12 5 v14 M16 8 v8 M20 11 v2" /></svg>'
+    : '<svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8 V5 a1 1 0 0 1 1 -1 h3 M16 4 h3 a1 1 0 0 1 1 1 v3 M20 16 v3 a1 1 0 0 1 -1 1 h-3 M8 20 H5 a1 1 0 0 1 -1 -1 v-3 M7 10 h10 M7 14 h7" /></svg>';
   modeToggleBtn.classList.toggle("mode-voice", isVoice);
   modeToggleBtn.title = isVoice
     ? "Currently: Voice — click or Alt+D to switch to OCR mode"
