@@ -695,7 +695,7 @@ function setStealth(value) {
 // main window — for users who hid the app and do not know the hotkey. It is
 // created right after the license check and never hides with the main window.
 let floatWin = null;
-const FLOAT_SIZE = 54;
+const FLOAT_SIZE = 60;
 function floatDefaultPos() {
   const a = screen.getPrimaryDisplay().workArea;
   return { x: a.x + a.width - FLOAT_SIZE - 16, y: a.y + a.height - FLOAT_SIZE - 16 };
