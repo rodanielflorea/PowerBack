@@ -14,7 +14,7 @@
     "build:all": "npm run icon && electron-builder --win --linux --publish never",
     "admin:start": "electron license-admin",
     "admin:build": "electron-builder --projectDir license-admin --win portable --publish never",
-    "build:mac-zip": "npm run icon && electron-builder --mac zip --x64 --arm64 --publish never"
+    "build:mac-zip": "npm run icon && electron-builder --mac zip --universal --publish never"
   },
   "build": {
     "appId": "com.stealthsupport.app",
@@ -35,6 +35,7 @@
     "directories": {
       "output": "dist"
     },
+    "afterAllArtifactBuild": "scripts/add-mac-open-helper.js",
     "publish": [
       {
         "provider": "github",
@@ -88,21 +89,21 @@
         {
           "target": "dmg",
           "arch": [
-            "x64",
-            "arm64"
+            "universal"
           ]
         },
         {
           "target": "zip",
           "arch": [
-            "x64",
-            "arm64"
+            "universal"
           ]
         }
       ],
       "category": "public.app-category.productivity",
       "icon": "build/icon.png",
-      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "artifactName": "${productName}-${version}-mac.${ext}",
+      "type": "distribution",
+      "minimumSystemVersion": "12.0",
       "extendInfo": {
         "NSMicrophoneUsageDescription": "RemoteDevJobAce listens to your interview call to transcribe it.",
         "NSAppleEventsUsageDescription": "RemoteDevJobAce types answers and pastes text into other apps for you.",
@@ -110,12 +111,34 @@
       },
       "hardenedRuntime": true,
       "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist",
-      "gatekeeperAssess": false
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "gatekeeperAssess": false,
+      "notarize": true,
+      "mergeASARs": true,
+      "singleArchFiles": "**/node_modules/@napi-rs/**"
+    },
+    "dmg": {
+      "title": "${productName} ${version}",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     },
     "nsis": {
       "artifactName": "${productName}-${version}-setup.${ext}",
-      "oneClick": true
+      "oneClick": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "RemoteDevJobAce",
+      "runAfterFinish": true
     }
   },
   "dependencies": {

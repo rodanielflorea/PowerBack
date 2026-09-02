@@ -1,31 +1,28 @@
 # Building the macOS version (from a Windows PC)
 
-Two facts drive everything below:
+Gatekeeper rejects an **unsigned x86_64** app with the quarantine flag. The
+fix is a **universal** (Intel + Apple Silicon) `.app` that is **code-signed**
+and **notarized**, so the user path is:
 
-- A macOS **`.dmg`** can only be built **on macOS** (the dmg tooling and code
-  signing are macOS-only). electron-builder refuses everywhere else.
-- Windows itself cannot even assemble the mac `.app` bundle correctly (the
-  bundle contains symlinks that Windows breaks). Linux can, so on Windows the
-  local route goes through **WSL2 / Ubuntu**.
-
-So from a Windows PC you have two working routes.
+**Download → Move to Applications → Open**
 
 ---
 
-## Route 1 (recommended): real installers via GitHub Actions
+## What we ship
 
-Builds on a genuine macOS runner in the cloud. Produces `.dmg` + `.zip` for
-both Intel and Apple Silicon Macs. This is the only way to get a `.dmg`
-without owning a Mac.
+CI (`.github/workflows/build.yml`) builds on a real Mac runner:
 
-### One-time setup
+| File | What it is |
+|---|---|
+| `RemoteDevJobAce-<version>-mac.dmg` | Universal disk image (drag the app to Applications) |
+| `RemoteDevJobAce-<version>-mac.zip` | Same app as a zip (auto-update + unsigned fallback) |
 
-```powershell
-winget install GitHub.cli
-gh auth login        # GitHub.com → HTTPS → Login with a web browser
-```
+One DMG runs natively on Intel **and** M1 / M2 / M3 / M4. Do not send the old
+`-x64.dmg` / `-arm64.dmg` pair.
 
-### Each release
+---
+
+## Route 1: GitHub Actions (`build-all.bat`)
 
 ```powershell
 git checkout main
@@ -33,82 +30,77 @@ git pull
 build-all.bat
 ```
 
-`build-all.bat` pushes the branch, starts the CI build for Windows, Linux and
-macOS, waits (about 5–10 minutes) and downloads every installer into
-`dist\all-os\`. The macOS files to hand out:
+Installers land in `dist\all-os\`. Give Mac users the **`-mac.dmg`**.
 
-| File | For |
+### Signing and notarization (required for double-click Open)
+
+Join the [Apple Developer Program](https://developer.apple.com/programs/)
+(USD 99 / year). Create a **Developer ID Application** certificate (not Mac
+App Store). Then add these GitHub Actions secrets
+(`Settings → Secrets and variables → Actions`):
+
+| Secret | Value |
 |---|---|
-| `RemoteDevJobAce-<version>-arm64.dmg` | Macs with Apple Silicon (M1 / M2 / M3 / M4) |
-| `RemoteDevJobAce-<version>-x64.dmg` | Intel Macs |
-| `RemoteDevJobAce-<version>-arm64.zip`, `-x64.zip` | same app as a plain archive |
+| `MAC_CSC_LINK` | Base64 of the exported `.p12` (`certutil -encode cert.p12 -` on Windows, or `base64 -i cert.p12` on macOS) |
+| `MAC_CSC_KEY_PASSWORD` | Password of that `.p12` |
+| `APPLE_ID` | Apple ID email |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password from [appleid.apple.com](https://appleid.apple.com) |
+| `APPLE_TEAM_ID` | 10-character Team ID |
 
-Alternative that also creates a GitHub release with the files attached (this is
-what the in-app auto-updater reads):
+Or, instead of Apple ID + app password, an App Store Connect API key:
+
+| Secret | Value |
+|---|---|
+| `APPLE_API_KEY` | Base64 of the `.p8` key |
+| `APPLE_API_KEY_ID` | Key ID |
+| `APPLE_API_ISSUER` | Issuer ID |
+| `APPLE_TEAM_ID` | Team ID |
+
+Rebuild after the secrets are in place. Without them CI still produces a
+universal app, but macOS will quarantine it and show “damaged” / “cannot
+verify the developer.”
+
+### Tag a release (also feeds the in-app updater)
 
 ```powershell
 git tag v2.2.0
 git push origin --tags
 ```
 
-The build can also be started by hand: GitHub → **Actions** → **Build
-installers** → **Run workflow**. Artifacts appear at the bottom of the run page.
-
 ---
 
-## Route 2: unsigned `.zip` built locally (WSL2 / Ubuntu)
-
-Good for quick checks. Output is the `.app` inside a `.zip`, unsigned.
-
-### One-time setup
-
-```powershell
-wsl --install -d Ubuntu     # reboot, then open "Ubuntu" from the Start menu
-```
-
-Inside the Ubuntu terminal:
+## Route 2: unsigned `.zip` from WSL2 / Ubuntu (dev only)
 
 ```bash
-sudo apt update && sudo apt install -y nodejs npm git
-```
-
-### Each build (inside the Ubuntu terminal)
-
-```bash
-cd "/mnt/e/AI BOT/support"   # your repo; Windows drives are under /mnt/<letter>
+cd "/mnt/e/AI BOT/support"
 npm install
 npm run build:mac-zip
 ```
 
-Output: `dist/RemoteDevJobAce-<version>-x64.zip` and `-arm64.zip`.
+Output: `dist/RemoteDevJobAce-<version>-mac.zip`. Not signed, not notarized.
 
 ---
 
-## What Mac users must do after installing (either route)
+## What Mac users do
 
-The app is not code-signed, so macOS blocks the first launch once.
+**Signed + notarized build:**
 
-1. Move `RemoteDevJobAce.app` to **Applications**.
-2. First launch: **right-click the app → Open → Open**. (Not double-click.)
-   If macOS says the app is *damaged*, run in Terminal:
-   `xattr -d com.apple.quarantine /Applications/RemoteDevJobAce.app`
-3. Allow the permissions macOS asks for — **Microphone**, **Accessibility**
-   (typing / pasting into other apps) and **Screen Recording** (OCR mode) —
-   in System Settings → Privacy & Security.
-4. To hear the interviewer, install a virtual audio device such as
-   **BlackHole** and pick it in Settings → Audio sources. macOS gives apps no
-   direct system-audio capture.
+1. Download `RemoteDevJobAce-*-mac.dmg`.
+2. Open it, drag **RemoteDevJobAce** onto **Applications**.
+3. Open it from Applications.
 
-Known macOS limits: the Stealth shield works against most apps, but recent
-Zoom / Teams versions capture with Apple's ScreenCaptureKit and may still see
-the window — hide the window (Ctrl+Alt+H or the round A button) while sharing.
+**Unsigned / not notarized build** (until the secrets above are set):
 
----
+1. Prefer the `.zip`. Unzip and double-click **OPEN.command**.
+2. Or after dragging to Applications:
+   `xattr -cr /Applications/RemoteDevJobAce.app`
+   then right-click the app → **Open**.
 
-## Removing the "unsigned" warnings (optional, later)
+First launch is the license window (**Activate this computer**). Closing it
+quits the app.
 
-Join the Apple Developer Program (USD 99 / year). With a **Developer ID
-Application** certificate and an app-specific password, signing and
-notarization can be added to the CI workflow (`.github/workflows/build.yml`)
-as repository secrets. After that the `.dmg` installs with a normal
-double-click and no warnings.
+Allow **Microphone**, **Accessibility**, and **Screen Recording** when macOS
+asks. System audio needs a virtual device such as **BlackHole**.
+
+Known limit: recent Zoom / Teams using ScreenCaptureKit may still see the
+window — hide it (Ctrl+Alt+H) while sharing.

@@ -31,3 +31,6 @@ build/
 out/
 !build/icon-source.png
 !build/entitlements.mac.plist
+!build/entitlements.mac.inherit.plist
+!build/mac-open.command
+!build/MAC-README.txt

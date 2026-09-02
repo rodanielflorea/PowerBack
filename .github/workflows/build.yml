@@ -30,13 +30,52 @@ jobs:
           node-version: 22
       - run: npm ci
       - run: npm run icon
-      # On tag pushes the artifacts are also attached to a GitHub release,
-      # which is what electron-updater checks at runtime.
-      - run: npx electron-builder ${{ matrix.args }} --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
+
+      # Windows / Linux: never look for a code-signing identity.
+      - name: Build Windows / Linux
+        if: matrix.os != 'macos-latest'
+        run: npx electron-builder ${{ matrix.args }} --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # No signing certificates configured; build unsigned.
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # macOS: universal (x86_64 + arm64) .dmg + .zip.
+      # If MAC_CSC_LINK is set (Developer ID Application .p12, base64),
+      # electron-builder signs with that identity. If APPLE_ID +
+      # APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID (or the App Store
+      # Connect API key trio) are also set, it notarizes and staples.
+      # With no cert, a universal ad-hoc build is still produced; Gatekeeper
+      # will block it until the user right-clicks Open or runs xattr.
+      - name: Build macOS (universal, sign + notarize when secrets exist)
+        if: matrix.os == 'macos-latest'
+        run: |
+          if [ -n "$CSC_LINK" ]; then
+            echo "Developer ID cert present — will sign"
+          else
+            echo "No MAC_CSC_LINK secret — unsigned/ad-hoc universal build"
+            unset CSC_LINK CSC_KEY_PASSWORD
+          fi
+          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            echo "Notarization credentials present — will notarize"
+          elif [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_KEY_ID" ] && [ -n "$APPLE_API_ISSUER" ]; then
+            echo "App Store Connect API key present — will notarize"
+          else
+            echo "No notarization credentials — Gatekeeper will still warn"
+            unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            unset APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER
+          fi
+          npx electron-builder --mac --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+
       - uses: actions/upload-artifact@v4
         with:
           name: installers-${{ matrix.os }}
