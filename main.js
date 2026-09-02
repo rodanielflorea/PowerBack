@@ -12,6 +12,7 @@ const {
   streamChat, completeChat, listModels,
   friendlyAnswerError, modelAbbr,
 } = require('./llm-providers');
+const { createKeyInjector, pasteKeystroke } = require('./platform-input');
 let autoUpdater = null;
 try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
 let officeParser = null;
@@ -504,7 +505,8 @@ function createWindow() {
   });
   session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
-      if (sources[0]) callback({ video: sources[0], audio: 'loopback' });
+      // Chromium supports system-audio loopback capture only on Windows.
+      if (sources[0]) callback({ video: sources[0], audio: process.platform === 'win32' ? 'loopback' : undefined });
       else callback({});
     });
   }, { useSystemPicker: false });
@@ -1021,15 +1023,14 @@ function pushChatToSticky(msg) {
 let pasteQueue = Promise.resolve();
 function pasteToForeground(text) {
   if (!text || !text.trim()) return Promise.resolve();
-  pasteQueue = pasteQueue.then(() => new Promise((resolve) => {
+  pasteQueue = pasteQueue.then(async () => {
     clipboard.writeText(text);
-    const ps = spawn('powershell.exe', [
-      '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command',
-      'Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait("^v")',
-    ], { windowsHide: true });
-    ps.on('exit', () => resolve());
-    ps.on('error', () => resolve());
-  }));
+    const r = await pasteKeystroke();
+    if (!r.ok && win) {
+      win.webContents.send('capture-error',
+        `Paste: ${r.error || 'failed'} — the text is on the clipboard, press Ctrl+V manually.`);
+    }
+  });
   return pasteQueue;
 }
 
@@ -1065,7 +1066,7 @@ function enqueueTranscribe(wavBuffer) {
   return transcribeQueue;
 }
 
-function runOcr(rect, language) {
+function runOcrCapture2Text(rect, language) {
   return new Promise((resolve, reject) => {
     const sf = rect.scaleFactor || 1;
     const x1 = Math.round(rect.x1 * sf);
@@ -1087,6 +1088,72 @@ function runOcr(rect, language) {
       else reject(new Error(`OCR exit ${code}: ${err.slice(-200)}`));
     });
   });
+}
+
+// Full language names (Capture2Text style, stored in state) -> tesseract codes.
+const TESSERACT_LANGS = {
+  English: 'eng', Russian: 'rus', Japanese: 'jpn', Chinese: 'chi_sim',
+  Spanish: 'spa', French: 'fra', German: 'deu', Portuguese: 'por',
+  Italian: 'ita', Dutch: 'nld', Turkish: 'tur', Polish: 'pol',
+  Arabic: 'ara', Korean: 'kor',
+};
+
+let tesseractAvailable = null;
+function hasTesseract() {
+  if (tesseractAvailable === null) {
+    try {
+      require('child_process').execFileSync('tesseract', ['--version'], { stdio: 'ignore' });
+      tesseractAvailable = true;
+    } catch { tesseractAvailable = false; }
+  }
+  return tesseractAvailable;
+}
+
+// Cross-platform OCR: grab the capture rect from the screen via desktopCapturer
+// and feed it to the tesseract CLI. Used everywhere the bundled Windows
+// Capture2Text exe is not available.
+async function runOcrTesseract(rect, language) {
+  if (!hasTesseract()) {
+    const hint = process.platform === 'darwin' ? 'brew install tesseract' : 'sudo apt install tesseract-ocr';
+    throw new Error(`tesseract not installed (${hint})`);
+  }
+  const display = screen.getDisplayNearestPoint({ x: Math.round(rect.x1), y: Math.round(rect.y1) });
+  const dsf = display.scaleFactor || 1;
+  const thumbW = Math.round(display.bounds.width * dsf);
+  const thumbH = Math.round(display.bounds.height * dsf);
+  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: thumbW, height: thumbH } });
+  const source = sources.find((s) => String(s.display_id) === String(display.id)) || sources[0];
+  if (!source) throw new Error('no screen source available for capture');
+  const crop = {
+    x: Math.max(0, Math.round((rect.x1 - display.bounds.x) * dsf)),
+    y: Math.max(0, Math.round((rect.y1 - display.bounds.y) * dsf)),
+    width: Math.max(1, Math.round((rect.x2 - rect.x1) * dsf)),
+    height: Math.max(1, Math.round((rect.y2 - rect.y1) * dsf)),
+  };
+  crop.width = Math.min(crop.width, thumbW - crop.x);
+  crop.height = Math.min(crop.height, thumbH - crop.y);
+  const png = source.thumbnail.crop(crop).toPNG();
+  const tmp = path.join(app.getPath('temp'), `ace-ocr-${process.pid}.png`);
+  fs.writeFileSync(tmp, png);
+  const lang = TESSERACT_LANGS[language] || 'eng';
+  return new Promise((resolve, reject) => {
+    const p = spawn('tesseract', [tmp, 'stdout', '-l', lang, '--psm', '6']);
+    let out = '';
+    let err = '';
+    p.stdout.on('data', (d) => { out += d.toString(); });
+    p.stderr.on('data', (d) => { err += d.toString(); });
+    p.on('error', reject);
+    p.on('exit', (code) => {
+      try { fs.unlinkSync(tmp); } catch {}
+      if (code === 0) resolve(out.replace(/\r/g, '').trim());
+      else reject(new Error(`tesseract exit ${code}: ${err.slice(-200)}`));
+    });
+  });
+}
+
+function runOcr(rect, language) {
+  if (process.platform === 'win32' && fs.existsSync(CAPTURE_EXE)) return runOcrCapture2Text(rect, language);
+  return runOcrTesseract(rect, language);
 }
 
 let ocrInFlight = false;
@@ -2145,7 +2212,7 @@ let ideTypingActive = false;
 let ideTypingPaused = false;   // manual pause
 let ideFocusPaused = false;    // auto-pause when our window gains focus
 let ideUserPaused = false;     // take-over auto-pause when the user moves the mouse
-let ideTypingProc = null;
+let ideInjector = null;
 let ideTypingCancelled = false;
 function notifyTypingState() {
   const payload = { paused: ideTypingPaused || ideFocusPaused || ideUserPaused, active: ideTypingActive };
@@ -2153,10 +2220,10 @@ function notifyTypingState() {
 }
 // Hard stop: cancel the loop and kill the PowerShell session immediately.
 function stopIdeTyping() {
-  if (!ideTypingActive && !ideTypingProc) return;
+  if (!ideTypingActive && !ideInjector) return;
   ideTypingCancelled = true;
   ideTypingPaused = false;
-  if (ideTypingProc) { try { ideTypingProc.kill(); } catch {} ideTypingProc = null; }
+  if (ideInjector) { try { ideInjector.dispose(); } catch {} ideInjector = null; }
   notifyTypingState();
 }
 
@@ -3307,7 +3374,7 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor, stripIndent } = {
 
   // Cancel any still-running session
   ideTypingCancelled = true;
-  if (ideTypingProc) { try { ideTypingProc.kill(); } catch {} ideTypingProc = null; }
+  if (ideInjector) { try { ideInjector.dispose(); } catch {} ideInjector = null; }
   await new Promise(r => setTimeout(r, 80));
 
   ideTypingActive    = true;
@@ -3327,17 +3394,19 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor, stripIndent } = {
   // Pause automatically whenever the user moves the mouse (take-over).
   startCursorTakeover();
 
-  // Persistent PS session — reads stdin line-by-line, executes immediately
-  const proc = spawn('powershell.exe',
-    ['-NonInteractive', '-ExecutionPolicy', 'Bypass', '-NoProfile', '-Command', '-'],
-    { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] }
-  );
-  ideTypingProc = proc;
+  // Per-platform key injector (PowerShell SendKeys on Windows, osascript on
+  // macOS, xdotool/ydotool/wtype on Linux) — see platform-input.js.
+  const injector = createKeyInjector();
+  const teardownEarly = (error) => {
+    if (win) { win.off('focus', onWinFocus); win.off('blur', onWinBlur); }
+    ideTypingActive = false; ideTypingPaused = false; ideFocusPaused = false;
+    stopCursorTakeover();
+    notifyTypingState();
+    return { ok: false, error };
+  };
+  if (injector.error) return teardownEarly(injector.error);
+  ideInjector = injector;
 
-  const psWrite = (line) => new Promise(res => {
-    if (proc.killed || proc.stdin.destroyed) return res();
-    proc.stdin.write(line + '\n', () => res());
-  });
   // Node.js delay scaled by speed factor
   const nd = (lo, hi) => new Promise(r =>
     setTimeout(r, Math.max(10, Math.round((lo + Math.random() * (hi - lo)) * sf)))
@@ -3348,21 +3417,8 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor, stripIndent } = {
       await new Promise(r => setTimeout(r, 80));
   };
 
-  // Init WScript.Shell and wait for sentinel so first SendKeys fires only after init
-  await psWrite('Add-Type -AssemblyName System.Windows.Forms; $wsh = New-Object -ComObject WScript.Shell; Write-Host "ACE_READY"');
-  await new Promise(resolve => {
-    const onData = d => { if (String(d).includes('ACE_READY')) { proc.stdout.off('data', onData); resolve(); } };
-    proc.stdout.on('data', onData);
-    setTimeout(resolve, 2000); // fallback
-  });
-
-  // ── Key helpers ───────────────────────────────────────────────────────────
-  const SENDKEY_MAP = {
-    '\n':'{ENTER}','{':'{{}'  ,'}':'{}}'  ,
-    '+':'{+}'     ,'^':'{^}'  ,'%':'{%}'  ,'~':'{~}',
-    '(': '{(}', ')': '{)}',
-  };
-  const toToken = ch => SENDKEY_MAP[ch] || ch;
+  const initRes = await injector.init();
+  if (!initRes.ok) { ideInjector = null; try { injector.dispose(); } catch {} return teardownEarly(initRes.error || 'key injector failed to start'); }
   const ADJ = {
     a:'sq',b:'vgn',c:'xdv',d:'sfe',e:'wrd',f:'dge',g:'fht',h:'gjy',i:'uko',
     j:'hkn',k:'jlm',l:'kop',m:'nk', n:'bmh',o:'ilp',p:'ol', q:'wa', r:'eft',
@@ -3373,12 +3429,13 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor, stripIndent } = {
   const isWordChar = ch => /[a-zA-Z0-9_]/.test(ch);
 
   const sendKey = async (ch, lo, hi) => {
-    await psWrite(`$wsh.SendKeys('${toToken(ch).replace(/'/g, "''")}')`);
+    if (ch === '\n') await injector.special('ENTER');
+    else await injector.char(ch);
     await nd(lo, hi);
   };
-  const sendBS = async () => { await psWrite(`$wsh.SendKeys('{BACKSPACE}')`); await nd(55, 105); };
+  const sendBS = async () => { await injector.special('BACKSPACE'); await nd(55, 105); };
   const sendArrow = async (dir, n) => {                  // dir: 'LEFT' | 'RIGHT'
-    for (let i = 0; i < n; i++) { await psWrite(`$wsh.SendKeys('{${dir}}')`); await nd(40, 85); }
+    for (let i = 0; i < n; i++) { await injector.special(dir); await nd(40, 85); }
   };
   // Neutralize editor auto-indent (VS Code etc.): after a newline the editor may
   // insert leading whitespace. We select the whole new line back to column 0
@@ -3387,8 +3444,8 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor, stripIndent } = {
   // not), so our literal indentation is always authoritative — no double-indent.
   const clearAutoIndent = async () => {
     if (!doStripIndent) return;
-    await psWrite(`$wsh.SendKeys('{HOME}')`); await nd(25, 55);
-    await psWrite(`$wsh.SendKeys('+{END}')`); await nd(25, 55); // +{END} = Shift+End (select to line end)
+    await injector.special('HOME'); await nd(25, 55);
+    await injector.special('SHIFT_END'); await nd(25, 55); // Shift+End (select to line end)
   };
 
   // ── Typing loop ───────────────────────────────────────────────────────────
@@ -3470,8 +3527,8 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor, stripIndent } = {
   ideTypingActive = false; ideTypingPaused = false; ideFocusPaused = false;
   stopCursorTakeover();
   notifyTypingState();
-  try { proc.stdin.end(); } catch {}
-  ideTypingProc = null;
+  try { injector.dispose(); } catch {}
+  ideInjector = null;
   return { ok: !ideTypingCancelled, cancelled: ideTypingCancelled };
 });
 

@@ -8,7 +8,10 @@
     "icon": "node scripts/generate-icon.js",
     "pack": "npm run icon && electron-builder --dir",
     "build": "npm run icon && electron-builder --win portable",
-    "build:installer": "npm run icon && electron-builder --win nsis"
+    "build:installer": "npm run icon && electron-builder --win nsis",
+    "build:linux": "npm run icon && electron-builder --linux --publish never",
+    "build:mac": "npm run icon && electron-builder --mac --publish never",
+    "build:all": "npm run icon && electron-builder --win --linux --publish never"
   },
   "build": {
     "appId": "com.stealthsupport.app",
@@ -21,16 +24,8 @@
       "renderer/**/*",
       "build/icon.png",
       "build/icon.ico",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "caption2text",
-        "to": "caption2text",
-        "filter": [
-          "**/*"
-        ]
-      }
+      "package.json",
+      "platform-input.js"
     ],
     "directories": {
       "output": "dist"
@@ -38,19 +33,60 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "YOUR_GITHUB_USERNAME",
-        "repo": "stealth-support"
+        "owner": "rodanielflorea",
+        "repo": "PowerBack"
       }
     ],
     "win": {
       "target": [
-        "portable"
+        "portable",
+        "nsis"
       ],
       "icon": "build/icon.ico",
-      "artifactName": "${productName}-${version}-portable.${ext}"
+      "artifactName": "${productName}-${version}-portable.${ext}",
+      "extraResources": [
+        {
+          "from": "caption2text",
+          "to": "caption2text",
+          "filter": [
+            "**/*"
+          ]
+        }
+      ]
     },
     "portable": {
       "artifactName": "${productName}-${version}-portable.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "icon": "build/icon.png",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
     }
   },
   "dependencies": {
@@ -64,5 +100,9 @@
     "electron-builder": "^25.0.0",
     "png-to-ico": "^3.0.1",
     "sharp": "^0.34.5"
+  },
+  "author": {
+    "name": "PowerBack",
+    "email": "joao.azevedo.314@proton.me"
   }
 }
