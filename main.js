@@ -108,9 +108,9 @@ const DEFAULT_STATE = {
   // Answer generation: provider + per-provider keys/models. `apiKey` is the
   // legacy xAI key (kept so older state.json files still load).
   answer: {
-    provider: 'xai',
+    provider: 'openai',
     apiKey: '',
-    model: 'grok-4.20-0309-non-reasoning',
+    model: 'gpt-4o',
     keys: { xai: '', anthropic: '', openai: '' },
     models: {
       xai: 'grok-4.20-0309-non-reasoning',
@@ -442,7 +442,7 @@ function migrateAnswerConfig() {
 
   if (!a.provider || !PROVIDERS[a.provider]) {
     const withKey = ['openai', 'anthropic', 'xai'].find((id) => String((prevKeys[id] || a.keys[id] || '')).trim());
-    a.provider = withKey || 'xai';
+    a.provider = withKey || 'openai';
   }
 
   if (!a.keys.xai && a.apiKey) a.keys.xai = a.apiKey;
@@ -2849,7 +2849,7 @@ function getAnswerApiKey(providerId) {
 
 function getAnswerModel(providerId) {
   const id = providerId || getAnswerProvider().id;
-  const currentProvider = (state.answer && state.answer.provider) || 'xai';
+  const currentProvider = (state.answer && state.answer.provider) || 'openai';
   if (id === currentProvider && state.answer && state.answer.model) {
     return state.answer.model;
   }
@@ -2891,9 +2891,9 @@ function applyAnswerConfig(cfg) {
   if (next.keys && next.keys.xai !== undefined) next.apiKey = next.keys.xai;
   delete next.activePromptId;
 
-  const nextProvider = (cfg.provider && PROVIDERS[cfg.provider]) ? cfg.provider : (next.provider || 'xai');
-  if (nextProvider !== (prev.provider || 'xai')) {
-    const oldId = prev.provider || 'xai';
+  const nextProvider = (cfg.provider && PROVIDERS[cfg.provider]) ? cfg.provider : (next.provider || 'openai');
+  if (nextProvider !== (prev.provider || 'openai')) {
+    const oldId = prev.provider || 'openai';
     next.models = { ...(next.models || {}), [oldId]: prev.model || getAnswerModel(oldId) };
     next.provider = nextProvider;
     next.model = (next.models && next.models[nextProvider]) || getProvider(nextProvider).defaultModel;
