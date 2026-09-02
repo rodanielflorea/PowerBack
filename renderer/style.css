@@ -548,7 +548,6 @@ body:not(.in-interview) .right-rail { display: none !important; }
   box-shadow: 0 1px 3px rgba(37,99,235,.35);
 }
 .end-btn:hover { background: rgba(220,38,38,.12); }
-body.in-interview .end-btn.live .end-icon path { animation: endPulse 1.4s ease-in-out infinite; }
 @keyframes endPulse {
   0%,100% { opacity: 1; transform: scale(1); }
   50%      { opacity: 0.5; transform: scale(0.85); }
