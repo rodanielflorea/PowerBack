@@ -137,8 +137,8 @@ html { background: var(--bg); }
 .clickthrough-btn.on  .cursor-body { fill: var(--amber); stroke: #92400e; }
 .clickthrough-btn.on  .cursor-through { display: inline; }
 /* End = small stop icon at the left of the bar. */
-.end-icon { width: 18px; height: 18px; }
-.end-icon path { fill: var(--rec-on); }
+.end-icon { width: 16px; height: 16px; }
+.end-icon path { fill: none; stroke: var(--rec-on); stroke-width: 2.4; stroke-linecap: round; }
 #netStatusPill { display: none !important; }
 
 /* ── 5. RIGHT RAIL ─────────────────────────────────────────── */

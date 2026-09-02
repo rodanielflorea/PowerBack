@@ -33,7 +33,7 @@
     { screen: "welcome", target: "#modeSelectSettingsBtn", title: "Settings and guide",
       text: "The gear opens Settings: which audio to listen to, hotkeys, and the written user guide you can read any time." },
     { screen: "welcome", target: "#stealthBtn", title: "Staying invisible",
-      text: "The eye is Stealth: a crossed-out green eye means the app is hidden from screen sharing and recordings (Windows). Next to it: click-through, the − button to hide the window, and × to quit. The red hang-up phone next to them ends the interview. Bring a hidden window back with Ctrl+Alt+H or the round A button on your screen." },
+      text: "The eye is Stealth: a crossed-out green eye means the app is hidden from screen sharing and recordings (Windows). Next to it: click-through, the − button to hide the window, and × to quit. The red power icon next to them ends the interview. Bring a hidden window back with Ctrl+Alt+H or the round A button on your screen." },
     { screen: "stage", target: ".stage-cards", title: "Step 1 — what kind of call?",
       text: "Pick Intro, Technical, HR or CEO. This changes how every answer is written: simple and friendly for a recruiter, precise and factual for engineers, ownership and leadership for HR and CEO. Then press Next." },
     { screen: "profile", target: ".profile-inputs", title: "Step 2 — who you are",
