@@ -118,6 +118,35 @@ function renderHolidaysAndEvents(data) {
   }
 }
 
+// CV summary pushed by main: { work: [{company, location, period, role, mode}], education: [{school, degree, period}] }
+const elWork = document.getElementById('infoWork');
+const elEdu = document.getElementById('infoEdu');
+function esc(t) { return String(t || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function renderCv(cv) {
+  if (!elWork || !elEdu) return;
+  if (cv === undefined) { elWork.innerHTML = LOADING; elEdu.innerHTML = LOADING; return; }
+  if (!cv) {
+    elWork.innerHTML = '<span class="info-dim">Upload a CV in the Materials step to see it here</span>';
+    elEdu.innerHTML = '<span class="info-dim">—</span>';
+    return;
+  }
+  const work = Array.isArray(cv.work) ? cv.work : [];
+  const edu = Array.isArray(cv.education) ? cv.education : [];
+  elWork.innerHTML = work.length ? work.map((w) => {
+    const mode = String(w.mode || '').toLowerCase();
+    const modeCls = mode === 'onsite' ? ' cv-mode--onsite' : (mode === 'hybrid' ? ' cv-mode--hybrid' : '');
+    return '<div class="cv-item">' +
+      '<div class="cv-head"><span class="cv-company">' + esc(w.company) + '</span><span class="cv-period">' + esc(w.period) + '</span></div>' +
+      (w.role ? '<div class="cv-role">' + esc(w.role) + '</div>' : '') +
+      '<div class="cv-meta">' + (w.location ? '<span>' + esc(w.location) + '</span>' : '') +
+      (mode ? '<span class="cv-mode' + modeCls + '">' + esc(mode) + '</span>' : '') + '</div></div>';
+  }).join('') : '<span class="info-dim">No work history found in the CV</span>';
+  elEdu.innerHTML = edu.length ? edu.map((e) =>
+    '<div class="cv-item"><div class="cv-head"><span class="cv-company">' + esc(e.school) + '</span><span class="cv-period">' + esc(e.period) + '</span></div>' +
+    (e.degree ? '<div class="cv-role">' + esc(e.degree) + '</div>' : '') + '</div>').join('')
+    : '<span class="info-dim">No education found in the CV</span>';
+}
+
 if (window.info && window.info.onData) {
   // Tell main we're listening so it (re)sends data + fetches — avoids any race
   // where main pushed before this listener was attached.
@@ -131,6 +160,7 @@ if (window.info && window.info.onData) {
     tickClock();
     renderWeather(data && data.weather);
     renderHolidaysAndEvents(data);
+    renderCv(data ? data.cv : undefined);
   });
 }
 

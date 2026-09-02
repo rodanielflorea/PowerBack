@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Toggle</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; background: transparent; overflow: hidden; }
+    /* The circle is two parts: the outer band is a native drag handle (the only
+       way to move a window on Wayland — it cannot take clicks), the inner disc
+       is the button. On Windows/macOS the inner disc can be dragged as well. */
+    .ring {
+      width: 100%; height: 100%; border-radius: 50%;
+      padding: 9px;
+      background: linear-gradient(135deg, #1d4ed8 0%, #1e3a8a 100%);
+      box-shadow: 0 6px 16px rgba(15,18,34,.30), 0 0 0 2px rgba(255,255,255,.85);
+      cursor: move;
+      -webkit-app-region: drag;
+      -webkit-user-select: none; user-select: none;
+    }
+    .btn {
+      -webkit-app-region: no-drag;
+      width: 100%; height: 100%; border-radius: 50%; border: none; cursor: pointer;
+      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+      color: #fff; font: 700 16px/1 system-ui, -apple-system, 'Segoe UI', sans-serif;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.25);
+      display: flex; align-items: center; justify-content: center;
+      transition: transform .12s ease, filter .12s ease;
+    }
+    .btn:hover { filter: brightness(1.08); }
+    .btn:active { transform: scale(.94); }
+    /* Main window hidden: dim the button so the state is obvious. */
+    body.main-hidden .ring { background: linear-gradient(135deg, #475569, #334155); }
+    body.main-hidden .btn { background: linear-gradient(135deg, #64748b, #475569); }
+  </style>
+</head>
+<body>
+  <div class="ring">
+    <button class="btn" id="btn" title="Click: show / hide the app (Ctrl+Alt+H) · Drag: move this button">A</button>
+  </div>
+  <script>
+    const btn = document.getElementById('btn');
+    // Press and move = drag the button; press and release in place = toggle.
+    let press = null;
+    btn.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      press = { x: e.screenX, y: e.screenY, moved: false };
+      window.floatApi.dragStart();
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!press) return;
+      if (Math.abs(e.screenX - press.x) + Math.abs(e.screenY - press.y) > 4) press.moved = true;
+    });
+    const release = (e) => {
+      if (!press) return;
+      const moved = press.moved;
+      press = null;
+      window.floatApi.dragEnd();
+      if (!moved && e && e.type === 'mouseup') window.floatApi.toggle();
+    };
+    window.addEventListener('mouseup', release);
+    window.addEventListener('blur', () => release(null));
+    window.floatApi.onState((visible) => {
+      document.body.classList.toggle('main-hidden', !visible);
+      btn.title = (visible ? 'Click: hide the app' : 'Click: show the app') + ' (Ctrl+Alt+H) · Drag: move this button';
+    });
+  </script>
+</body>
+</html>
