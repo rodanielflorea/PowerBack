@@ -119,21 +119,27 @@ html { background: var(--bg); }
 .btn:active { background: rgba(0,0,0,.12); }
 
 /* ── 4. ICONS (stealth / click-through) ───────────────────── */
-.stealth-icon, .cursor-icon { width: 15px; height: 15px; display: block; }
-
-.shield-body { fill: var(--track); stroke: var(--muted); stroke-width: 1.5; stroke-linejoin: round; }
-.shield-check, .shield-slash { fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; display: none; }
-.stealth-btn.on  .shield-body  { fill: var(--green); stroke: #15803d; }
-.stealth-btn.on  .shield-check { display: inline; }
-.stealth-btn.off .shield-body  { fill: var(--rec-on); stroke: #b91c1c; }
-.stealth-btn.off .shield-slash { display: inline; }
-
+.stealth-icon, .cursor-icon, .end-icon { width: 16px; height: 16px; display: block; }
+/* Stealth = eye: crossed-out green eye when hidden from capture, plain grey eye when visible. */
+.eye-body { fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linejoin: round; }
+.eye-pupil { fill: var(--muted); }
+.eye-slash { fill: none; stroke: var(--green); stroke-width: 2.2; stroke-linecap: round; display: none; }
+.stealth-btn.on .eye-body  { stroke: var(--green); }
+.stealth-btn.on .eye-pupil { fill: var(--green); }
+.stealth-btn.on .eye-slash { display: inline; }
+.stealth-btn.off .eye-body { stroke: var(--rec-on); }
+.stealth-btn.off .eye-pupil { fill: var(--rec-on); }
+/* Click-through = cursor with "pass-through" lines when on. */
 .clickthrough-btn { padding: 0 6px; }
-.cursor-body  { fill: var(--track); stroke: var(--muted); stroke-width: 1.5; stroke-linejoin: round; }
-.cursor-slash { fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; display: none; }
-.clickthrough-btn.off .cursor-body { fill: var(--green); stroke: #15803d; }
-.clickthrough-btn.on  .cursor-body { fill: var(--rec-on); stroke: #b91c1c; }
-.clickthrough-btn.on  .cursor-slash { display: inline; }
+.cursor-body { fill: var(--track); stroke: var(--muted); stroke-width: 1.5; stroke-linejoin: round; }
+.cursor-through { fill: none; stroke: var(--amber); stroke-width: 2; stroke-linecap: round; display: none; }
+.clickthrough-btn.off .cursor-body { fill: var(--surface-2); stroke: var(--muted); }
+.clickthrough-btn.on  .cursor-body { fill: var(--amber); stroke: #92400e; }
+.clickthrough-btn.on  .cursor-through { display: inline; }
+/* End = small stop icon at the left of the bar. */
+.end-icon circle { fill: none; stroke: var(--rec-on); stroke-width: 2; }
+.end-icon rect { fill: var(--rec-on); }
+#netStatusPill { display: none !important; }
 
 /* ── 5. RIGHT RAIL ─────────────────────────────────────────── */
 .right-rail {
@@ -533,37 +539,9 @@ body:not(.in-interview) .right-rail { display: none !important; }
   50%      { box-shadow: 0 0 0 4px rgba(220,38,38,0); }
 }
 
-.end-btn {
-  width: auto;
-  height: 20px;
-  padding: 0 10px;
-  margin: 0 4px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  background: var(--rec-on);
-  color: #fff;
-  border: none;
-  border-radius: 3px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  -webkit-app-region: no-drag;
-  transition: filter var(--t) var(--ease);
-}
-.end-btn::before {
-  content: "";
-  display: inline-block;
-  width: 7px; height: 7px;
-  background: #fff;
-  border-radius: 1px;
-}
-.end-btn:hover { filter: brightness(1.1); }
-body.in-interview .end-btn.live::before {
-  background: #fef08a;
-  animation: endPulse 1s ease-in-out infinite;
-}
+.end-btn { width: 28px; margin: 0 2px 0 2px; }
+.end-btn:hover { background: rgba(220,38,38,.12); }
+body.in-interview .end-btn.live .end-icon rect { animation: endPulse 1.4s ease-in-out infinite; }
 @keyframes endPulse {
   0%,100% { opacity: 1; transform: scale(1); }
   50%      { opacity: 0.5; transform: scale(0.85); }
@@ -1021,6 +999,8 @@ body.in-interview .end-btn.live::before {
 }
 .meet-clear:hover { opacity: 1; background: var(--accent-hover, #1d4ed8); }
 .meet-actions { display: flex; gap: 4px; }
+.meet-time { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 2px; }
+.answer-q .answer-time--q { display: none; }
 .meet-clear.meet-retry, .meet-clear.meet-edit { background: var(--surface-2); color: var(--text); font-size: 11px; }
 .meet-clear.meet-retry:hover, .meet-clear.meet-edit:hover { background: var(--border-hi); }
 textarea.meet-editbox {
@@ -1207,7 +1187,7 @@ textarea.meet-editbox {
 .composer-row {
   display: flex;
   gap: 8px;
-  align-items: flex-end;
+  align-items: stretch;
 }
 .answer-composer textarea {
   flex: 1;
@@ -1228,9 +1208,9 @@ textarea.meet-editbox {
 }
 .answer-send-btn {
   -webkit-app-region: no-drag;
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
+  align-self: stretch;
+  width: 44px;
+  min-height: 40px;
   background: var(--accent);
   color: #fff;
   border: none;
@@ -1239,7 +1219,7 @@ textarea.meet-editbox {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background var(--t) var(--ease), transform var(--t) var(--ease), box-shadow var(--t) var(--ease);
+  transition: background var(--t) var(--ease), box-shadow var(--t) var(--ease);
 }
 .answer-send-btn:hover { background: var(--accent-hover); box-shadow: 0 2px 8px rgba(37,99,235,.3); }
 .answer-send-btn:active { transform: translateY(1px); }

@@ -714,7 +714,8 @@ function createFloatWindow() {
   const pos = floatSavedPos() || floatDefaultPos();
   floatWin = new BrowserWindow({
     width: FLOAT_SIZE, height: FLOAT_SIZE, x: pos.x, y: pos.y,
-    frame: false, transparent: true, hasShadow: false,
+    frame: false, transparent: true, hasShadow: false, thickFrame: false, roundedCorners: false,
+    backgroundColor: '#00000000',
     resizable: false, minimizable: false, maximizable: false, fullscreenable: false,
     skipTaskbar: true, alwaysOnTop: true, focusable: false, show: false,
     webPreferences: { preload: path.join(__dirname, 'preload-float.js'), contextIsolation: true, nodeIntegration: false },
