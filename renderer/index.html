@@ -61,7 +61,6 @@
     </div>
     <nav class="settings-tabs" id="settingsTabs">
       <button class="tab-btn active" data-tab="apikeys" type="button">API keys</button>
-      <button class="tab-btn" data-tab="prompts" type="button">Prompts</button>
       <button class="tab-btn" data-tab="hotkeys" type="button">Hotkeys</button>
     </nav>
     <div class="settings-body">
@@ -80,6 +79,14 @@
           <div class="field" id="xaiBlock">
             <label for="xaiKey">xAI API key</label>
             <input type="password" id="xaiKey" placeholder="Paste xAI key..." spellcheck="false" />
+          </div>
+          <h3 class="settings-subhead">Call type</h3>
+          <p class="hint">1:1 hiring call. Transcription is one interviewer stream.</p>
+          <div class="field-row" id="hiringTypeRow">
+            <label class="radio"><input type="radio" name="hiringType" value="intro" id="hiringTypeIntro" /> Intro</label>
+            <label class="radio"><input type="radio" name="hiringType" value="technical" id="hiringTypeTechnical" /> Technical</label>
+            <label class="radio"><input type="radio" name="hiringType" value="ceo" id="hiringTypeCeo" /> CEO</label>
+            <label class="radio"><input type="radio" name="hiringType" value="hr" id="hiringTypeHr" /> HR</label>
           </div>
           <h3 class="settings-subhead">Audio sources</h3>
           <p class="hint">Choose what Voice mode transcribes. Microphone is your voice; system audio is meeting or speaker output (Zoom, Teams, browser). Enable one or both. Changes apply the next time you start transcription.</p>
@@ -143,39 +150,10 @@
             <p class="hint">List is for the selected provider. Reasoning models think first (slower first token).</p>
           </div>
         </section>
-      </div>
-
-      <div class="settings-tab" data-tab="prompts" hidden id="settingsPromptsHost">
-        <section class="settings-section">
-          <h3>Prompt presets</h3>
-          <p class="hint">Each preset is a system prompt for a meeting type. Pick the active one in the Answer panel's Preset dropdown during the session.</p>
-          <div class="prompt-list" id="promptList"></div>
-          <div class="updater-row" style="margin-top:8px">
-            <button id="promptExportBtn">Export prompts&hellip;</button>
-            <button id="promptImportBtn">Import prompts&hellip;</button>
-            <span class="updater-version" id="promptIoStatus"></span>
-          </div>
-        </section>
-        <section class="settings-section">
-          <h3 id="promptEditorTitle">New prompt</h3>
-          <div class="field">
-            <label for="promptTitleInput">Title</label>
-            <input type="text" id="promptTitleInput" placeholder="e.g. Tech interview, CEO chat&hellip;" spellcheck="false" />
-          </div>
-          <div class="field">
-            <label for="promptTextInput">Prompt text</label>
-            <textarea id="promptTextInput" rows="6" placeholder="Type the prompt to save&hellip;" spellcheck="false"></textarea>
-          </div>
-          <div class="updater-row">
-            <button id="promptSaveBtn">Save prompt</button>
-            <button id="promptNewBtn">New / Clear</button>
-          </div>
-          <div class="updater-status" id="promptStatus"></div>
-        </section>
 
         <section class="settings-section">
           <h3>Avoid phrases</h3>
-          <p class="hint">One phrase or pattern per line. These are always blocked regardless of which prompt is active — the AI is explicitly told never to use them.</p>
+          <p class="hint">One phrase or pattern per line. The model is told never to use them.</p>
           <div class="field">
             <textarea id="avoidPhrasesInput" rows="6" placeholder="e.g.&#10;years of experience&#10;In my current role&#10;I led the end-to-end&#10;passionate about&#10;proven track record" spellcheck="false"></textarea>
           </div>
@@ -517,22 +495,23 @@
             <thead><tr><th>Action</th><th>Default</th></tr></thead>
             <tbody>
               <tr><td>Toggle window visibility</td><td><span class="kbd">Ctrl+Alt+H</span></td></tr>
-              <tr><td>Toggle stealth</td><td><span class="kbd">Ctrl+H</span></td></tr>
-              <tr><td>Toggle click-through (mouse passes through window)</td><td><span class="kbd">Alt+Q</span></td></tr>
-              <tr><td>Submit prompt in Claude / ChatGPT (works from any app)</td><td><span class="kbd">Ctrl+Enter</span></td></tr>
-              <tr><td>Screenshot active screen &rarr; paste to AI</td><td><span class="kbd">Alt+A</span></td></tr>
-              <tr><td>Start / stop active mode</td><td><span class="kbd">Alt+C</span></td></tr>
-              <tr><td>Toggle OCR ↔ Voice mode</td><td><span class="kbd">Alt+D</span></td></tr>
-              <tr><td>Cycle B's mic mode (Mute &rarr; A &rarr; A+C)</td><td><span class="kbd">Ctrl+B</span></td></tr>
-              <tr><td>Reload site</td><td><span class="kbd">Ctrl+R</span></td></tr>
-              <tr><td>Reset capture area</td><td><span class="kbd">Ctrl+Q</span></td></tr>
-              <tr><td>Hide sticky note</td><td><span class="kbd">Ctrl+Shift+Left</span></td></tr>
-              <tr><td>Show sticky note</td><td><span class="kbd">Ctrl+Shift+Right</span></td></tr>
-              <tr><td>Scroll sticky note up / down</td><td><span class="kbd">Shift+Up</span> / <span class="kbd">Shift+Down</span></td></tr>
-              <tr><td>HELP ME alert (A &rarr; B)</td><td><span class="kbd">Win+Shift+/</span></td></tr>
-              <tr><td>Move window L / R / U / D</td><td><span class="kbd">Ctrl+Alt+&larr;</span> &hellip; <span class="kbd">Ctrl+Alt+&darr;</span></td></tr>
+              <tr><td>Move window left / right / up / down</td><td><span class="kbd">Ctrl+Alt+&larr;</span> &hellip; <span class="kbd">Ctrl+Alt+&darr;</span></td></tr>
               <tr><td>Opacity up / down</td><td><span class="kbd">Ctrl+Alt+]</span> / <span class="kbd">Ctrl+Alt+[</span></td></tr>
-              <tr><td>Scroll page up / down</td><td><span class="kbd">Ctrl+&uarr;</span> / <span class="kbd">Ctrl+&darr;</span></td></tr>
+              <tr><td>Scroll answers up / down</td><td><span class="kbd">Ctrl+&uarr;</span> / <span class="kbd">Ctrl+&darr;</span></td></tr>
+              <tr><td>Reset capture area (re-pick)</td><td><span class="kbd">Ctrl+Q</span></td></tr>
+              <tr><td>Reload window</td><td><span class="kbd">Ctrl+R</span></td></tr>
+              <tr><td>Toggle stealth</td><td><span class="kbd">Ctrl+H</span></td></tr>
+              <tr><td>Start / stop voice or caption</td><td><span class="kbd">Alt+C</span></td></tr>
+              <tr><td>Toggle OCR ↔ Voice mode</td><td><span class="kbd">Alt+D</span></td></tr>
+              <tr><td>Push-to-talk (toggle supporter mic)</td><td><span class="kbd">Ctrl+B</span></td></tr>
+              <tr><td>Close / open sticky note</td><td><span class="kbd">Ctrl+Shift+Left</span> / <span class="kbd">Ctrl+Shift+Right</span></td></tr>
+              <tr><td>Scroll sticky note up / down</td><td><span class="kbd">Shift+Up</span> / <span class="kbd">Shift+Down</span></td></tr>
+              <tr><td>Send help request (speaker → supporter)</td><td><span class="kbd">Win+Shift+/</span></td></tr>
+              <tr><td>Get answer (send to selected API)</td><td><span class="kbd">Ctrl+Enter</span></td></tr>
+              <tr><td>Screenshot to composer</td><td><span class="kbd">Alt+A</span></td></tr>
+              <tr><td>Area snip to composer</td><td><span class="kbd">Alt+S</span></td></tr>
+              <tr><td>Toggle click-through (mouse passes through)</td><td><span class="kbd">Alt+Q</span></td></tr>
+              <tr><td>Clear current transcript bubble</td><td><span class="kbd">Shift+Z</span></td></tr>
             </tbody>
           </table>
         </section>
@@ -614,7 +593,7 @@
     <div class="setup-card mode-select-card">
       <div class="setup-topbar">
         <h2 class="setup-title">Start</h2>
-        <button class="setup-gear-btn" id="modeSelectSettingsBtn" title="Settings — API keys, prompts, hotkeys">&#9881;</button>
+        <button class="setup-gear-btn" id="modeSelectSettingsBtn" title="Settings — API keys, hotkeys">&#9881;</button>
       </div>
       <p class="setup-intro hint">Begin a new interview session, or continue a saved one with its materials.</p>
       <div class="mode-choice-cards">
@@ -637,9 +616,9 @@
       <div class="setup-topbar">
         <button class="setup-back-btn" id="setupBackBtn" title="Back">&#8592;</button>
         <h2 class="setup-title">New Session</h2>
-        <button class="setup-gear-btn" id="setupSettingsBtn" title="Settings — API keys, prompts, hotkeys">&#9881;</button>
+        <button class="setup-gear-btn" id="setupSettingsBtn" title="Settings — API keys, hotkeys">&#9881;</button>
       </div>
-      <p class="setup-intro hint">Upload your materials — the assistant uses them as base knowledge to ground its answers. Then press Start.</p>
+      <p class="setup-intro hint">Upload whatever you have — CV, JD, and/or support material. That is the knowledge base. Then pick the call type and press Start.</p>
 
       <div class="setup-profile-row">
         <p class="setup-roles-label">Your profile</p>
@@ -671,13 +650,23 @@
 
       <div class="setup-bottom">
         <div class="setup-roles">
+          <p class="setup-roles-label">Call type</p>
+          <div class="field-row hiring-type-pills" id="setupHiringTypeRow">
+            <label class="radio"><input type="radio" name="setupHiringType" value="intro" id="setupHiringIntro" checked /> Intro</label>
+            <label class="radio"><input type="radio" name="setupHiringType" value="technical" id="setupHiringTechnical" /> Technical</label>
+            <label class="radio"><input type="radio" name="setupHiringType" value="ceo" id="setupHiringCeo" /> CEO</label>
+            <label class="radio"><input type="radio" name="setupHiringType" value="hr" id="setupHiringHr" /> HR</label>
+          </div>
+        </div>
+
+        <div class="setup-roles">
           <p class="setup-roles-label">Select your role</p>
           <div class="role-cards">
             <label class="role-card" id="roleCardSpeaker">
               <input type="radio" name="setupRoleV" value="speaker" id="setupRoleSpeakerV" checked hidden />
               <span class="role-card-icon">🎤</span>
               <span class="role-card-name">Speaker</span>
-              <span class="role-card-desc">You are being interviewed</span>
+              <span class="role-card-desc">You are in the call</span>
             </label>
             <label class="role-card" id="roleCardSupporter">
               <input type="radio" name="setupRoleV" value="supporter" id="setupRoleSupporterV" hidden />
@@ -687,12 +676,6 @@
             </label>
           </div>
           <input type="text" id="setupAddressV" class="setup-address-input" placeholder="172.16.98.11:2000" spellcheck="false" hidden />
-        </div>
-
-        <div class="setup-prompt-row">
-          <p class="setup-roles-label">System prompt</p>
-          <select id="setupPresetSelect" class="setup-preset-select">
-          </select>
         </div>
 
         <button class="action-btn setup-start-btn" id="setupStartBtnV">START</button>
@@ -747,7 +730,11 @@
 
   <section class="answer-main" id="answerMain" hidden>
     <div class="answer-presetbar">
-      <select id="presetSelect" class="answer-preset-select" style="display:none">
+      <select id="hiringTypeSelect" class="answer-provider-select" title="Hiring call type">
+        <option value="intro">Intro</option>
+        <option value="technical">Technical</option>
+        <option value="ceo">CEO</option>
+        <option value="hr">HR</option>
       </select>
       <select id="answerProviderSelect" class="answer-provider-select" title="Answer API provider">
         <option value="xai">xAI</option>
@@ -762,13 +749,13 @@
       <button id="answerClearBtn" class="answer-clear-btn" title="Clear answers">Clear</button>
     </div>
     <div class="answer-history" id="answerHistory">
-      <div class="answer-empty" id="answerEmpty">No answers yet. Speak or capture text, then press Ctrl+Enter to get an answer.</div>
+      <div class="answer-empty" id="answerEmpty">Meeting talk shows as bubbles. Type your own question below — answers use your knowledge base.</div>
     </div>
     <div class="answer-composer">
       <div class="composer-img-strip" id="composerImgStrip" hidden></div>
       <div class="composer-row">
-        <textarea id="composerInput" rows="2" spellcheck="false"></textarea>
-        <button id="getAnswerBtn" class="answer-send-btn" title="Get answer (Ctrl+Enter)">&#10148;</button>
+        <textarea id="composerInput" rows="2" spellcheck="false" placeholder="Your question (from your knowledge base)…"></textarea>
+        <button id="getAnswerBtn" class="answer-send-btn" title="Get answer (Ctrl+Enter)" disabled>&#10148;</button>
       </div>
     </div>
   </section>
