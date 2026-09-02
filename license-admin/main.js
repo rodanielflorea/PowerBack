@@ -1,32 +1,13 @@
 // License generator (admin-only). Signs MAC-bound licenses with the Ed25519
-// private key in keys/private.key (dev) or resources/keys/private.key
-// (packaged). Never distribute this app or the private key to users.
+// private key compiled in from private-key.js, so a build works anywhere.
+// Never distribute this app to users.
 const { app, BrowserWindow, ipcMain, clipboard } = require('electron');
 const crypto = require('crypto');
-const fs = require('fs');
 const path = require('path');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function privateKeyPath() {
-  const candidates = [
-    path.join(process.resourcesPath || '', 'keys', 'private.key'),
-    path.join(__dirname, 'keys', 'private.key'),
-  ];
-  return candidates.find((p) => { try { return fs.existsSync(p); } catch { return false; } }) || null;
-}
-
-let privateKey = null;
-function loadKey() {
-  const p = privateKeyPath();
-  if (!p) return 'private.key not found — run scripts/license-keygen.js in the main repo first.';
-  try {
-    privateKey = crypto.createPrivateKey(fs.readFileSync(p));
-    return null;
-  } catch (e) {
-    return 'Could not load private key: ' + e.message;
-  }
-}
+const privateKey = crypto.createPrivateKey(require('./private-key'));
 
 function normalizeMac(mac) {
   return String(mac || '').toUpperCase().replace(/[^0-9A-F]/g, '');
@@ -61,12 +42,23 @@ function b32decode(str) {
 // Same format the user app verifies (see license.js in the main repo):
 // base32( expiryDay LE uint32 || Ed25519 signature of "<MAC>|<expiryDay>" ),
 // dash-grouped for readability.
-function makeLicense(mac, days) {
+// Expiry is either an explicit date (YYYY-MM-DD, valid through that day) or
+// a number of days from today.
+function makeLicense(mac, days, date) {
   const m = normalizeMac(mac);
   if (m.length !== 12) return { error: 'MAC address must have 12 hex digits (e.g. AA:BB:CC:DD:EE:FF).' };
-  const d = Math.round(Number(days));
-  if (!Number.isFinite(d) || d < 1 || d > 3650) return { error: 'Period must be between 1 and 3650 days.' };
-  const expiryDay = Math.floor(Date.now() / DAY_MS) + d;
+  const today = Math.floor(Date.now() / DAY_MS);
+  let expiryDay;
+  if (date) {
+    const mm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date));
+    if (!mm) return { error: 'Expiry date must be YYYY-MM-DD.' };
+    expiryDay = Math.floor(Date.UTC(+mm[1], +mm[2] - 1, +mm[3]) / DAY_MS);
+    if (expiryDay < today) return { error: 'Expiry date is in the past.' };
+  } else {
+    const d = Math.round(Number(days));
+    if (!Number.isFinite(d) || d < 1 || d > 3650) return { error: 'Period must be between 1 and 3650 days.' };
+    expiryDay = today + d;
+  }
   const sig = crypto.sign(null, Buffer.from(`${m}|${expiryDay}`), privateKey);
   const buf = Buffer.alloc(4 + 64);
   buf.writeUInt32LE(expiryDay, 0);
@@ -75,9 +67,8 @@ function makeLicense(mac, days) {
   return { code, expiresAt: (expiryDay + 1) * DAY_MS, mac: m };
 }
 
-ipcMain.handle('gen', (_e, { mac, days }) => makeLicense(mac, days));
+ipcMain.handle('gen', (_e, { mac, days, date }) => makeLicense(mac, days, date));
 ipcMain.handle('copy', (_e, text) => clipboard.writeText(String(text || '')));
-ipcMain.handle('key-status', () => loadKey());
 
 app.whenReady().then(() => {
   const win = new BrowserWindow({
