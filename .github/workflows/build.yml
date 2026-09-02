@@ -5,6 +5,11 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# electron-builder publishes the installers to a GitHub release on tag
+# builds; the default GITHUB_TOKEN is read-only, so grant release write.
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
