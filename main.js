@@ -547,11 +547,19 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   // Embedded web AI removed — answers come from the selected provider API
   // into the in-app Answer panel, so we no longer create the WebContentsView.
-  win.once('ready-to-show', () => {
+  let shown = false;
+  const showMainWindow = () => {
+    if (shown || !win || win.isDestroyed()) return;
+    shown = true;
     win.show();
     // Pre-warm the xAI connection so first real request skips TLS handshake.
     setTimeout(() => startWarmLoop(), 400);
-  });
+  };
+  win.once('ready-to-show', showMainWindow);
+  // Fallback: on some Linux/Wayland setups this page never produces a first
+  // paint while the window is still unmapped, so 'ready-to-show' never fires
+  // and the app stays invisible. Show once the page has loaded instead.
+  win.webContents.once('did-finish-load', () => setTimeout(showMainWindow, 100));
 
   win.on('move', () => { saveState(); syncStickyPosition(); });
   win.on('resize', () => { saveState(); syncStickyPosition(); });
