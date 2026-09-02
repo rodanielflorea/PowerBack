@@ -2071,6 +2071,11 @@ let licenseWin = null;
 function startApp() {
   // Keep the license's last-seen time moving while the app runs (10 min).
   setInterval(() => { try { license.touchStoredLicense(app.getPath('userData')); } catch {} }, 10 * 60 * 1000);
+  // macOS: ask for the microphone up front so the system prompt appears once,
+  // instead of the first transcription silently getting no audio.
+  if (process.platform === 'darwin') {
+    try { require('electron').systemPreferences.askForMediaAccess('microphone').catch(() => {}); } catch {}
+  }
   createWindow();
   createFloatWindow();
   registerHotkeys();

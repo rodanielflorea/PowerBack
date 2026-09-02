@@ -102,7 +102,16 @@
       ],
       "category": "public.app-category.productivity",
       "icon": "build/icon.png",
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "RemoteDevJobAce listens to your interview call to transcribe it.",
+        "NSAppleEventsUsageDescription": "RemoteDevJobAce types answers and pastes text into other apps for you.",
+        "NSScreenCaptureUsageDescription": "RemoteDevJobAce reads text from a screen area in OCR mode."
+      },
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "gatekeeperAssess": false
     },
     "nsis": {
       "artifactName": "${productName}-${version}-setup.${ext}",
