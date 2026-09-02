@@ -1814,7 +1814,11 @@ function addMeetBubble(who, text, live) {
     el.remove();
     if (answerHistory && !answerHistory.querySelector(".answer-turn, .meet-turn") && answerEmpty) answerEmpty.hidden = false;
   });
+  const when = document.createElement("span");
+  when.className = "meet-time";
+  when.textContent = fmtTime(Date.now());
   head.appendChild(name);
+  head.appendChild(when);
   head.appendChild(actions);
   const body = document.createElement("div");
   body.className = "meet-text";
@@ -2633,7 +2637,11 @@ function addAnswerTurn(question, imgs, mode, ts) {
       turn.remove();
       if (answerHistory && !answerHistory.querySelector(".answer-turn, .meet-turn") && answerEmpty) answerEmpty.hidden = false;
     });
+    const when = document.createElement("span");
+    when.className = "meet-time";
+    when.textContent = fmtTime(turnTs);
     head.appendChild(who);
+    head.appendChild(when);
     head.appendChild(actions);
     turn.appendChild(head);
     const qTime = document.createElement("div");

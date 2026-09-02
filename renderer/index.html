@@ -13,29 +13,31 @@
   </div>
 
   <header class="titlebar">
+    <button class="btn end-btn iv-btn" id="endBtn" title="End session — back to the start screen">
+      <svg class="end-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><rect x="8.5" y="8.5" width="7" height="7" rx="1.5" /></svg>
+    </button>
+    <span class="net-status-pill iv-btn" id="netStatusPill" hidden>--</span>
     <div class="drag"></div>
-    <span class="net-status-pill iv-btn" id="netStatusPill" title="Network connection state">--</span>
     <div class="slider" id="slider" title="Click and drag horizontally to change opacity">
       <div class="slider-fill" id="sliderFill"></div>
     </div>
     <button class="btn stealth-btn" id="stealthBtn" title="Toggle stealth (hidden from screen capture)">
       <svg class="stealth-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <path class="shield-body" d="M12 2 L4 5 L4 12 C4 16.5 7.5 20.5 12 22 C16.5 20.5 20 16.5 20 12 L20 5 Z" />
-        <path class="shield-check" d="M8.5 12.5 l2.5 2.5 l4.5 -5.5" />
-        <path class="shield-slash" d="M7 7 l10 10" />
+        <path class="eye-body" d="M2.5 12 C5 7.5 8.3 5.5 12 5.5 C15.7 5.5 19 7.5 21.5 12 C19 16.5 15.7 18.5 12 18.5 C8.3 18.5 5 16.5 2.5 12 Z" />
+        <circle class="eye-pupil" cx="12" cy="12" r="3" />
+        <path class="eye-slash" d="M4 20 L20 4" />
       </svg>
     </button>
     <button class="btn clickthrough-btn" id="clickThroughBtn" title="Toggle click-through (Alt+Q) — when on, mouse passes through this window">
       <svg class="cursor-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <path class="cursor-body" d="M5 3 L5 17 L9 13 L11.5 19 L13.5 18 L11 12 L17 12 Z" />
-        <path class="cursor-slash" d="M4 4 L20 20" />
+        <path class="cursor-body" d="M5 3 L5 17.5 L8.8 13.8 L11.3 19.5 L13.6 18.5 L11.1 12.9 L16.5 12.5 Z" />
+        <path class="cursor-through" d="M15 5 h6 M15 8.5 h6" />
       </svg>
     </button>
     <!-- The "To A" mic-mode pill is retired (supporter mode is not offered); kept hidden for renderer bindings. -->
     <button class="btn mic-pill iv-btn" id="micPill" hidden>
       <span class="mic-pill-icon" id="micPillIcon">🔒</span><span class="mic-pill-label" id="micPillLabel">TO A</span>
     </button>
-    <button class="btn end-btn iv-btn" id="endBtn" title="End session — back to the start screen">End</button>
     <button class="btn" id="hideBtn" title="Hide (Ctrl+Alt+H)">&minus;</button>
     <button class="btn" id="quitBtn" title="Quit">&times;</button>
   </header>
@@ -328,13 +330,13 @@
           <table class="help-table">
             <tr><th>Button</th><th>What it does</th></tr>
             <tr><td>&#9881;</td><td>Settings and this guide.</td></tr>
-            <tr><td>Shield</td><td><b>Stealth</b>: green = the window is invisible to screen sharing and recordings. Keep it green during calls.</td></tr>
-            <tr><td>Cursor</td><td><b>Click-through</b>: when red, mouse clicks pass through the app to whatever is behind it. Press <span class="kbd">Alt+Q</span> to switch it off again.</td></tr>
+            <tr><td>Eye</td><td><b>Stealth</b>: a crossed-out green eye = the window is invisible to screen sharing and recordings. Keep it that way during calls.</td></tr>
+            <tr><td>Cursor</td><td><b>Click-through</b>: when orange, mouse clicks pass through the app to whatever is behind it. Press <span class="kbd">Alt+Q</span> to switch it off again.</td></tr>
             <tr><td>Microphone</td><td>Start / stop listening. Red and pulsing = listening. It starts by itself when the interview begins.</td></tr>
             <tr><td>Voice / OCR</td><td>Where questions come from: <i>Voice</i> listens to the call audio (normal). <i>OCR</i> reads text from an area of your screen instead — useful for written tests.</td></tr>
             <tr><td>Model letters</td><td>Choose which AI model writes the answers. The default is fine.</td></tr>
             <tr><td>1 – 5 slider</td><td>Typing speed for <i>Write to IDE</i> (see below).</td></tr>
-            <tr><td>&#9632; (red)</td><td>End the interview and go back to the welcome screen.</td></tr>
+            <tr><td>&#9209; (red, top-left)</td><td>End the interview and go back to the welcome screen.</td></tr>
             <tr><td>&minus;</td><td>Hide the app. Bring it back with <span class="kbd">Ctrl+Alt+H</span> or the round <b>A</b> button.</td></tr>
             <tr><td>&times;</td><td>Quit.</td></tr>
           </table>
@@ -349,7 +351,7 @@
         <section class="settings-section help-section">
           <h3>Staying invisible</h3>
           <ul>
-            <li>Keep <b>Stealth</b> on (green shield). Then the app does not appear in Zoom, Meet or Teams screen sharing, nor in recordings.</li>
+            <li>Keep <b>Stealth</b> on (crossed-out green eye). Then the app does not appear in Zoom, Meet or Teams screen sharing, nor in recordings.</li>
             <li class="hint">Stealth works on Windows. On macOS it works for most apps, but recent Zoom/Teams versions can still capture the window. On Linux no app can hide itself from screen capture — hide the window with <span class="kbd">Ctrl+Alt+H</span> while you share your screen.</li>
             <li class="hint">Click-through works on Windows, macOS and Linux X11 sessions; Ubuntu's default Wayland session does not support it (the button is greyed out).</li>
             <li>Make the window see-through with <span class="kbd">Ctrl+Alt+]</span> (more visible) and <span class="kbd">Ctrl+Alt+[</span> (more transparent).</li>

@@ -6,15 +6,13 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { width: 100%; height: 100%; background: transparent; overflow: hidden; }
-    /* The circle is two parts: the outer band is a native drag handle (the only
-       way to move a window on Wayland — it cannot take clicks), the inner disc
-       is the button. On Windows/macOS the inner disc can be dragged as well. */
+    /* Single blue circle. The outer padding is a native drag region — the only
+       way to move a window on Wayland (it cannot take clicks). Where the app can
+       move its own window (Windows/macOS) the whole circle drags and clicks. */
     .ring {
       width: 100%; height: 100%; border-radius: 50%;
-      padding: 10px;
-      background: linear-gradient(135deg, #1d4ed8 0%, #1e3a8a 100%);
-      box-shadow: 0 6px 16px rgba(15,18,34,.30), 0 0 0 2px rgba(255,255,255,.85);
-      cursor: move;
+      padding: 6px;
+      background: transparent;
       -webkit-app-region: drag;
       -webkit-user-select: none; user-select: none;
     }
@@ -22,18 +20,17 @@
       -webkit-app-region: no-drag;
       width: 100%; height: 100%; border-radius: 50%; border: none; cursor: pointer;
       background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-      color: #fff; font: 700 13px/1 system-ui, -apple-system, 'Segoe UI', sans-serif;
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,.25);
+      color: #fff; font: 700 15px/1 system-ui, -apple-system, 'Segoe UI', sans-serif;
+      box-shadow: 0 4px 12px rgba(15,18,34,.28), 0 0 0 2px rgba(255,255,255,.9);
       display: flex; align-items: center; justify-content: center;
       transition: transform .12s ease, filter .12s ease;
     }
-    .btn:hover { filter: brightness(1.08); }
-    .btn:active { transform: scale(.94); }
-    body.manual-drag .ring { -webkit-app-region: no-drag; padding: 4px; }
+    .btn:hover { filter: brightness(1.08); transform: scale(1.05); }
+    .btn:active { transform: scale(.95); }
+    body.manual-drag .ring { -webkit-app-region: no-drag; padding: 3px; }
     body.manual-drag .btn { cursor: grab; }
     body.manual-drag .btn:active { cursor: grabbing; }
     /* Main window hidden: dim the button so the state is obvious. */
-    body.main-hidden .ring { background: linear-gradient(135deg, #475569, #334155); }
     body.main-hidden .btn { background: linear-gradient(135deg, #64748b, #475569); }
   </style>
 </head>
