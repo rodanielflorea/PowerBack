@@ -7,7 +7,7 @@
     "start": "electron .",
     "icon": "node scripts/generate-icon.js",
     "pack": "npm run icon && electron-builder --dir",
-    "build": "npm run icon && electron-builder --win portable",
+    "build": "npm run icon && electron-builder --win --publish never",
     "build:installer": "npm run icon && electron-builder --win nsis",
     "build:linux": "npm run icon && electron-builder --linux --publish never",
     "build:mac": "npm run icon && electron-builder --mac --publish never",
@@ -25,7 +25,9 @@
       "build/icon.png",
       "build/icon.ico",
       "package.json",
-      "platform-input.js"
+      "platform-input.js",
+      "license.js",
+      "license-public.key"
     ],
     "directories": {
       "output": "dist"
