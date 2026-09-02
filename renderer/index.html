@@ -60,7 +60,7 @@
       <button class="btn" id="settingsCloseBtn" title="Close settings">&times;</button>
     </div>
     <nav class="settings-tabs" id="settingsTabs">
-      <button class="tab-btn active" data-tab="apikeys" type="button">API keys</button>
+      <button class="tab-btn active" data-tab="apikeys" type="button">Providers</button>
       <button class="tab-btn" data-tab="hotkeys" type="button">Hotkeys</button>
     </nav>
     <div class="settings-body">
@@ -71,14 +71,6 @@
           <div class="field-row">
             <label class="radio"><input type="radio" name="engine" value="deepgram" id="engineDeepgram" /> Deepgram API</label>
             <label class="radio"><input type="radio" name="engine" value="xai" id="engineXai" /> xAI (Grok) API</label>
-          </div>
-          <div class="field" id="deepgramBlock">
-            <label for="deepgramKey">Deepgram API key</label>
-            <input type="password" id="deepgramKey" placeholder="Paste Deepgram key..." spellcheck="false" />
-          </div>
-          <div class="field" id="xaiBlock">
-            <label for="xaiKey">xAI API key</label>
-            <input type="password" id="xaiKey" placeholder="Paste xAI key..." spellcheck="false" />
           </div>
           <h3 class="settings-subhead">Call type</h3>
           <p class="hint">1:1 hiring call. Transcription is one interviewer stream.</p>
@@ -123,26 +115,11 @@
 
         <section class="settings-section">
           <h3>Answer generation</h3>
-          <p class="hint">Pick a provider, paste its key, then switch anytime. Keys and last-used models are remembered separately. Transcription above is independent of this.</p>
+          <p class="hint">Pick a provider; the last-used model is remembered per provider. Transcription above is independent of this.</p>
           <div class="field-row" id="answerProviderRow">
             <label class="radio"><input type="radio" name="answerProvider" value="xai" id="answerProviderXai" /> xAI</label>
             <label class="radio"><input type="radio" name="answerProvider" value="anthropic" id="answerProviderAnthropic" /> Anthropic</label>
             <label class="radio"><input type="radio" name="answerProvider" value="openai" id="answerProviderOpenai" /> OpenAI</label>
-          </div>
-          <div class="field">
-            <label for="answerKey">xAI API key</label>
-            <input type="password" id="answerKey" placeholder="Paste xAI key for answers..." spellcheck="false" />
-            <p class="hint">If blank, the xAI transcription key above is used. Get a key at console.x.ai.</p>
-          </div>
-          <div class="field">
-            <label for="answerKeyAnthropic">Anthropic API key</label>
-            <input type="password" id="answerKeyAnthropic" placeholder="Paste Anthropic key (sk-ant-…)..." spellcheck="false" />
-            <p class="hint">Get a key at console.anthropic.com.</p>
-          </div>
-          <div class="field">
-            <label for="answerKeyOpenai">OpenAI API key</label>
-            <input type="password" id="answerKeyOpenai" placeholder="Paste OpenAI key (sk-…)..." spellcheck="false" />
-            <p class="hint">Get a key at platform.openai.com/api-keys.</p>
           </div>
           <div class="field">
             <label for="answerModel">Model</label>
@@ -151,17 +128,6 @@
           </div>
         </section>
 
-        <section class="settings-section">
-          <h3>Avoid phrases</h3>
-          <p class="hint">One phrase or pattern per line. The model is told never to use them.</p>
-          <div class="field">
-            <textarea id="avoidPhrasesInput" rows="6" placeholder="e.g.&#10;years of experience&#10;In my current role&#10;I led the end-to-end&#10;passionate about&#10;proven track record" spellcheck="false"></textarea>
-          </div>
-          <div class="updater-row">
-            <button id="avoidPhrasesSaveBtn">Save</button>
-            <span class="updater-status" id="avoidPhrasesStatus"></span>
-          </div>
-        </section>
       </div>
 
       <!-- Hidden, no-nav panes kept so existing wiring keeps working; removed in cleanup. -->
@@ -331,8 +297,8 @@
           <h3>Quick start (solo)</h3>
           <ol class="help-steps">
             <li>Setup &rarr; pick <b>Caption</b> or <b>Voice</b> mode.</li>
-            <li>If using Voice: <b>Voice</b> tab &rarr; choose engine (Deepgram or xAI) and paste the API key.</li>
-            <li><b>API keys</b> tab &rarr; pick an answer provider (xAI, Anthropic, or OpenAI) and paste its key.</li>
+            <li>If using Voice: <b>Providers</b> tab &rarr; choose the transcription engine (Deepgram or xAI).</li>
+            <li><b>Providers</b> tab &rarr; pick an answer provider (xAI, Anthropic, or OpenAI).</li>
             <li>Click <b>Start</b>.</li>
             <li>For Caption mode: a screen-area selector appears &mdash; drag a rectangle around the live caption strip you want to OCR.</li>
             <li>Click the <b>&#9679;</b> rec dot in the header to begin / stop.</li>
@@ -395,8 +361,8 @@
             <li><b>Settings</b> &rarr; Transcription &rarr; enable <b>Microphone</b> and/or <b>System audio</b>, then pick the mic device.</li>
             <li>Pick engine:
               <ul>
-                <li><b>Deepgram API</b> &mdash; paste API key. Real-time, low-latency. Get a free key at deepgram.com.</li>
-                <li><b>xAI (Grok) API</b> &mdash; paste your xAI API key. Real-time streaming speech-to-text. Get a key at console.x.ai.</li>
+                <li><b>Deepgram API</b> &mdash; real-time, low-latency.</li>
+                <li><b>xAI (Grok) API</b> &mdash; real-time streaming speech-to-text.</li>
               </ul>
             </li>
             <li>Pick language or leave on Auto-detect.</li>
@@ -574,7 +540,7 @@
           <h4>Caption mode duplicates text</h4>
           <p>The diff is word-based and tolerant to OCR variations, but if the OCR engine produces wildly different text for the same speech, some duplication is unavoidable. Press <span class="kbd">Ctrl+Q</span> to re-pick a tighter area &mdash; smaller and cleaner is better.</p>
           <h4>Deepgram / xAI 401 / 429 errors</h4>
-          <p>Check the <b>Log</b> tab. 401 = bad API key. 429 = rate limit / out of credits. Verify the key in Settings &rarr; Voice.</p>
+          <p>Check the <b>Log</b> tab. 401 = the app's built-in API key was rejected; 429 = rate limit / out of credits. Contact your administrator.</p>
           <h4>Hotkey shows red "register failed"</h4>
           <p>Another app already owns that combo system-wide. Pick a different one.</p>
           <h4>Sticky note isn't appearing on A's screen</h4>
@@ -593,7 +559,7 @@
     <div class="setup-card mode-select-card">
       <div class="setup-topbar">
         <h2 class="setup-title">Start</h2>
-        <button class="setup-gear-btn" id="modeSelectSettingsBtn" title="Settings — API keys, hotkeys">&#9881;</button>
+        <button class="setup-gear-btn" id="modeSelectSettingsBtn" title="Settings — providers, hotkeys">&#9881;</button>
       </div>
       <p class="setup-intro hint">Begin a new interview session, or continue a saved one with its materials.</p>
       <div class="mode-choice-cards">
@@ -616,7 +582,7 @@
       <div class="setup-topbar">
         <button class="setup-back-btn" id="setupBackBtn" title="Back">&#8592;</button>
         <h2 class="setup-title">New Session</h2>
-        <button class="setup-gear-btn" id="setupSettingsBtn" title="Settings — API keys, hotkeys">&#9881;</button>
+        <button class="setup-gear-btn" id="setupSettingsBtn" title="Settings — providers, hotkeys">&#9881;</button>
       </div>
       <p class="setup-intro hint">Upload whatever you have — CV, JD, and/or support material. That is the knowledge base. Then pick the call type and press Start.</p>
 
