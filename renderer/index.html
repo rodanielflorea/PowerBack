@@ -448,7 +448,7 @@
           <span class="mode-choice-arrow" aria-hidden="true">&#8250;</span>
         </button>
       </div>
-      <p class="welcome-foot">New here? <button class="link-btn" id="welcomeHelpBtn">Read the user guide</button></p>
+      <p class="welcome-foot">New here? <button class="link-btn" id="welcomeTourBtn">Take the tour</button> <span class="welcome-dot">·</span> <button class="link-btn" id="welcomeHelpBtn">Read the user guide</button></p>
     </div>
   </section>
 
@@ -729,7 +729,23 @@
   <script src="lib/mermaid.min.js"></script>
   <script src="diagram-shared.js"></script>
   <script src="tooltip.js"></script>
+  <!-- First-run tour (renderer/tour.js) -->
+  <div id="tour" hidden>
+    <div class="tour-spot"></div>
+    <div class="tour-card">
+      <div class="tour-head"><span class="tour-step">1 / 16</span><button class="tour-skip link-btn" type="button">Skip tour</button></div>
+      <h3 class="tour-title"></h3>
+      <p class="tour-text"></p>
+      <label class="tour-check"><input type="checkbox" id="tourDontShow" /> Don't show this again</label>
+      <div class="tour-nav">
+        <button class="tour-back" type="button">← Back</button>
+        <button class="tour-next action-btn" type="button">Next →</button>
+      </div>
+    </div>
+  </div>
+
   <script src="geo.js"></script>
   <script src="renderer.js"></script>
+  <script src="tour.js"></script>
 </body>
 </html>

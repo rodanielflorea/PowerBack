@@ -529,6 +529,7 @@ function hideSetup() {
   const role = "speaker";
   applyRoleClass(role);
   if (answerMain) answerMain.hidden = false;
+  if (typeof updateModeToggleBtn === "function") updateModeToggleBtn();
 }
 
 // Mode-chooser + back navigation.
@@ -5074,8 +5075,7 @@ if (testCableBtnEl)
   try {
     const seen = await window.api.getWelcomeSeen().catch(() => true);
     if (!seen) {
-      // The one-time popup is superseded by the Welcome screen; never show it.
-      window.api.setWelcomeSeen(true).catch(() => {});
+      // The old popup is retired; the first-run tour (tour.js) uses this flag now.
     }
   } catch {}
 })();
