@@ -34,3 +34,5 @@ out/
 !build/entitlements.mac.inherit.plist
 !build/mac-open.command
 !build/MAC-README.txt
+mac-audio/build/*
+!mac-audio/build/.gitkeep

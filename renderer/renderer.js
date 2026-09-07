@@ -2159,6 +2159,16 @@ window.api.onUtteranceEnd(() => {
   scheduleAutoAnswer();
 });
 
+// macOS system audio: PCM chunks from the helper are pushed into the feed node.
+const IS_MAC = /Mac/i.test(navigator.platform || "");
+let macSysFeed = null;
+if (window.api.onMacSystemAudioChunk) {
+  window.api.onMacSystemAudioChunk((buf) => { if (macSysFeed) { try { macSysFeed.port.postMessage(buf); } catch {} } });
+}
+if (window.api.onMacSystemAudioEnded) {
+  window.api.onMacSystemAudioEnded((code) => { if (macSysFeed && recState) { macSysFeed = null; toast("System audio capture stopped (helper exited " + code + ").", "err"); } });
+}
+
 // ── Auto-answer ───────────────────────────────────────────────────────────────
 // When the interviewer stops speaking, wait a beat to be sure the question is
 // complete, then submit the transcript exactly as pressing Send would. The
@@ -3522,8 +3532,29 @@ async function startVoice() {
         return false;
       };
       let sysOk = false;
+      // macOS: system audio comes from the ScreenCaptureKit helper (main
+      // process) and is mixed in through the pcm-feed worklet.
+      if (IS_MAC && window.api.macSystemAudioStart) {
+        try {
+          const r = await window.api.macSystemAudioStart();
+          if (r && r.ok) {
+            await ctx.audioWorklet.addModule("pcm-feed-worklet.js");
+            const feed = new AudioWorkletNode(ctx, "pcm-feed", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
+            feed.connect(dest);
+            macSysFeed = feed;
+            streams.push({ getTracks: () => [{ stop: () => { if (macSysFeed === feed) macSysFeed = null; window.api.macSystemAudioStop(); } }] });
+            sysOk = true;
+            log("System audio: macOS ScreenCaptureKit", "info");
+          } else {
+            log("macOS system audio unavailable: " + ((r && r.error) || "unknown"), "err");
+            toast("System audio could not be captured: " + ((r && r.error) || "unknown") + ". If macOS asked for Screen/System Audio Recording permission, allow it and start listening again.", "err");
+          }
+        } catch (e) {
+          log("macOS system audio error: " + e.message, "err");
+        }
+      }
       // Primary: WASAPI loopback via chromeMediaSource:'desktop' (more reliable).
-      try {
+      if (!sysOk) try {
         const sourceId = await window.api.getDesktopSourceId();
         if (!sourceId) throw new Error("no desktop source");
         const sys = await navigator.mediaDevices.getUserMedia({
@@ -3544,8 +3575,8 @@ async function startVoice() {
       } catch (e) {
         log("System loopback failed (" + e.message + "); trying display capture…", "info");
       }
-      // Fallback: the previous getDisplayMedia path.
-      if (!sysOk) {
+      // Fallback: the previous getDisplayMedia path (not on macOS — it opens a picker and returns no system audio there).
+      if (!sysOk && !IS_MAC) {
         try {
           const sys = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
           sysOk = attachSystemAudio(sys, "");

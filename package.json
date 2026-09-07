@@ -107,7 +107,8 @@
       "extendInfo": {
         "NSMicrophoneUsageDescription": "RemoteDevJobAce listens to your interview call to transcribe it.",
         "NSAppleEventsUsageDescription": "RemoteDevJobAce types answers and pastes text into other apps for you.",
-        "NSScreenCaptureUsageDescription": "RemoteDevJobAce reads text from a screen area in OCR mode."
+        "NSScreenCaptureUsageDescription": "RemoteDevJobAce reads text from a screen area in OCR mode.",
+        "NSAudioCaptureUsageDescription": "RemoteDevJobAce captures the audio of your interview call to transcribe it."
       },
       "hardenedRuntime": false,
       "entitlements": "build/entitlements.mac.plist",
@@ -115,7 +116,16 @@
       "gatekeeperAssess": false,
       "notarize": true,
       "mergeASARs": true,
-      "singleArchFiles": "**/node_modules/@napi-rs/**"
+      "singleArchFiles": "**/node_modules/@napi-rs/**",
+      "extraResources": [
+        {
+          "from": "mac-audio/build/",
+          "to": "mac-audio/",
+          "filter": [
+            "system-audio"
+          ]
+        }
+      ]
     },
     "dmg": {
       "title": "${productName} ${version}",

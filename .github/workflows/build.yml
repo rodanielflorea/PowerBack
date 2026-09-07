@@ -56,6 +56,10 @@ jobs:
       # Connect API key trio) are also set, it notarizes and staples.
       # With no cert, a universal ad-hoc build is still produced; Gatekeeper
       # will block it until the user right-clicks Open or runs xattr.
+      - name: Build macOS system-audio helper (ScreenCaptureKit)
+        if: matrix.os == 'macos-latest'
+        run: bash mac-audio/build.sh
+
       - name: Build macOS (universal, sign + notarize when secrets exist)
         if: matrix.os == 'macos-latest'
         run: |

@@ -2138,6 +2138,51 @@ app.whenReady().then(() => {
 ipcMain.handle('set-opacity', (_e, value) => setOpacity(value));
 ipcMain.handle('get-opacity', () => (LINUX_CSS_OPACITY ? (state.opacity ?? 1) : (win?.getOpacity() ?? 1)));
 // What the OS can actually do, so the UI can say so instead of silently failing.
+// ── macOS system audio (ScreenCaptureKit helper, see mac-audio/) ────────────
+// Windows gets system audio from Chromium's loopback; macOS has no such thing,
+// so a native helper captures it and pipes 16 kHz mono Int16 PCM to us, which
+// we forward to the renderer's audio graph (pcm-feed-worklet.js).
+let macSysProc = null;
+function macSystemAudioHelperPath() {
+  return path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname, 'mac-audio', 'build'), app.isPackaged ? 'mac-audio' : '', 'system-audio');
+}
+function stopMacSystemAudio() {
+  const p = macSysProc;
+  macSysProc = null;
+  if (!p) return;
+  try { p.stdin.end(); } catch {}
+  setTimeout(() => { try { p.kill(); } catch {} }, 500);
+}
+ipcMain.handle('mac-system-audio-start', () => {
+  if (process.platform !== 'darwin') return { ok: false, error: 'not macOS' };
+  const bin = macSystemAudioHelperPath();
+  if (!fs.existsSync(bin)) return { ok: false, error: 'system-audio helper is missing from this build' };
+  stopMacSystemAudio();
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (r) => { if (!settled) { settled = true; resolve(r); } };
+    let p;
+    try { p = spawn(bin, [], { stdio: ['pipe', 'pipe', 'pipe'] }); } catch (e) { return done({ ok: false, error: e.message }); }
+    macSysProc = p;
+    p.stderr.on('data', (d) => {
+      const s = d.toString().trim();
+      if (s) appendLogLine('[mac-audio] ' + s);
+      if (/^started/m.test(s)) done({ ok: true });
+      else if (/error/i.test(s)) done({ ok: false, error: s.replace(/^error:\s*/i, '') });
+    });
+    p.stdout.on('data', (chunk) => { if (win && !win.isDestroyed()) win.webContents.send('mac-system-audio-chunk', chunk); });
+    p.on('exit', (code) => {
+      if (macSysProc === p) macSysProc = null;
+      done({ ok: false, error: 'system-audio helper exited (' + code + ')' });
+      if (win && !win.isDestroyed()) win.webContents.send('mac-system-audio-ended', code);
+    });
+    p.on('error', (e) => done({ ok: false, error: e.message }));
+    setTimeout(() => done({ ok: false, error: 'system-audio helper did not start (permission not granted?)' }), 8000);
+  });
+});
+ipcMain.handle('mac-system-audio-stop', () => { stopMacSystemAudio(); });
+app.on('will-quit', () => stopMacSystemAudio());
+
 // macOS microphone permission: 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown'.
 ipcMain.handle('get-mic-permission', () => {
   if (process.platform !== 'darwin') return 'granted';
