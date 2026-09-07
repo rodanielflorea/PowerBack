@@ -154,6 +154,8 @@
   window.startTour = function startTour() {
     i = 0;
     active = true;
+    // The tour must be clickable: make sure click-through is off.
+    if (window.api.setClickThrough) window.api.setClickThrough(false).catch(() => {});
     root.hidden = false;
     window.api.getWelcomeSeen().then((seen) => { chk.checked = !!seen; }).catch(() => {});
     window.addEventListener("resize", onResize);

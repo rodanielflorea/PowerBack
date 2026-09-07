@@ -437,6 +437,9 @@ function loadState() {
       hotkeys: { ...HOTKEY_DEFAULTS },
     };
   }
+  // Click-through is a transient mode: never start a session with it on, or
+  // every click (including the tour's Next) passes through the window.
+  state.clickThrough = false;
   migrateAnswerConfig();
   // One-time switch to the new audio-source defaults (system audio on, mic off)
   // for installs that saved the old defaults before this change.
