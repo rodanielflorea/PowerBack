@@ -1245,6 +1245,10 @@ function pasteToForeground(text) {
   if (!text || !text.trim()) return Promise.resolve();
   pasteQueue = pasteQueue.then(async () => {
     clipboard.writeText(text);
+    if (!macAccessibilityOk(true)) {
+      if (win) win.webContents.send('capture-error', 'Paste: ' + MAC_ACCESSIBILITY_HINT + ' The text is on the clipboard — press Cmd+V manually.');
+      return;
+    }
     const r = await pasteKeystroke();
     if (!r.ok && win) {
       win.webContents.send('capture-error',
@@ -2181,6 +2185,41 @@ ipcMain.handle('mac-system-audio-start', () => {
   });
 });
 ipcMain.handle('mac-system-audio-stop', () => { stopMacSystemAudio(); });
+
+// macOS: typing/pasting into other apps needs the Accessibility permission.
+// prompt=true shows the system dialog that adds the app to the list.
+function macAccessibilityOk(prompt) {
+  if (process.platform !== 'darwin') return true;
+  try { return require('electron').systemPreferences.isTrustedAccessibilityClient(!!prompt); } catch { return true; }
+}
+const MAC_ACCESSIBILITY_HINT = 'macOS needs the Accessibility permission for this: System Settings → Privacy & Security → Accessibility → enable RemoteDevJobAce, then try again.';
+
+// ── Diagnostics: one place that checks every requirement on this machine ──
+ipcMain.handle('run-diagnostics', async () => {
+  const sp = require('electron').systemPreferences;
+  const mac = process.platform === 'darwin';
+  const checks = [];
+  const add = (name, ok, detail, fix) => checks.push({ name, ok, detail: detail || '', fix: ok ? '' : (fix || '') });
+  const keys = getBuiltinKeys();
+  add('Deepgram key (transcription)', !!keys.deepgram, keys.deepgram ? 'built in' : 'missing', 'Rebuild with the API_KEYS_JSON secret (or defaults/api-keys.json) filled in.');
+  const ap = getAnswerProvider();
+  add(`${ap.label} key (answers)`, !!getAnswerApiKey(ap.id), getAnswerApiKey(ap.id) ? 'built in' : 'missing', 'Rebuild with the API_KEYS_JSON secret filled in, or pick a provider that has a key.');
+  if (mac) {
+    const micSt = (() => { try { return sp.getMediaAccessStatus('microphone'); } catch { return 'unknown'; } })();
+    add('Microphone permission', micSt === 'granted', micSt, 'System Settings → Privacy & Security → Microphone → enable RemoteDevJobAce.');
+    const scrSt = (() => { try { return sp.getMediaAccessStatus('screen'); } catch { return 'unknown'; } })();
+    add('Screen Recording permission (OCR, and system audio on macOS 13–14.3)', scrSt === 'granted', scrSt, 'System Settings → Privacy & Security → Screen Recording → enable RemoteDevJobAce.');
+    const helper = macSystemAudioHelperPath();
+    add('System-audio helper present', fs.existsSync(helper), fs.existsSync(helper) ? helper : 'not in this build', 'This build has no system-audio helper; use a build from GitHub Actions (macOS runner).');
+    add('Accessibility permission (typing / paste into other apps)', macAccessibilityOk(false), macAccessibilityOk(false) ? 'granted' : 'not granted', MAC_ACCESSIBILITY_HINT);
+    let osOk = true; try { osOk = parseInt(require('os').release().split('.')[0], 10) >= 22; } catch {}
+    add('macOS 13 or newer (system audio)', osOk, require('os').release(), 'Update macOS to 13 (Ventura) or newer for system-audio capture.');
+  }
+  const tess = (() => { try { require('child_process').execFileSync(process.platform === 'win32' ? 'where' : 'which', ['tesseract'], { stdio: 'ignore' }); return true; } catch { return false; } })();
+  add('tesseract (OCR mode)', tess || (process.platform === 'win32' && fs.existsSync(CAPTURE_EXE)), tess ? 'installed' : 'not installed', mac ? 'brew install tesseract' : (process.platform === 'win32' ? 'Only needed for OCR mode.' : 'sudo apt install tesseract-ocr'));
+  add('License', !!license.checkStoredLicense(app.getPath('userData')).ok, 'valid', 'Ask your administrator for a new key.');
+  return { platform: process.platform, checks };
+});
 app.on('will-quit', () => stopMacSystemAudio());
 
 // macOS microphone permission: 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown'.
@@ -3871,6 +3910,11 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor, stripIndent } = {
 
   // Per-platform key injector (PowerShell SendKeys on Windows, osascript on
   // macOS, xdotool/ydotool/wtype on Linux) — see platform-input.js.
+  if (!macAccessibilityOk(true)) {
+    if (win) { win.off('focus', onWinFocus); win.off('blur', onWinBlur); }
+    ideTypingActive = false; stopCursorTakeover(); notifyTypingState();
+    return { ok: false, error: MAC_ACCESSIBILITY_HINT };
+  }
   const injector = createKeyInjector();
   const teardownEarly = (error) => {
     if (win) { win.off('focus', onWinFocus); win.off('blur', onWinBlur); }

@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('api', {
   onOpacityCss: (cb) => ipcRenderer.on('opacity-css', (_e, v) => cb(v)),
   getPlatformCaps: () => ipcRenderer.invoke('get-platform-caps'),
   getMicPermission: () => ipcRenderer.invoke('get-mic-permission'),
+  runDiagnostics: () => ipcRenderer.invoke('run-diagnostics'),
   macSystemAudioStart: () => ipcRenderer.invoke('mac-system-audio-start'),
   macSystemAudioStop: () => ipcRenderer.invoke('mac-system-audio-stop'),
   onMacSystemAudioChunk: (cb) => ipcRenderer.on('mac-system-audio-chunk', (_e, buf) => cb(buf)),

@@ -653,6 +653,23 @@ if (historySearch) historySearch.addEventListener("input", renderHistory);
 if (historyOverlay) historyOverlay.addEventListener("click", (e) => { if (e.target === historyOverlay) closeHistory(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && historyOverlay && !historyOverlay.hidden) closeHistory(); });
 
+// ── System check (Settings → Check) ─────────────────────────────────────────
+const diagRunBtn = document.getElementById("diagRunBtn");
+async function runDiagnostics() {
+  const list = document.getElementById("diagList");
+  const st = document.getElementById("diagStatus");
+  if (!list || !window.api.runDiagnostics) return;
+  if (st) st.textContent = "Checking…";
+  const res = await window.api.runDiagnostics();
+  const esc = (t) => String(t || "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+  list.innerHTML = (res.checks || []).map((c) =>
+    `<div class="diag-item ${c.ok ? "diag-item--ok" : "diag-item--bad"}"><span class="diag-icon">${c.ok ? "✓" : "!"}</span><div><div class="diag-name">${esc(c.name)}</div>` +
+    `<div class="diag-detail">${esc(c.detail)}</div>${c.fix ? `<div class="diag-fix">${esc(c.fix)}</div>` : ""}</div></div>`).join("");
+  const bad = (res.checks || []).filter((c) => !c.ok).length;
+  if (st) st.textContent = bad ? `${bad} item${bad > 1 ? "s" : ""} need attention` : "All good";
+}
+if (diagRunBtn) diagRunBtn.addEventListener("click", runDiagnostics);
+
 const welcomeHelpBtn = document.getElementById("welcomeHelpBtn");
 if (welcomeHelpBtn) welcomeHelpBtn.addEventListener("click", () => { openSettings(); if (typeof activateTab === "function") activateTab("help"); });
 

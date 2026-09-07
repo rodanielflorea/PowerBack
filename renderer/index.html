@@ -71,6 +71,7 @@
     <nav class="settings-tabs" id="settingsTabs">
       <button class="tab-btn active" data-tab="apikeys" type="button">Providers</button>
       <button class="tab-btn" data-tab="hotkeys" type="button">Hotkeys</button>
+      <button class="tab-btn" data-tab="diag" type="button">Check</button>
       <button class="tab-btn" data-tab="help" type="button">User guide</button>
     </nav>
     <div class="settings-body">
@@ -285,6 +286,14 @@
         </section>
       </div>
 
+      <div class="settings-tab" data-tab="diag" hidden>
+        <section class="settings-section">
+          <h3>System check</h3>
+          <p class="hint">Checks everything this app needs on this computer — keys, permissions, helpers. Red items show how to fix them.</p>
+          <div class="updater-row"><button id="diagRunBtn" class="action-btn">Run checks</button><span class="updater-status" id="diagStatus"></span></div>
+          <div class="diag-list" id="diagList"></div>
+        </section>
+      </div>
       <div class="settings-tab help-tab" data-tab="help" hidden>
         <section class="settings-section help-section">
           <h3>What this app does</h3>
