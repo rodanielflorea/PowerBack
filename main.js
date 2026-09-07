@@ -93,7 +93,7 @@ const DEFAULT_STATE = {
     language: 'auto',
     micDeviceId: '',
     captureSystem: true,
-    captureMic: false,
+    captureMic: process.platform !== 'win32', // only Windows can capture system audio
     autoAnswer: true, // answer by itself when the interviewer stops speaking
   },
   capture: {
@@ -440,10 +440,12 @@ function loadState() {
   migrateAnswerConfig();
   // One-time switch to the new audio-source defaults (system audio on, mic off)
   // for installs that saved the old defaults before this change.
-  if (!state.audioDefaultsV2) {
+  // V3: Windows → system audio only; macOS/Linux → microphone too, since
+  // they cannot capture system audio.
+  if (!state.audioDefaultsV3) {
     state.transcription.captureSystem = true;
-    state.transcription.captureMic = false;
-    state.audioDefaultsV2 = true;
+    state.transcription.captureMic = process.platform !== 'win32';
+    state.audioDefaultsV3 = true;
   }
   applyBuiltinKeys();
   seedAvoidPhrasesIfNeeded();
@@ -1243,6 +1245,10 @@ function pasteToForeground(text) {
   if (!text || !text.trim()) return Promise.resolve();
   pasteQueue = pasteQueue.then(async () => {
     clipboard.writeText(text);
+    if (!macAccessibilityOk(true)) {
+      if (win) win.webContents.send('capture-error', 'Paste: ' + MAC_ACCESSIBILITY_HINT + ' The text is on the clipboard — press Cmd+V manually.');
+      return;
+    }
     const r = await pasteKeystroke();
     if (!r.ok && win) {
       win.webContents.send('capture-error',
@@ -1330,11 +1336,8 @@ function hasTesseract() {
 // Cross-platform OCR: grab the capture rect from the screen via desktopCapturer
 // and feed it to the tesseract CLI. Used everywhere the bundled Windows
 // Capture2Text exe is not available.
-async function runOcrTesseract(rect, language) {
-  if (!hasTesseract()) {
-    const hint = process.platform === 'darwin' ? 'brew install tesseract' : 'sudo apt install tesseract-ocr';
-    throw new Error(`tesseract not installed (${hint})`);
-  }
+// Grab the capture rect from the screen as a PNG file (any platform).
+async function captureRectPng(rect) {
   const display = screen.getDisplayNearestPoint({ x: Math.round(rect.x1), y: Math.round(rect.y1) });
   const dsf = display.scaleFactor || 1;
   const thumbW = Math.round(display.bounds.width * dsf);
@@ -1353,6 +1356,42 @@ async function runOcrTesseract(rect, language) {
   const png = source.thumbnail.crop(crop).toPNG();
   const tmp = path.join(app.getPath('temp'), `ace-ocr-${process.pid}.png`);
   fs.writeFileSync(tmp, png);
+  return tmp;
+}
+
+// macOS: Apple Vision text recognition via the bundled helper — no tesseract.
+const VISION_LANGS = {
+  English: 'en-US', Russian: 'ru-RU', Japanese: 'ja-JP', Chinese: 'zh-Hans', Spanish: 'es-ES', French: 'fr-FR',
+  German: 'de-DE', Portuguese: 'pt-BR', Italian: 'it-IT', Dutch: 'nl-NL', Turkish: 'tr-TR', Polish: 'pl-PL',
+  Arabic: 'ar-SA', Korean: 'ko-KR',
+};
+function macOcrHelperPath() {
+  return path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname, 'mac-audio', 'build'), app.isPackaged ? 'mac-audio' : '', 'ocr');
+}
+async function runOcrVision(rect, language) {
+  const tmp = await captureRectPng(rect);
+  const args = [tmp, VISION_LANGS[language] || 'en-US'];
+  return new Promise((resolve, reject) => {
+    const p = spawn(macOcrHelperPath(), args);
+    let out = '';
+    let err = '';
+    p.stdout.on('data', (d) => { out += d.toString(); });
+    p.stderr.on('data', (d) => { err += d.toString(); });
+    p.on('error', reject);
+    p.on('exit', (code) => {
+      try { fs.unlinkSync(tmp); } catch {}
+      if (code === 0) resolve(out.replace(/\r/g, '').trim());
+      else reject(new Error(`OCR helper exit ${code}: ${err.slice(-200)}`));
+    });
+  });
+}
+
+async function runOcrTesseract(rect, language) {
+  if (!hasTesseract()) {
+    const hint = process.platform === 'darwin' ? 'brew install tesseract' : 'Settings → Check → Install missing tools (or: sudo apt install tesseract-ocr)';
+    throw new Error(`tesseract not installed (${hint})`);
+  }
+  const tmp = await captureRectPng(rect);
   const lang = TESSERACT_LANGS[language] || 'eng';
   return new Promise((resolve, reject) => {
     const p = spawn('tesseract', [tmp, 'stdout', '-l', lang, '--psm', '6']);
@@ -1371,6 +1410,7 @@ async function runOcrTesseract(rect, language) {
 
 function runOcr(rect, language) {
   if (process.platform === 'win32' && fs.existsSync(CAPTURE_EXE)) return runOcrCapture2Text(rect, language);
+  if (process.platform === 'darwin' && fs.existsSync(macOcrHelperPath())) return runOcrVision(rect, language);
   return runOcrTesseract(rect, language);
 }
 
@@ -2136,6 +2176,123 @@ app.whenReady().then(() => {
 ipcMain.handle('set-opacity', (_e, value) => setOpacity(value));
 ipcMain.handle('get-opacity', () => (LINUX_CSS_OPACITY ? (state.opacity ?? 1) : (win?.getOpacity() ?? 1)));
 // What the OS can actually do, so the UI can say so instead of silently failing.
+// ── macOS system audio (ScreenCaptureKit helper, see mac-audio/) ────────────
+// Windows gets system audio from Chromium's loopback; macOS has no such thing,
+// so a native helper captures it and pipes 16 kHz mono Int16 PCM to us, which
+// we forward to the renderer's audio graph (pcm-feed-worklet.js).
+let macSysProc = null;
+function macSystemAudioHelperPath() {
+  return path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname, 'mac-audio', 'build'), app.isPackaged ? 'mac-audio' : '', 'system-audio');
+}
+function stopMacSystemAudio() {
+  const p = macSysProc;
+  macSysProc = null;
+  if (!p) return;
+  try { p.stdin.end(); } catch {}
+  setTimeout(() => { try { p.kill(); } catch {} }, 500);
+}
+ipcMain.handle('mac-system-audio-start', () => {
+  if (process.platform !== 'darwin') return { ok: false, error: 'not macOS' };
+  const bin = macSystemAudioHelperPath();
+  if (!fs.existsSync(bin)) return { ok: false, error: 'system-audio helper is missing from this build' };
+  stopMacSystemAudio();
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (r) => { if (!settled) { settled = true; resolve(r); } };
+    let p;
+    try { p = spawn(bin, [], { stdio: ['pipe', 'pipe', 'pipe'] }); } catch (e) { return done({ ok: false, error: e.message }); }
+    macSysProc = p;
+    p.stderr.on('data', (d) => {
+      const s = d.toString().trim();
+      if (s) appendLogLine('[mac-audio] ' + s);
+      if (/^started/m.test(s)) done({ ok: true });
+      else if (/error/i.test(s)) done({ ok: false, error: s.replace(/^error:\s*/i, '') });
+    });
+    p.stdout.on('data', (chunk) => { if (win && !win.isDestroyed()) win.webContents.send('mac-system-audio-chunk', chunk); });
+    p.on('exit', (code) => {
+      if (macSysProc === p) macSysProc = null;
+      done({ ok: false, error: 'system-audio helper exited (' + code + ')' });
+      if (win && !win.isDestroyed()) win.webContents.send('mac-system-audio-ended', code);
+    });
+    p.on('error', (e) => done({ ok: false, error: e.message }));
+    setTimeout(() => done({ ok: false, error: 'system-audio helper did not start (permission not granted?)' }), 8000);
+  });
+});
+ipcMain.handle('mac-system-audio-stop', () => { stopMacSystemAudio(); });
+
+// macOS: typing/pasting into other apps needs the Accessibility permission.
+// prompt=true shows the system dialog that adds the app to the list.
+function macAccessibilityOk(prompt) {
+  if (process.platform !== 'darwin') return true;
+  try { return require('electron').systemPreferences.isTrustedAccessibilityClient(!!prompt); } catch { return true; }
+}
+const MAC_ACCESSIBILITY_HINT = 'macOS needs the Accessibility permission for this: System Settings → Privacy & Security → Accessibility → enable RemoteDevJobAce, then try again.';
+
+// ── Diagnostics: one place that checks every requirement on this machine ──
+ipcMain.handle('run-diagnostics', async () => {
+  const sp = require('electron').systemPreferences;
+  const mac = process.platform === 'darwin';
+  const checks = [];
+  const add = (name, ok, detail, fix) => checks.push({ name, ok, detail: detail || '', fix: ok ? '' : (fix || '') });
+  const keys = getBuiltinKeys();
+  add('Deepgram key (transcription)', !!keys.deepgram, keys.deepgram ? 'built in' : 'missing', 'Rebuild with the API_KEYS_JSON secret (or defaults/api-keys.json) filled in.');
+  const ap = getAnswerProvider();
+  add(`${ap.label} key (answers)`, !!getAnswerApiKey(ap.id), getAnswerApiKey(ap.id) ? 'built in' : 'missing', 'Rebuild with the API_KEYS_JSON secret filled in, or pick a provider that has a key.');
+  if (mac) {
+    const micSt = (() => { try { return sp.getMediaAccessStatus('microphone'); } catch { return 'unknown'; } })();
+    add('Microphone permission', micSt === 'granted', micSt, 'System Settings → Privacy & Security → Microphone → enable RemoteDevJobAce.');
+    const scrSt = (() => { try { return sp.getMediaAccessStatus('screen'); } catch { return 'unknown'; } })();
+    add('Screen Recording permission (OCR, and system audio on macOS 13–14.3)', scrSt === 'granted', scrSt, 'System Settings → Privacy & Security → Screen Recording → enable RemoteDevJobAce.');
+    const helper = macSystemAudioHelperPath();
+    add('System-audio helper present', fs.existsSync(helper), fs.existsSync(helper) ? helper : 'not in this build', 'This build has no system-audio helper; use a build from GitHub Actions (macOS runner).');
+    add('Accessibility permission (typing / paste into other apps)', macAccessibilityOk(false), macAccessibilityOk(false) ? 'granted' : 'not granted', MAC_ACCESSIBILITY_HINT);
+    let osOk = true; try { osOk = parseInt(require('os').release().split('.')[0], 10) >= 22; } catch {}
+    add('macOS 13 or newer (system audio)', osOk, require('os').release(), 'Update macOS to 13 (Ventura) or newer for system-audio capture.');
+  }
+  const has = (cmd) => { try { require('child_process').execFileSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { stdio: 'ignore' }); return true; } catch { return false; } };
+  if (mac) {
+    add('OCR helper (Apple Vision)', fs.existsSync(macOcrHelperPath()), fs.existsSync(macOcrHelperPath()) ? 'built in' : 'not in this build', 'Use a build from GitHub Actions (macOS runner).');
+  } else if (process.platform === 'linux') {
+    const tess = has('tesseract');
+    add('tesseract (OCR mode)', tess, tess ? 'installed' : 'not installed', 'Click "Install missing tools" below.');
+    const typing = has('xdotool') || has('wtype') || has('ydotool');
+    add('Typing tool (Write-to-IDE / paste): xdotool, wtype or ydotool', typing, typing ? 'installed' : 'none installed', 'Click "Install missing tools" below.');
+  } else {
+    const tess = has('tesseract') || fs.existsSync(CAPTURE_EXE);
+    add('OCR engine', tess, tess ? 'available' : 'not installed', 'Only needed for OCR mode; install tesseract (UB-Mannheim build) and add it to PATH.');
+  }
+  add('License', !!license.checkStoredLicense(app.getPath('userData')).ok, 'valid', 'Ask your administrator for a new key.');
+  return { platform: process.platform, checks, canInstallTools: process.platform === 'linux' && (has('apt-get') || has('dnf') || has('pacman')) && has('pkexec') };
+});
+
+// Linux: install the optional tools through the system package manager with
+// the normal graphical password prompt (pkexec). The .deb declares the same
+// packages as dependencies, so this is mainly for AppImage users.
+ipcMain.handle('install-linux-tools', () => new Promise((resolve) => {
+  if (process.platform !== 'linux') return resolve({ ok: false, error: 'Linux only' });
+  const has = (cmd) => { try { require('child_process').execFileSync('which', [cmd], { stdio: 'ignore' }); return true; } catch { return false; } };
+  let cmd;
+  if (has('apt-get')) cmd = 'apt-get update && apt-get install -y tesseract-ocr xdotool wtype';
+  else if (has('dnf')) cmd = 'dnf install -y tesseract xdotool wtype';
+  else if (has('pacman')) cmd = 'pacman -Sy --noconfirm tesseract tesseract-data-eng xdotool wtype';
+  else return resolve({ ok: false, error: 'No supported package manager found (apt, dnf or pacman).' });
+  const p = spawn('pkexec', ['sh', '-c', cmd]);
+  let err = '';
+  p.stderr.on('data', (d) => { err += d.toString(); });
+  p.on('error', (e) => resolve({ ok: false, error: e.message }));
+  p.on('exit', (code) => resolve(code === 0 ? { ok: true } : { ok: false, error: code === 126 || code === 127 ? 'Cancelled.' : ('Install failed: ' + err.slice(-300)) }));
+}));
+app.on('will-quit', () => stopMacSystemAudio());
+
+// macOS microphone permission: 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown'.
+ipcMain.handle('get-mic-permission', () => {
+  if (process.platform !== 'darwin') return 'granted';
+  try { return require('electron').systemPreferences.getMediaAccessStatus('microphone'); } catch { return 'unknown'; }
+});
+ipcMain.handle('request-mic-permission', async () => {
+  if (process.platform !== 'darwin') return true;
+  try { return await require('electron').systemPreferences.askForMediaAccess('microphone'); } catch { return false; }
+});
 ipcMain.handle('get-platform-caps', () => ({
   platform: process.platform,
   stealth: process.platform !== 'linux',
@@ -3306,7 +3463,7 @@ async function generateAnswer(question, images, forcedMode, transcript) {
   const provider = getAnswerProvider();
   const apiKey = getAnswerApiKey(provider.id);
   if (!apiKey) {
-    if (win && !win.isDestroyed()) win.webContents.send('answer-error', `No ${provider.label} API key set (Settings → API keys → Answer generation).`);
+    if (win && !win.isDestroyed()) win.webContents.send('answer-error', `No ${provider.label} API key is built into this copy of the app — contact your administrator.`);
     return;
   }
   if (answerAbort) { try { answerAbort.abort(); } catch {} answerAbort = null; }
@@ -3815,6 +3972,11 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor, stripIndent } = {
 
   // Per-platform key injector (PowerShell SendKeys on Windows, osascript on
   // macOS, xdotool/ydotool/wtype on Linux) — see platform-input.js.
+  if (!macAccessibilityOk(true)) {
+    if (win) { win.off('focus', onWinFocus); win.off('blur', onWinBlur); }
+    ideTypingActive = false; stopCursorTakeover(); notifyTypingState();
+    return { ok: false, error: MAC_ACCESSIBILITY_HINT };
+  }
   const injector = createKeyInjector();
   const teardownEarly = (error) => {
     if (win) { win.off('focus', onWinFocus); win.off('blur', onWinBlur); }

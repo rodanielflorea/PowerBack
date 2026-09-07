@@ -653,6 +653,35 @@ if (historySearch) historySearch.addEventListener("input", renderHistory);
 if (historyOverlay) historyOverlay.addEventListener("click", (e) => { if (e.target === historyOverlay) closeHistory(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && historyOverlay && !historyOverlay.hidden) closeHistory(); });
 
+// ── System check (Settings → Check) ─────────────────────────────────────────
+const diagRunBtn = document.getElementById("diagRunBtn");
+async function runDiagnostics() {
+  const list = document.getElementById("diagList");
+  const st = document.getElementById("diagStatus");
+  if (!list || !window.api.runDiagnostics) return;
+  if (st) st.textContent = "Checking…";
+  const res = await window.api.runDiagnostics();
+  const esc = (t) => String(t || "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+  list.innerHTML = (res.checks || []).map((c) =>
+    `<div class="diag-item ${c.ok ? "diag-item--ok" : "diag-item--bad"}"><span class="diag-icon">${c.ok ? "✓" : "!"}</span><div><div class="diag-name">${esc(c.name)}</div>` +
+    `<div class="diag-detail">${esc(c.detail)}</div>${c.fix ? `<div class="diag-fix">${esc(c.fix)}</div>` : ""}</div></div>`).join("");
+  const bad = (res.checks || []).filter((c) => !c.ok).length;
+  if (st) st.textContent = bad ? `${bad} item${bad > 1 ? "s" : ""} need attention` : "All good";
+  const installBtn = document.getElementById("diagInstallBtn");
+  if (installBtn) installBtn.hidden = !(res.canInstallTools && (res.checks || []).some((c) => !c.ok && /tesseract|Typing tool/.test(c.name)));
+}
+const diagInstallBtn = document.getElementById("diagInstallBtn");
+if (diagInstallBtn) diagInstallBtn.addEventListener("click", async () => {
+  const st = document.getElementById("diagStatus");
+  diagInstallBtn.disabled = true;
+  if (st) st.textContent = "Installing… (enter your password in the system prompt)";
+  const r = await window.api.installLinuxTools();
+  diagInstallBtn.disabled = false;
+  if (!r.ok) toast(r.error || "Install failed", "err"); else toast("Tools installed.", "info");
+  runDiagnostics();
+});
+if (diagRunBtn) diagRunBtn.addEventListener("click", runDiagnostics);
+
 const welcomeHelpBtn = document.getElementById("welcomeHelpBtn");
 if (welcomeHelpBtn) welcomeHelpBtn.addEventListener("click", () => { openSettings(); if (typeof activateTab === "function") activateTab("help"); });
 
@@ -2159,6 +2188,16 @@ window.api.onUtteranceEnd(() => {
   scheduleAutoAnswer();
 });
 
+// macOS system audio: PCM chunks from the helper are pushed into the feed node.
+const IS_MAC = /Mac/i.test(navigator.platform || "");
+let macSysFeed = null;
+if (window.api.onMacSystemAudioChunk) {
+  window.api.onMacSystemAudioChunk((buf) => { if (macSysFeed) { try { macSysFeed.port.postMessage(buf); } catch {} } });
+}
+if (window.api.onMacSystemAudioEnded) {
+  window.api.onMacSystemAudioEnded((code) => { if (macSysFeed && recState) { macSysFeed = null; toast("System audio capture stopped (helper exited " + code + ").", "err"); } });
+}
+
 // ── Auto-answer ───────────────────────────────────────────────────────────────
 // When the interviewer stops speaking, wait a beat to be sure the question is
 // complete, then submit the transcript exactly as pressing Send would. The
@@ -3378,7 +3417,8 @@ if (window.api.getAnswerConfig) {
 
 async function refreshMicList() {
   try {
-    await navigator.mediaDevices
+    const perm = window.api.getMicPermission ? await window.api.getMicPermission() : "granted";
+    if (perm === "granted") await navigator.mediaDevices
       .getUserMedia({ audio: true })
       .then((s) => s.getTracks().forEach((t) => t.stop()));
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -3454,11 +3494,24 @@ async function startVoice() {
     const label = isXai ? "xAI" : "Deepgram";
     if (!apiKey) {
       log(`${label} API key not set`, "err");
+      toast(`Transcription unavailable: no ${label} key is built into this copy of the app — contact your administrator.`, "err");
       return;
     }
     if (txCfg.captureMic === false && txCfg.captureSystem === false) {
-      log("No audio source selected — enable Microphone or System audio in Settings → Transcription", "err");
+      log("No audio source selected — enable Microphone or System audio in Settings → Audio sources", "err");
+      toast("No audio source selected — enable Microphone or System audio in Settings → Audio sources.", "err");
       return;
+    }
+    // macOS: never call getUserMedia while permission is denied (each call
+    // re-prompts); ask once if undetermined, and explain if denied.
+    if (txCfg.captureMic !== false && window.api.getMicPermission) {
+      let perm = await window.api.getMicPermission();
+      if (perm === "not-determined" && window.api.requestMicPermission) perm = (await window.api.requestMicPermission()) ? "granted" : "denied";
+      if (perm === "denied" || perm === "restricted") {
+        toast("Microphone access is blocked. Allow it in System Settings → Privacy & Security → Microphone, then start listening again.", "err");
+        if (txCfg.captureSystem === false) return;
+        txCfg = { ...txCfg, captureMic: false };
+      }
     }
 
     const startStream = isXai
@@ -3508,8 +3561,29 @@ async function startVoice() {
         return false;
       };
       let sysOk = false;
+      // macOS: system audio comes from the ScreenCaptureKit helper (main
+      // process) and is mixed in through the pcm-feed worklet.
+      if (IS_MAC && window.api.macSystemAudioStart) {
+        try {
+          const r = await window.api.macSystemAudioStart();
+          if (r && r.ok) {
+            await ctx.audioWorklet.addModule("pcm-feed-worklet.js");
+            const feed = new AudioWorkletNode(ctx, "pcm-feed", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
+            feed.connect(dest);
+            macSysFeed = feed;
+            streams.push({ getTracks: () => [{ stop: () => { if (macSysFeed === feed) macSysFeed = null; window.api.macSystemAudioStop(); } }] });
+            sysOk = true;
+            log("System audio: macOS ScreenCaptureKit", "info");
+          } else {
+            log("macOS system audio unavailable: " + ((r && r.error) || "unknown"), "err");
+            toast("System audio could not be captured: " + ((r && r.error) || "unknown") + ". If macOS asked for Screen/System Audio Recording permission, allow it and start listening again.", "err");
+          }
+        } catch (e) {
+          log("macOS system audio error: " + e.message, "err");
+        }
+      }
       // Primary: WASAPI loopback via chromeMediaSource:'desktop' (more reliable).
-      try {
+      if (!sysOk) try {
         const sourceId = await window.api.getDesktopSourceId();
         if (!sourceId) throw new Error("no desktop source");
         const sys = await navigator.mediaDevices.getUserMedia({
@@ -3530,8 +3604,8 @@ async function startVoice() {
       } catch (e) {
         log("System loopback failed (" + e.message + "); trying display capture…", "info");
       }
-      // Fallback: the previous getDisplayMedia path.
-      if (!sysOk) {
+      // Fallback: the previous getDisplayMedia path (not on macOS — it opens a picker and returns no system audio there).
+      if (!sysOk && !IS_MAC) {
         try {
           const sys = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
           sysOk = attachSystemAudio(sys, "");
@@ -3539,6 +3613,12 @@ async function startVoice() {
         } catch (e) {
           log("System audio failed: " + e.message, "err");
         }
+      }
+      if (!sysOk && !streams.length) {
+        toast("System audio can't be captured on this computer. Turn on Microphone in Settings → Audio sources (on a Mac, install BlackHole to capture the call audio).", "err");
+        try { await ctx.close(); } catch {}
+        try { await (isXai ? window.api.stopXaiStream : window.api.stopDeepgramStream)(); } catch {}
+        return;
       }
     }
 
@@ -4782,7 +4862,8 @@ const CABLE_RE = /(cable input|vb-audio|voicemeeter input|virtual cable)/i;
 async function refreshCablePicker() {
   if (!netVirtualCableEl) return;
   try {
-    await navigator.mediaDevices
+    const perm = window.api.getMicPermission ? await window.api.getMicPermission() : "granted";
+    if (perm === "granted") await navigator.mediaDevices
       .getUserMedia({ audio: true })
       .then((s) => s.getTracks().forEach((t) => t.stop()));
   } catch {}
