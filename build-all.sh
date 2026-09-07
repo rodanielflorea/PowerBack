@@ -58,6 +58,13 @@ echo ">> Waiting for run $RUN_ID (Windows + Linux + macOS build in parallel, ~5-
 gh run watch "$RUN_ID" --exit-status || { echo "CI build failed — see: gh run view $RUN_ID --log-failed"; exit 1; }
 
 rm -rf dist/all-os && mkdir -p dist/all-os
-gh run download "$RUN_ID" --dir dist/all-os
+# The build uploads the installers to a (draft) GitHub release named v<version>.
+VERSION=$(node -p "require('./package.json').version")
+if gh release download "v$VERSION" --dir dist/all-os --clobber 2>/dev/null; then
+  echo ">> Downloaded from release v$VERSION"
+else
+  echo ">> No release found; trying the run's artifacts…"
+  gh run download "$RUN_ID" --dir dist/all-os || echo "!! No installers could be downloaded — see the run page: $(gh run view "$RUN_ID" --json url -q .url)"
+fi
 echo ">> Installers for all OSes:"
 find dist/all-os -type f | sed 's/^/   /'

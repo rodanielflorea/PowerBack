@@ -44,7 +44,7 @@ jobs:
       # Windows / Linux: never look for a code-signing identity.
       - name: Build Windows / Linux
         if: matrix.os != 'macos-latest'
-        run: npx electron-builder ${{ matrix.args }} --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
+        run: npx electron-builder ${{ matrix.args }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
@@ -81,7 +81,7 @@ jobs:
           # Hardened runtime needs a real signature; an unsigned/ad-hoc build with
           # it enabled cannot use the microphone (re-prompts forever).
           HARDENED=false; [ -n "$CSC_LINK" ] && HARDENED=true
-          npx electron-builder --mac -c.mac.hardenedRuntime=$HARDENED --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
+          npx electron-builder --mac -c.mac.hardenedRuntime=$HARDENED --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
@@ -93,8 +93,9 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
 
-      # Installers are large; keep them briefly (releases keep them for good)
-      # and never fail the build over the artifact storage quota.
+      # Installers also go to a GitHub release (draft for branch builds), which
+      # is what build-all downloads; the artifact upload is a best-effort extra
+      # and never fails the build over the artifact storage quota.
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
