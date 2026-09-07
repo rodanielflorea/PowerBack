@@ -93,8 +93,12 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
 
+      # Installers are large; keep them briefly (releases keep them for good)
+      # and never fail the build over the artifact storage quota.
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
+          retention-days: 3
           name: installers-${{ matrix.os }}
           path: |
             dist/*.exe

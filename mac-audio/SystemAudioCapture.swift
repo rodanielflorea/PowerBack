@@ -36,7 +36,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     // Exclude the app that launched us (the parent process) so its own sounds
     // are never fed back into the transcript.
     let parent = getppid()
-    let exclude = content.applications.filter { $0.processIdentifier == parent }
+    let exclude = content.applications.filter { $0.processID == parent }
     let filter = SCContentFilter(display: display, excludingApplications: exclude, exceptingWindows: [])
 
     let cfg = SCStreamConfiguration()

@@ -1336,11 +1336,8 @@ function hasTesseract() {
 // Cross-platform OCR: grab the capture rect from the screen via desktopCapturer
 // and feed it to the tesseract CLI. Used everywhere the bundled Windows
 // Capture2Text exe is not available.
-async function runOcrTesseract(rect, language) {
-  if (!hasTesseract()) {
-    const hint = process.platform === 'darwin' ? 'brew install tesseract' : 'sudo apt install tesseract-ocr';
-    throw new Error(`tesseract not installed (${hint})`);
-  }
+// Grab the capture rect from the screen as a PNG file (any platform).
+async function captureRectPng(rect) {
   const display = screen.getDisplayNearestPoint({ x: Math.round(rect.x1), y: Math.round(rect.y1) });
   const dsf = display.scaleFactor || 1;
   const thumbW = Math.round(display.bounds.width * dsf);
@@ -1359,6 +1356,42 @@ async function runOcrTesseract(rect, language) {
   const png = source.thumbnail.crop(crop).toPNG();
   const tmp = path.join(app.getPath('temp'), `ace-ocr-${process.pid}.png`);
   fs.writeFileSync(tmp, png);
+  return tmp;
+}
+
+// macOS: Apple Vision text recognition via the bundled helper — no tesseract.
+const VISION_LANGS = {
+  English: 'en-US', Russian: 'ru-RU', Japanese: 'ja-JP', Chinese: 'zh-Hans', Spanish: 'es-ES', French: 'fr-FR',
+  German: 'de-DE', Portuguese: 'pt-BR', Italian: 'it-IT', Dutch: 'nl-NL', Turkish: 'tr-TR', Polish: 'pl-PL',
+  Arabic: 'ar-SA', Korean: 'ko-KR',
+};
+function macOcrHelperPath() {
+  return path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname, 'mac-audio', 'build'), app.isPackaged ? 'mac-audio' : '', 'ocr');
+}
+async function runOcrVision(rect, language) {
+  const tmp = await captureRectPng(rect);
+  const args = [tmp, VISION_LANGS[language] || 'en-US'];
+  return new Promise((resolve, reject) => {
+    const p = spawn(macOcrHelperPath(), args);
+    let out = '';
+    let err = '';
+    p.stdout.on('data', (d) => { out += d.toString(); });
+    p.stderr.on('data', (d) => { err += d.toString(); });
+    p.on('error', reject);
+    p.on('exit', (code) => {
+      try { fs.unlinkSync(tmp); } catch {}
+      if (code === 0) resolve(out.replace(/\r/g, '').trim());
+      else reject(new Error(`OCR helper exit ${code}: ${err.slice(-200)}`));
+    });
+  });
+}
+
+async function runOcrTesseract(rect, language) {
+  if (!hasTesseract()) {
+    const hint = process.platform === 'darwin' ? 'brew install tesseract' : 'Settings → Check → Install missing tools (or: sudo apt install tesseract-ocr)';
+    throw new Error(`tesseract not installed (${hint})`);
+  }
+  const tmp = await captureRectPng(rect);
   const lang = TESSERACT_LANGS[language] || 'eng';
   return new Promise((resolve, reject) => {
     const p = spawn('tesseract', [tmp, 'stdout', '-l', lang, '--psm', '6']);
@@ -1377,6 +1410,7 @@ async function runOcrTesseract(rect, language) {
 
 function runOcr(rect, language) {
   if (process.platform === 'win32' && fs.existsSync(CAPTURE_EXE)) return runOcrCapture2Text(rect, language);
+  if (process.platform === 'darwin' && fs.existsSync(macOcrHelperPath())) return runOcrVision(rect, language);
   return runOcrTesseract(rect, language);
 }
 
@@ -2215,11 +2249,39 @@ ipcMain.handle('run-diagnostics', async () => {
     let osOk = true; try { osOk = parseInt(require('os').release().split('.')[0], 10) >= 22; } catch {}
     add('macOS 13 or newer (system audio)', osOk, require('os').release(), 'Update macOS to 13 (Ventura) or newer for system-audio capture.');
   }
-  const tess = (() => { try { require('child_process').execFileSync(process.platform === 'win32' ? 'where' : 'which', ['tesseract'], { stdio: 'ignore' }); return true; } catch { return false; } })();
-  add('tesseract (OCR mode)', tess || (process.platform === 'win32' && fs.existsSync(CAPTURE_EXE)), tess ? 'installed' : 'not installed', mac ? 'brew install tesseract' : (process.platform === 'win32' ? 'Only needed for OCR mode.' : 'sudo apt install tesseract-ocr'));
+  const has = (cmd) => { try { require('child_process').execFileSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { stdio: 'ignore' }); return true; } catch { return false; } };
+  if (mac) {
+    add('OCR helper (Apple Vision)', fs.existsSync(macOcrHelperPath()), fs.existsSync(macOcrHelperPath()) ? 'built in' : 'not in this build', 'Use a build from GitHub Actions (macOS runner).');
+  } else if (process.platform === 'linux') {
+    const tess = has('tesseract');
+    add('tesseract (OCR mode)', tess, tess ? 'installed' : 'not installed', 'Click "Install missing tools" below.');
+    const typing = has('xdotool') || has('wtype') || has('ydotool');
+    add('Typing tool (Write-to-IDE / paste): xdotool, wtype or ydotool', typing, typing ? 'installed' : 'none installed', 'Click "Install missing tools" below.');
+  } else {
+    const tess = has('tesseract') || fs.existsSync(CAPTURE_EXE);
+    add('OCR engine', tess, tess ? 'available' : 'not installed', 'Only needed for OCR mode; install tesseract (UB-Mannheim build) and add it to PATH.');
+  }
   add('License', !!license.checkStoredLicense(app.getPath('userData')).ok, 'valid', 'Ask your administrator for a new key.');
-  return { platform: process.platform, checks };
+  return { platform: process.platform, checks, canInstallTools: process.platform === 'linux' && (has('apt-get') || has('dnf') || has('pacman')) && has('pkexec') };
 });
+
+// Linux: install the optional tools through the system package manager with
+// the normal graphical password prompt (pkexec). The .deb declares the same
+// packages as dependencies, so this is mainly for AppImage users.
+ipcMain.handle('install-linux-tools', () => new Promise((resolve) => {
+  if (process.platform !== 'linux') return resolve({ ok: false, error: 'Linux only' });
+  const has = (cmd) => { try { require('child_process').execFileSync('which', [cmd], { stdio: 'ignore' }); return true; } catch { return false; } };
+  let cmd;
+  if (has('apt-get')) cmd = 'apt-get update && apt-get install -y tesseract-ocr xdotool wtype';
+  else if (has('dnf')) cmd = 'dnf install -y tesseract xdotool wtype';
+  else if (has('pacman')) cmd = 'pacman -Sy --noconfirm tesseract tesseract-data-eng xdotool wtype';
+  else return resolve({ ok: false, error: 'No supported package manager found (apt, dnf or pacman).' });
+  const p = spawn('pkexec', ['sh', '-c', cmd]);
+  let err = '';
+  p.stderr.on('data', (d) => { err += d.toString(); });
+  p.on('error', (e) => resolve({ ok: false, error: e.message }));
+  p.on('exit', (code) => resolve(code === 0 ? { ok: true } : { ok: false, error: code === 126 || code === 127 ? 'Cancelled.' : ('Install failed: ' + err.slice(-300)) }));
+}));
 app.on('will-quit', () => stopMacSystemAudio());
 
 // macOS microphone permission: 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown'.

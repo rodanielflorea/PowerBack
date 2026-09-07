@@ -667,7 +667,19 @@ async function runDiagnostics() {
     `<div class="diag-detail">${esc(c.detail)}</div>${c.fix ? `<div class="diag-fix">${esc(c.fix)}</div>` : ""}</div></div>`).join("");
   const bad = (res.checks || []).filter((c) => !c.ok).length;
   if (st) st.textContent = bad ? `${bad} item${bad > 1 ? "s" : ""} need attention` : "All good";
+  const installBtn = document.getElementById("diagInstallBtn");
+  if (installBtn) installBtn.hidden = !(res.canInstallTools && (res.checks || []).some((c) => !c.ok && /tesseract|Typing tool/.test(c.name)));
 }
+const diagInstallBtn = document.getElementById("diagInstallBtn");
+if (diagInstallBtn) diagInstallBtn.addEventListener("click", async () => {
+  const st = document.getElementById("diagStatus");
+  diagInstallBtn.disabled = true;
+  if (st) st.textContent = "Installing… (enter your password in the system prompt)";
+  const r = await window.api.installLinuxTools();
+  diagInstallBtn.disabled = false;
+  if (!r.ok) toast(r.error || "Install failed", "err"); else toast("Tools installed.", "info");
+  runDiagnostics();
+});
 if (diagRunBtn) diagRunBtn.addEventListener("click", runDiagnostics);
 
 const welcomeHelpBtn = document.getElementById("welcomeHelpBtn");

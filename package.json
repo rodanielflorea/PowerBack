@@ -81,7 +81,15 @@
         "xdg-utils",
         "libatspi2.0-0",
         "libuuid1",
-        "libsecret-1-0"
+        "libsecret-1-0",
+        "tesseract-ocr",
+        "xdotool"
+      ],
+      "fpm": [
+        "--deb-recommends",
+        "wtype",
+        "--deb-recommends",
+        "ydotool"
       ]
     },
     "mac": {
@@ -122,7 +130,8 @@
           "from": "mac-audio/build/",
           "to": "mac-audio/",
           "filter": [
-            "system-audio"
+            "system-audio",
+            "ocr"
           ]
         }
       ]

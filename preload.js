@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('api', {
   getPlatformCaps: () => ipcRenderer.invoke('get-platform-caps'),
   getMicPermission: () => ipcRenderer.invoke('get-mic-permission'),
   runDiagnostics: () => ipcRenderer.invoke('run-diagnostics'),
+  installLinuxTools: () => ipcRenderer.invoke('install-linux-tools'),
   macSystemAudioStart: () => ipcRenderer.invoke('mac-system-audio-start'),
   macSystemAudioStop: () => ipcRenderer.invoke('mac-system-audio-stop'),
   onMacSystemAudioChunk: (cb) => ipcRenderer.on('mac-system-audio-chunk', (_e, buf) => cb(buf)),
