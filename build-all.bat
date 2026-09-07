@@ -44,6 +44,12 @@ if errorlevel 1 (
 
 if exist dist\all-os rmdir /s /q dist\all-os
 mkdir dist\all-os
-gh run download %RUN_ID% --dir dist\all-os
+REM The build uploads the installers to a (draft) GitHub release named v<version>.
+for /f "delims=" %%v in ('node -p "require('./package.json').version"') do set VERSION=%%v
+gh release download v%VERSION% --dir dist\all-os --clobber
+if errorlevel 1 (
+  echo No release found; trying the run's artifacts...
+  gh run download %RUN_ID% --dir dist\all-os
+)
 echo Installers for all OSes are in dist\all-os\
 dir /s /b dist\all-os
