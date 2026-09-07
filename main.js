@@ -437,6 +437,9 @@ function loadState() {
       hotkeys: { ...HOTKEY_DEFAULTS },
     };
   }
+  // Click-through is a transient mode: never start a session with it on, or
+  // every click (including the tour's Next) passes through the window.
+  state.clickThrough = false;
   migrateAnswerConfig();
   // One-time switch to the new audio-source defaults (system audio on, mic off)
   // for installs that saved the old defaults before this change.
@@ -2229,6 +2232,9 @@ function macAccessibilityOk(prompt) {
 const MAC_ACCESSIBILITY_HINT = 'macOS needs the Accessibility permission for this: System Settings → Privacy & Security → Accessibility → enable RemoteDevJobAce, then try again.';
 
 // ── Diagnostics: one place that checks every requirement on this machine ──
+// macOS applies Accessibility / Screen Recording grants only after a relaunch.
+ipcMain.handle('relaunch-app', () => { app.relaunch(); app.exit(0); });
+
 ipcMain.handle('run-diagnostics', async () => {
   const sp = require('electron').systemPreferences;
   const mac = process.platform === 'darwin';
@@ -2242,12 +2248,12 @@ ipcMain.handle('run-diagnostics', async () => {
     const micSt = (() => { try { return sp.getMediaAccessStatus('microphone'); } catch { return 'unknown'; } })();
     add('Microphone permission', micSt === 'granted', micSt, 'System Settings → Privacy & Security → Microphone → enable RemoteDevJobAce.');
     const scrSt = (() => { try { return sp.getMediaAccessStatus('screen'); } catch { return 'unknown'; } })();
-    add('Screen Recording permission (OCR, and system audio on macOS 13–14.3)', scrSt === 'granted', scrSt, 'System Settings → Privacy & Security → Screen Recording → enable RemoteDevJobAce.');
+    add('Screen & System Audio Recording permission (call audio, OCR)', scrSt === 'granted', scrSt, 'System Settings → Privacy & Security → Screen & System Audio Recording → enable RemoteDevJobAce, then Quit & reopen the app. If it is already enabled but still shows denied, remove the app from that list with − and add it again.');
     const helper = macSystemAudioHelperPath();
     add('System-audio helper present', fs.existsSync(helper), fs.existsSync(helper) ? helper : 'not in this build', 'This build has no system-audio helper; use a build from GitHub Actions (macOS runner).');
-    add('Accessibility permission (typing / paste into other apps)', macAccessibilityOk(false), macAccessibilityOk(false) ? 'granted' : 'not granted', MAC_ACCESSIBILITY_HINT);
+    add('Accessibility permission (typing / paste into other apps)', macAccessibilityOk(false), macAccessibilityOk(false) ? 'granted' : 'not granted', MAC_ACCESSIBILITY_HINT + ' Then Quit & reopen the app. If it is already enabled but still shows not granted, remove the app from that list with − and add it again.');
     let osOk = true; try { osOk = parseInt(require('os').release().split('.')[0], 10) >= 22; } catch {}
-    add('macOS 13 or newer (system audio)', osOk, require('os').release(), 'Update macOS to 13 (Ventura) or newer for system-audio capture.');
+    add('macOS 13 or newer (system audio)', osOk, 'Darwin ' + require('os').release(), 'Update macOS to 13 (Ventura) or newer for system-audio capture.');
   }
   const has = (cmd) => { try { require('child_process').execFileSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { stdio: 'ignore' }); return true; } catch { return false; } };
   if (mac) {
@@ -2262,7 +2268,7 @@ ipcMain.handle('run-diagnostics', async () => {
     add('OCR engine', tess, tess ? 'available' : 'not installed', 'Only needed for OCR mode; install tesseract (UB-Mannheim build) and add it to PATH.');
   }
   add('License', !!license.checkStoredLicense(app.getPath('userData')).ok, 'valid', 'Ask your administrator for a new key.');
-  return { platform: process.platform, checks, canInstallTools: process.platform === 'linux' && (has('apt-get') || has('dnf') || has('pacman')) && has('pkexec') };
+  return { platform: process.platform, macRestartHint: mac, checks, canInstallTools: process.platform === 'linux' && (has('apt-get') || has('dnf') || has('pacman')) && has('pkexec') };
 });
 
 // Linux: install the optional tools through the system package manager with
