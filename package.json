@@ -134,7 +134,8 @@
             "ocr"
           ]
         }
-      ]
+      ],
+      "x64ArchFiles": "Contents/Resources/mac-audio/**"
     },
     "dmg": {
       "title": "${productName} ${version}",
