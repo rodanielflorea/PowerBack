@@ -291,6 +291,7 @@
           <h3>System check</h3>
           <p class="hint">Checks everything this app needs on this computer — keys, permissions, helpers. Red items show how to fix them.</p>
           <div class="updater-row"><button id="diagRunBtn" class="action-btn">Run checks</button><button id="diagInstallBtn" class="action-btn" hidden>Install missing tools</button><span class="updater-status" id="diagStatus"></span></div>
+          <p class="hint" id="diagRestartHint" hidden>macOS applies Accessibility and Screen &amp; System Audio Recording changes only after the app is restarted. After enabling them in System Settings: <button class="link-btn" id="diagRelaunchBtn">Quit &amp; reopen now</button></p>
           <div class="diag-list" id="diagList"></div>
         </section>
       </div>
