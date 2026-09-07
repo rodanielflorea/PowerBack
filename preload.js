@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('api', {
   onOpacityChanged: (cb) => ipcRenderer.on('opacity-changed', (_e, v) => cb(v)),
   onOpacityCss: (cb) => ipcRenderer.on('opacity-css', (_e, v) => cb(v)),
   getPlatformCaps: () => ipcRenderer.invoke('get-platform-caps'),
+  getMicPermission: () => ipcRenderer.invoke('get-mic-permission'),
+  requestMicPermission: () => ipcRenderer.invoke('request-mic-permission'),
   onStealthChanged: (cb) => ipcRenderer.on('stealth-changed', (_e, v) => cb(v)),
   onCaptureText: (cb) => ipcRenderer.on('capture-text', (_e, v) => cb(v)),
   onCaptureError: (cb) => ipcRenderer.on('capture-error', (_e, v) => cb(v)),

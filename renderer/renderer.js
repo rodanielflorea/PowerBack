@@ -3378,7 +3378,8 @@ if (window.api.getAnswerConfig) {
 
 async function refreshMicList() {
   try {
-    await navigator.mediaDevices
+    const perm = window.api.getMicPermission ? await window.api.getMicPermission() : "granted";
+    if (perm === "granted") await navigator.mediaDevices
       .getUserMedia({ audio: true })
       .then((s) => s.getTracks().forEach((t) => t.stop()));
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -3454,11 +3455,24 @@ async function startVoice() {
     const label = isXai ? "xAI" : "Deepgram";
     if (!apiKey) {
       log(`${label} API key not set`, "err");
+      toast(`Transcription unavailable: no ${label} key is built into this copy of the app — contact your administrator.`, "err");
       return;
     }
     if (txCfg.captureMic === false && txCfg.captureSystem === false) {
-      log("No audio source selected — enable Microphone or System audio in Settings → Transcription", "err");
+      log("No audio source selected — enable Microphone or System audio in Settings → Audio sources", "err");
+      toast("No audio source selected — enable Microphone or System audio in Settings → Audio sources.", "err");
       return;
+    }
+    // macOS: never call getUserMedia while permission is denied (each call
+    // re-prompts); ask once if undetermined, and explain if denied.
+    if (txCfg.captureMic !== false && window.api.getMicPermission) {
+      let perm = await window.api.getMicPermission();
+      if (perm === "not-determined" && window.api.requestMicPermission) perm = (await window.api.requestMicPermission()) ? "granted" : "denied";
+      if (perm === "denied" || perm === "restricted") {
+        toast("Microphone access is blocked. Allow it in System Settings → Privacy & Security → Microphone, then start listening again.", "err");
+        if (txCfg.captureSystem === false) return;
+        txCfg = { ...txCfg, captureMic: false };
+      }
     }
 
     const startStream = isXai
@@ -3539,6 +3553,12 @@ async function startVoice() {
         } catch (e) {
           log("System audio failed: " + e.message, "err");
         }
+      }
+      if (!sysOk && !streams.length) {
+        toast("System audio can't be captured on this computer. Turn on Microphone in Settings → Audio sources (on a Mac, install BlackHole to capture the call audio).", "err");
+        try { await ctx.close(); } catch {}
+        try { await (isXai ? window.api.stopXaiStream : window.api.stopDeepgramStream)(); } catch {}
+        return;
       }
     }
 
@@ -4782,7 +4802,8 @@ const CABLE_RE = /(cable input|vb-audio|voicemeeter input|virtual cable)/i;
 async function refreshCablePicker() {
   if (!netVirtualCableEl) return;
   try {
-    await navigator.mediaDevices
+    const perm = window.api.getMicPermission ? await window.api.getMicPermission() : "granted";
+    if (perm === "granted") await navigator.mediaDevices
       .getUserMedia({ audio: true })
       .then((s) => s.getTracks().forEach((t) => t.stop()));
   } catch {}

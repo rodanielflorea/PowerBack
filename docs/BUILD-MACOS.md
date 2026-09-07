@@ -69,6 +69,23 @@ git push origin --tags
 
 ---
 
+### Built-in API keys for CI builds (important)
+
+CI builds from the **committed** repository, and the committed
+`defaults/api-keys.json` is empty on purpose. Keys you type into that file on
+your PC never reach a CI build. Instead, store the JSON once as a repository
+secret:
+
+1. GitHub → the repo → **Settings → Secrets and variables → Actions → New
+   repository secret**.
+2. Name: `API_KEYS_JSON`. Value: the whole JSON, e.g.
+   `{"deepgram":"…","xai":"","anthropic":"…","openai":"…"}`.
+3. Build again. The workflow writes the secret into `defaults/api-keys.json`
+   before packaging, so every installer (Windows, Linux, macOS) has the keys.
+
+Without the secret the app starts, but answers and transcription report
+"no key is built into this copy of the app".
+
 ## Route 2: unsigned `.zip` from WSL2 / Ubuntu (dev only)
 
 ```bash

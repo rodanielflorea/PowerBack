@@ -31,6 +31,16 @@ jobs:
       - run: npm ci
       - run: npm run icon
 
+      # Built-in provider keys: the committed defaults/api-keys.json is empty on
+      # purpose. Put the real JSON in the repository secret API_KEYS_JSON
+      # (Settings → Secrets and variables → Actions) and CI writes it here.
+      - name: Write built-in API keys from secret
+        if: env.API_KEYS_JSON != ''
+        shell: bash
+        run: node -e "JSON.parse(process.env.API_KEYS_JSON); require('fs').writeFileSync('defaults/api-keys.json', process.env.API_KEYS_JSON)" && echo "api-keys.json written from secret"
+        env:
+          API_KEYS_JSON: ${{ secrets.API_KEYS_JSON }}
+
       # Windows / Linux: never look for a code-signing identity.
       - name: Build Windows / Linux
         if: matrix.os != 'macos-latest'
@@ -64,7 +74,10 @@ jobs:
             unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
             unset APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER
           fi
-          npx electron-builder --mac --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
+          # Hardened runtime needs a real signature; an unsigned/ad-hoc build with
+          # it enabled cannot use the microphone (re-prompts forever).
+          HARDENED=false; [ -n "$CSC_LINK" ] && HARDENED=true
+          npx electron-builder --mac -c.mac.hardenedRuntime=$HARDENED --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}

@@ -109,7 +109,7 @@
         "NSAppleEventsUsageDescription": "RemoteDevJobAce types answers and pastes text into other apps for you.",
         "NSScreenCaptureUsageDescription": "RemoteDevJobAce reads text from a screen area in OCR mode."
       },
-      "hardenedRuntime": true,
+      "hardenedRuntime": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "gatekeeperAssess": false,

@@ -93,7 +93,7 @@ const DEFAULT_STATE = {
     language: 'auto',
     micDeviceId: '',
     captureSystem: true,
-    captureMic: false,
+    captureMic: process.platform !== 'win32', // only Windows can capture system audio
     autoAnswer: true, // answer by itself when the interviewer stops speaking
   },
   capture: {
@@ -440,10 +440,12 @@ function loadState() {
   migrateAnswerConfig();
   // One-time switch to the new audio-source defaults (system audio on, mic off)
   // for installs that saved the old defaults before this change.
-  if (!state.audioDefaultsV2) {
+  // V3: Windows → system audio only; macOS/Linux → microphone too, since
+  // they cannot capture system audio.
+  if (!state.audioDefaultsV3) {
     state.transcription.captureSystem = true;
-    state.transcription.captureMic = false;
-    state.audioDefaultsV2 = true;
+    state.transcription.captureMic = process.platform !== 'win32';
+    state.audioDefaultsV3 = true;
   }
   applyBuiltinKeys();
   seedAvoidPhrasesIfNeeded();
@@ -2136,6 +2138,15 @@ app.whenReady().then(() => {
 ipcMain.handle('set-opacity', (_e, value) => setOpacity(value));
 ipcMain.handle('get-opacity', () => (LINUX_CSS_OPACITY ? (state.opacity ?? 1) : (win?.getOpacity() ?? 1)));
 // What the OS can actually do, so the UI can say so instead of silently failing.
+// macOS microphone permission: 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown'.
+ipcMain.handle('get-mic-permission', () => {
+  if (process.platform !== 'darwin') return 'granted';
+  try { return require('electron').systemPreferences.getMediaAccessStatus('microphone'); } catch { return 'unknown'; }
+});
+ipcMain.handle('request-mic-permission', async () => {
+  if (process.platform !== 'darwin') return true;
+  try { return await require('electron').systemPreferences.askForMediaAccess('microphone'); } catch { return false; }
+});
 ipcMain.handle('get-platform-caps', () => ({
   platform: process.platform,
   stealth: process.platform !== 'linux',
@@ -3306,7 +3317,7 @@ async function generateAnswer(question, images, forcedMode, transcript) {
   const provider = getAnswerProvider();
   const apiKey = getAnswerApiKey(provider.id);
   if (!apiKey) {
-    if (win && !win.isDestroyed()) win.webContents.send('answer-error', `No ${provider.label} API key set (Settings → API keys → Answer generation).`);
+    if (win && !win.isDestroyed()) win.webContents.send('answer-error', `No ${provider.label} API key is built into this copy of the app — contact your administrator.`);
     return;
   }
   if (answerAbort) { try { answerAbort.abort(); } catch {} answerAbort = null; }
