@@ -26,7 +26,7 @@ if [ "${1:-}" = "--local" ]; then
       ;;
     Darwin)
       bash mac-audio/build.sh   # native helpers (system audio, OCR) — needs Xcode command-line tools
-      npx electron-builder --mac --linux --publish never
+      CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --linux --publish never
       echo ">> Windows build skipped (needs wine); run without --local to build it on CI."
       ;;
     *) echo "Unsupported host: $(uname -s)"; exit 1 ;;
