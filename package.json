@@ -10,7 +10,7 @@
     "build": "npm run icon && electron-builder --win --publish never",
     "build:installer": "npm run icon && electron-builder --win nsis",
     "build:linux": "npm run icon && electron-builder --linux --publish never",
-    "build:mac": "npm run icon && electron-builder --mac --publish never",
+    "build:mac": "bash mac-audio/build.sh && npm run icon && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --publish never",
     "build:all": "npm run icon && electron-builder --win --linux --publish never",
     "admin:start": "electron license-admin",
     "admin:build": "electron-builder --projectDir license-admin --win portable --publish never",
