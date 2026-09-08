@@ -50,22 +50,12 @@ if not "%CONCLUSION%"=="success" (
   exit /b 1
 )
 
-if exist dist\all-os rmdir /s /q dist\all-os
-mkdir dist\all-os
-REM The build uploads the installers to a (draft) GitHub release named v<version>.
-for /f "delims=" %%v in ('node -p "require('./package.json').version"') do set VERSION=%%v
-gh release download v%VERSION% --dir dist\all-os --clobber
+if not exist dist\all-os mkdir dist\all-os
+REM Resumable, verified download of the release assets (survives network drops).
+node scripts\download-release.js
 if errorlevel 1 (
-  echo No release found; trying the run's artifacts...
-  gh run download %RUN_ID% --dir dist\all-os
-  goto done
+  echo Some installers could not be completed - run:  node scripts\download-release.js   to resume.
+  exit /b 1
 )
-REM Verify every downloaded file is complete (size must match the release asset).
-node -e "const {execSync}=require('child_process');const fs=require('fs');const a=JSON.parse(execSync('gh release view v%VERSION% --json assets',{encoding:'utf8'})).assets;let bad=0;for(const x of a){const p='dist/all-os/'+x.name;if(!fs.existsSync(p))continue;const s=fs.statSync(p).size;if(s!==x.size){console.log('!! '+x.name+' is incomplete ('+s+' of '+x.size+' bytes)');bad=1;}}if(bad){process.exit(1)}console.log('All installers verified against release v%VERSION%');"
-if errorlevel 1 (
-  echo Some files were incomplete — downloading again...
-  gh release download v%VERSION% --dir dist\all-os --clobber
-)
-:done
 echo Installers for all OSes are in dist\all-os\
 dir /s /b dist\all-os

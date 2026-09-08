@@ -66,25 +66,11 @@ done
 CONCLUSION=$(gh run view "$RUN_ID" --json conclusion -q .conclusion)
 [ "$CONCLUSION" = "success" ] || { echo "CI build $CONCLUSION — see: gh run view $RUN_ID --log-failed"; exit 1; }
 
-rm -rf dist/all-os && mkdir -p dist/all-os
-# The build uploads the installers to a (draft) GitHub release named v<version>.
-VERSION=$(node -p "require('./package.json').version")
-download_release() {
-  gh release download "v$VERSION" --dir dist/all-os --clobber 2>/dev/null || return 1
-  # Verify every file is complete: sizes must match the release assets.
-  local bad=0
-  while IFS=$'\t' read -r name size; do
-    [ -f "dist/all-os/$name" ] || continue
-    local have; have=$(wc -c < "dist/all-os/$name")
-    if [ "$have" != "$size" ]; then echo "!! $name is incomplete ($have of $size bytes)"; bad=1; fi
-  done < <(gh release view "v$VERSION" --json assets -q '.assets[] | "\(.name)\t\(.size)"')
-  return $bad
-}
-if download_release || { echo ">> Retrying download…"; sleep 20; download_release; }; then
-  echo ">> Downloaded and verified from release v$VERSION"
-else
-  echo "!! Download from release v$VERSION failed or files incomplete; trying the run's artifacts…"
-  gh run download "$RUN_ID" --dir dist/all-os || echo "!! No installers could be downloaded — see the run page: $(gh run view "$RUN_ID" --json url -q .url)"
+mkdir -p dist/all-os
+# Resumable, verified download of the release assets (survives network drops).
+if ! node scripts/download-release.js "v$(node -p "require('./package.json').version")" dist/all-os; then
+  echo "!! Some installers could not be completed — run:  node scripts/download-release.js   to resume."
+  exit 1
 fi
 echo ">> Installers for all OSes:"
 find dist/all-os -type f | sed 's/^/   /'

@@ -121,3 +121,32 @@ asks. System audio needs a virtual device such as **BlackHole**.
 
 Known limit: recent Zoom / Teams using ScreenCaptureKit may still see the
 window — hide it (Ctrl+Alt+H) while sharing.
+
+---
+
+## Building directly on a Mac (M1 / M2 / M3 / M4 or Intel)
+
+The result is the same universal app the CI produces, so a build made on an
+M4 runs on an M1 (and on Intel Macs). Requirements: macOS 13 or newer to run
+the system-audio capture.
+
+One-time setup on the Mac:
+
+```bash
+xcode-select --install          # Swift compiler, lipo, codesign (Xcode command-line tools)
+brew install node               # Node.js 22 (or install from nodejs.org)
+git clone <the repo> && cd <the repo>
+npm ci
+```
+
+Put the real keys into `defaults/api-keys.json` (a local build packages that
+file; the `API_KEYS_JSON` secret only applies to CI builds). Then:
+
+```bash
+npm run build:mac
+```
+
+This compiles the two native helpers (`mac-audio/build.sh`), generates the
+icon, packages a universal `.dmg` + `.zip` into `dist/`, and ad-hoc signs the
+bundle so permission grants persist. Users still open it the first time with
+right-click → Open, exactly like the CI build.

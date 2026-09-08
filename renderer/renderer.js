@@ -667,9 +667,13 @@ async function runDiagnostics() {
     `<div class="diag-detail">${esc(c.detail)}</div>${c.fix ? `<div class="diag-fix">${esc(c.fix)}</div>` : ""}</div></div>`).join("");
   const bad = (res.checks || []).filter((c) => !c.ok).length;
   if (st) st.textContent = bad ? `${bad} item${bad > 1 ? "s" : ""} need attention` : "All good";
+  const restartHint = document.getElementById("diagRestartHint");
+  if (restartHint) restartHint.hidden = !res.macRestartHint;
   const installBtn = document.getElementById("diagInstallBtn");
   if (installBtn) installBtn.hidden = !(res.canInstallTools && (res.checks || []).some((c) => !c.ok && /tesseract|Typing tool/.test(c.name)));
 }
+const diagRelaunchBtn = document.getElementById("diagRelaunchBtn");
+if (diagRelaunchBtn) diagRelaunchBtn.addEventListener("click", () => { if (window.api.relaunchApp) window.api.relaunchApp(); });
 const diagInstallBtn = document.getElementById("diagInstallBtn");
 if (diagInstallBtn) diagInstallBtn.addEventListener("click", async () => {
   const st = document.getElementById("diagStatus");
