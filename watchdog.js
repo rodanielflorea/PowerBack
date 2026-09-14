@@ -1,46 +1,54 @@
-// Watchdog: keeps the app alive if another program closes it (Windows).
+// Guardian half of the mutual watchdog (Windows). Run detached as pure Node
+// (ELECTRON_RUN_AS_NODE=1) from a COPY of the app binary with a different name
+// (DevGuardian.exe), so a by-name kill of the app does not also hit it.
+//   argv: <userDataDir> <appExePath>
+// Files in userDataDir:
+//   app.pid       — the app writes its own pid here (who to guard)
+//   guardian.pid  — this process writes its pid here (so the app can guard it)
+//   watchdog-stop — the app writes this on a clean quit (stand down)
 //
-// Launched detached by the app (main.js) as a pure-Node process
-// (ELECTRON_RUN_AS_NODE=1) with argv: <appExePath> <appPid> <stopFile>.
-// It polls the app's PID; once the app is gone it relaunches the exe UNLESS
-// the app asked it not to (the stop file, written on a clean quit). The
-// relaunched app spawns a fresh watchdog, so protection chains across restarts.
-//
-// This only resists ordinary termination. A process with Administrator/SYSTEM
-// rights can kill the app and this watchdog together; that cannot be prevented
-// from user space, by design of Windows.
+// The app watches guardian.pid and respawns this if it dies; this watches
+// app.pid and relaunches the app if it dies. Each revives the other, so
+// killing one process at a time never stops the app. Only a simultaneous kill
+// of both, or a process with admin/SYSTEM rights, can — that is unavoidable
+// from user space.
 'use strict';
 const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
 
-const exePath = process.argv[2];
-const appPid = parseInt(process.argv[3], 10);
-const stopFile = process.argv[4];
+const userDir = process.argv[2];
+const appExe = process.argv[3];
+if (!userDir || !appExe) process.exit(1);
 
-if (!exePath || !Number.isFinite(appPid) || !stopFile) process.exit(1);
+const stopFile = path.join(userDir, 'watchdog-stop');
+const appPidFile = path.join(userDir, 'app.pid');
+const guardianPidFile = path.join(userDir, 'guardian.pid');
 
 function alive(pid) {
+  if (!pid) return false;
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
+function readPid(f) { try { return parseInt(fs.readFileSync(f, 'utf8').trim(), 10) || 0; } catch { return 0; } }
 
-function relaunch() {
-  // Fresh environment: never carry ELECTRON_RUN_AS_NODE into the real app.
-  const env = { ...process.env };
-  delete env.ELECTRON_RUN_AS_NODE;
-  try {
-    const child = spawn(exePath, [], { detached: true, stdio: 'ignore', env });
-    child.unref();
-  } catch {}
-}
+try { fs.writeFileSync(guardianPidFile, String(process.pid)); } catch {}
+
+let relaunchGrace = 0; // skip a few cycles after a relaunch so the new app can write its pid
 
 const timer = setInterval(() => {
-  if (alive(appPid)) return;
-  clearInterval(timer);
-  // The app is gone. A clean quit leaves the stop file; anything else is a
-  // kill or crash, so bring it back.
-  let stopped = false;
-  try { stopped = fs.existsSync(stopFile); } catch {}
-  if (stopped) { try { fs.unlinkSync(stopFile); } catch {} process.exit(0); }
-  // Small delay so the OS fully releases the old instance first.
-  setTimeout(() => { relaunch(); process.exit(0); }, 400);
+  // Clean quit requested by the app.
+  if (fs.existsSync(stopFile)) {
+    clearInterval(timer);
+    try { fs.unlinkSync(stopFile); } catch {}
+    try { fs.unlinkSync(guardianPidFile); } catch {}
+    process.exit(0);
+  }
+  try { fs.writeFileSync(guardianPidFile, String(process.pid)); } catch {}
+  if (relaunchGrace > 0) { relaunchGrace--; return; }
+  if (!alive(readPid(appPidFile))) {
+    const env = { ...process.env };
+    delete env.ELECTRON_RUN_AS_NODE;
+    try { spawn(appExe, [], { detached: true, stdio: 'ignore', env }).unref(); } catch {}
+    relaunchGrace = 4; // ~4s for the new app to come up and rewrite app.pid
+  }
 }, 1000);
