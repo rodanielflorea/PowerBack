@@ -30,7 +30,8 @@
       "package.json",
       "platform-input.js",
       "license.js",
-      "license-public.key"
+      "license-public.key",
+      "watchdog.js"
     ],
     "directories": {
       "output": "dist"
@@ -57,7 +58,8 @@
             "**/*"
           ]
         }
-      ]
+      ],
+      "executableName": "DevAssistant"
     },
     "portable": {
       "artifactName": "${productName}-${version}-portable.${ext}"

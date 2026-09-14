@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('api', {
   setMode: (mode) => ipcRenderer.invoke('set-mode', mode),
   getTranscriptionConfig: () => ipcRenderer.invoke('get-transcription-config'),
   getBuiltinKeys: () => ipcRenderer.invoke('get-builtin-keys'),
+  getAntiClose: () => ipcRenderer.invoke('get-anti-close'),
+  setAntiClose: (v) => ipcRenderer.invoke('set-anti-close', v),
   setTranscriptionConfig: (cfg) => ipcRenderer.invoke('set-transcription-config', cfg),
   getMeetingConfig: () => ipcRenderer.invoke('get-meeting-config'),
   setMeetingConfig: (cfg) => ipcRenderer.invoke('set-meeting-config', cfg),

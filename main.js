@@ -96,6 +96,7 @@ const DEFAULT_STATE = {
     captureMic: process.platform !== 'win32', // only Windows can capture system audio
     autoAnswer: true, // answer by itself when the interviewer stops speaking
   },
+  antiClose: true, // Windows: relaunch the app if another program closes it
   capture: {
     rect: null,
     language: 'English',
@@ -2114,7 +2115,33 @@ ipcMain.handle('get-app-info', () => {
 
 let licenseWin = null;
 
+// ── Anti-close watchdog (Windows) ─────────────────────────────────────────────
+// A detached helper relaunches the app if another program terminates it. It is
+// told to stand down on a clean quit via a stop file. Packaged Windows only.
+let watchdogProc = null;
+function watchdogStopFile() { return path.join(app.getPath('userData'), 'watchdog-stop'); }
+function startWatchdog() {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
+  if (state.antiClose === false) return;
+  try { fs.unlinkSync(watchdogStopFile()); } catch {}
+  try {
+    watchdogProc = spawn(process.execPath, [path.join(__dirname, 'watchdog.js'), process.execPath, String(process.pid), watchdogStopFile()], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    });
+    watchdogProc.unref();
+  } catch (e) { appendLogLine('[watchdog] failed to start: ' + e.message); }
+}
+// A deliberate quit must not be undone by the watchdog.
+function signalCleanQuit() {
+  if (process.platform !== 'win32') return;
+  try { fs.writeFileSync(watchdogStopFile(), String(Date.now())); } catch {}
+}
+app.on('before-quit', signalCleanQuit);
+
 function startApp() {
+  startWatchdog();
   // Keep the license's last-seen time moving while the app runs (10 min).
   setInterval(() => { try { license.touchStoredLicense(app.getPath('userData')); } catch {} }, 10 * 60 * 1000);
   // macOS: ask for the microphone up front so the system prompt appears once,
@@ -2330,6 +2357,14 @@ ipcMain.handle('set-click-through', (_e, value) => setClickThrough(value));
 ipcMain.handle('get-click-through', () => state.clickThrough);
 ipcMain.handle('hide', () => hideMain());
 ipcMain.handle('quit', () => app.quit());
+ipcMain.handle('get-anti-close', () => ({ supported: process.platform === 'win32', enabled: state.antiClose !== false }));
+ipcMain.handle('set-anti-close', (_e, v) => {
+  state.antiClose = !!v;
+  saveState();
+  if (state.antiClose) startWatchdog();
+  else { signalCleanQuit(); if (watchdogProc) { try { watchdogProc.kill(); } catch {} watchdogProc = null; } }
+  return state.antiClose;
+});
 ipcMain.handle('get-desktop-source-id', async () => {
   macScreenPermissionWarn();
   try {
