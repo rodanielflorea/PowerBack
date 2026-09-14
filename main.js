@@ -96,6 +96,7 @@ const DEFAULT_STATE = {
     captureMic: process.platform !== 'win32', // only Windows can capture system audio
     autoAnswer: true, // answer by itself when the interviewer stops speaking
   },
+  antiClose: true, // Windows: relaunch the app if another program closes it
   capture: {
     rect: null,
     language: 'English',
@@ -2114,7 +2115,84 @@ ipcMain.handle('get-app-info', () => {
 
 let licenseWin = null;
 
+// ── Anti-close mutual watchdog (Windows) ──────────────────────────────────────
+// The app and a separately-named guardian process guard each other: the
+// guardian relaunches the app if it dies, and the app respawns the guardian if
+// IT dies. Killing one at a time (or by exe name) never stops the app. Only a
+// simultaneous kill of both, or admin/SYSTEM rights, can — unavoidable from
+// user space. Packaged Windows only; a clean quit stands the guardian down.
+const wdFile = (name) => path.join(app.getPath('userData'), name);
+let wdMonitorTimer = null;
+let appQuitting = false;
+
+function wdAlive(pid) { if (!pid) return false; try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
+function wdReadPid(f) { try { return parseInt(fs.readFileSync(f, 'utf8').trim(), 10) || 0; } catch { return 0; } }
+
+// A byte copy of this Electron binary under a different name, so a by-name kill
+// of the app exe does not also kill the guardian. Falls back to the app exe if
+// the copy cannot be made.
+function ensureGuardianExe() {
+  const dest = wdFile('DevGuardian.exe');
+  try {
+    const src = fs.statSync(process.execPath);
+    let need = true;
+    try { need = fs.statSync(dest).size !== src.size; } catch {}
+    if (need) fs.copyFileSync(process.execPath, dest);
+    return dest;
+  } catch { return process.execPath; }
+}
+// watchdog.js lives inside the asar; the guardian exe (a copy in userData) has
+// no asar next to it, so write the script to a plain file it can run directly.
+function ensureGuardianScript() {
+  const dest = wdFile('guardian.js');
+  try { fs.writeFileSync(dest, fs.readFileSync(path.join(__dirname, 'watchdog.js'))); } catch {}
+  return dest;
+}
+function guardianRunning() { return wdAlive(wdReadPid(wdFile('guardian.pid'))); }
+
+function spawnGuardian() {
+  if (guardianRunning()) return;
+  const exe = ensureGuardianExe();
+  const js = ensureGuardianScript();
+  try {
+    spawn(exe, [js, app.getPath('userData'), process.execPath], {
+      detached: true, stdio: 'ignore',
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    }).unref();
+  } catch (e) { appendLogLine('[watchdog] guardian spawn failed: ' + e.message); }
+}
+
+function startWatchdog() {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
+  if (state.antiClose === false) return;
+  appQuitting = false;
+  try { fs.unlinkSync(wdFile('watchdog-stop')); } catch {}
+  try { fs.writeFileSync(wdFile('app.pid'), String(process.pid)); } catch {}
+  spawnGuardian();
+  if (wdMonitorTimer) clearInterval(wdMonitorTimer);
+  // Respawn the guardian if it is ever killed while we are running.
+  wdMonitorTimer = setInterval(() => {
+    if (appQuitting || state.antiClose === false) return;
+    try { fs.writeFileSync(wdFile('app.pid'), String(process.pid)); } catch {}
+    if (!guardianRunning()) spawnGuardian();
+  }, 2000);
+}
+
+function stopWatchdog() {
+  if (wdMonitorTimer) { clearInterval(wdMonitorTimer); wdMonitorTimer = null; }
+  try { fs.writeFileSync(wdFile('watchdog-stop'), String(Date.now())); } catch {}
+}
+
+// A deliberate quit must not be undone by the guardian.
+function signalCleanQuit() {
+  if (process.platform !== 'win32') return;
+  appQuitting = true;
+  stopWatchdog();
+}
+app.on('before-quit', signalCleanQuit);
+
 function startApp() {
+  startWatchdog();
   // Keep the license's last-seen time moving while the app runs (10 min).
   setInterval(() => { try { license.touchStoredLicense(app.getPath('userData')); } catch {} }, 10 * 60 * 1000);
   // macOS: ask for the microphone up front so the system prompt appears once,
@@ -2330,6 +2408,14 @@ ipcMain.handle('set-click-through', (_e, value) => setClickThrough(value));
 ipcMain.handle('get-click-through', () => state.clickThrough);
 ipcMain.handle('hide', () => hideMain());
 ipcMain.handle('quit', () => app.quit());
+ipcMain.handle('get-anti-close', () => ({ supported: process.platform === 'win32', enabled: state.antiClose !== false }));
+ipcMain.handle('set-anti-close', (_e, v) => {
+  state.antiClose = !!v;
+  saveState();
+  if (state.antiClose) startWatchdog();
+  else stopWatchdog();
+  return state.antiClose;
+});
 ipcMain.handle('get-desktop-source-id', async () => {
   macScreenPermissionWarn();
   try {

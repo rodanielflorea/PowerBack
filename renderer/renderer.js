@@ -1519,6 +1519,15 @@ captureMicEl.addEventListener("change", onTxSourceChange);
 captureSystemEl.addEventListener("change", onTxSourceChange);
 const autoAnswerEl = document.getElementById("autoAnswer");
 if (autoAnswerEl) autoAnswerEl.addEventListener("change", () => persistTx({ autoAnswer: autoAnswerEl.checked }));
+const antiCloseEl = document.getElementById("antiClose");
+if (antiCloseEl && window.api.getAntiClose) {
+  window.api.getAntiClose().then((s) => {
+    const field = document.getElementById("antiCloseField");
+    if (field) field.hidden = !s.supported;
+    antiCloseEl.checked = !!s.enabled;
+  }).catch(() => {});
+  antiCloseEl.addEventListener("change", () => window.api.setAntiClose(antiCloseEl.checked));
+}
 micSelect.addEventListener("change", () =>
   persistTx({ micDeviceId: micSelect.value }),
 );
