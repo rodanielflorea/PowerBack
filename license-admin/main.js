@@ -64,7 +64,7 @@ function makeLicense(mac, days, date) {
   buf.writeUInt32LE(expiryDay, 0);
   sig.copy(buf, 4);
   const code = b32encode(buf).replace(/(.{6})(?=.)/g, '$1-');
-  return { code, expiresAt: (expiryDay + 1) * DAY_MS, mac: m };
+  return { code, expiresAt: (expiryDay + 1) * DAY_MS, mac: m.replace(/(..)(?=.)/g, '$1:') };
 }
 
 ipcMain.handle('gen', (_e, { mac, days, date }) => makeLicense(mac, days, date));

@@ -25,24 +25,68 @@ function formatMac(mac) {
   return normalizeMac(mac).replace(/(..)(?=.)/g, '$1:');
 }
 
-// All real MACs on this machine (excludes loopback/zero). A license matches if
-// it was issued for ANY of them, so switching between Wi-Fi and Ethernet on
-// the same PC keeps working.
-function machineMacs() {
-  const macs = new Set();
-  for (const ifaces of Object.values(os.networkInterfaces())) {
-    for (const i of ifaces || []) {
-      const m = normalizeMac(i.mac);
-      if (m && m !== '000000000000' && !i.internal) macs.add(m);
-    }
-  }
-  return [...macs];
+function run(cmd, args) {
+  try { return require('child_process').execFileSync(cmd, args, { encoding: 'utf8', timeout: 6000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }); } catch { return ''; }
 }
 
+// The machine's REAL hardware MAC addresses — burned into the physical
+// adapters — read from the OS hardware inventory, not from "whatever
+// interface is up right now". That keeps the computer ID identical on every
+// launch: VPN/AirDrop/hotspot adapters with generated MACs, Wi-Fi private
+// address rotation and interfaces that are down do not change it.
+//   macOS:   networksetup -listallhardwareports (built-in Wi-Fi/Ethernet first)
+//   Windows: Get-NetAdapter -Physical (physical adapters only)
+//   Linux:   /sys/class/net/*/addr_assign_type == 0 (permanent addresses)
+// Live interfaces (minus known virtual ones) are appended as a fallback, so a
+// license matches if it was issued for ANY hardware MAC of this machine.
+let _macCache = null;
+function machineMacs() {
+  if (_macCache) return _macCache;
+  const macs = [];
+  const add = (v) => { const n = normalizeMac(v); if (n.length === 12 && n !== '000000000000' && !macs.includes(n)) macs.push(n); };
+  if (process.platform === 'darwin') {
+    const out = run('networksetup', ['-listallhardwareports']);
+    const ports = [];
+    for (const m of out.matchAll(/Hardware Port:\s*([^\n]+)\n\s*Device:\s*([^\n]+)\n\s*Ethernet Address:\s*([0-9a-fA-F:]{17})/g)) {
+      ports.push({ port: m[1].trim(), device: m[2].trim(), mac: m[3] });
+    }
+    const rank = (p) => (/^wi-?fi$|^ethernet$|^usb.*ethernet/i.test(p.port) ? 0 : /thunderbolt|bluetooth|bridge/i.test(p.port) ? 2 : 1);
+    ports.sort((a, b) => rank(a) - rank(b) || a.device.localeCompare(b.device));
+    for (const p of ports) add(p.mac);
+  } else if (process.platform === 'win32') {
+    const out = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      'Get-NetAdapter -Physical | Sort-Object -Property @{Expression={if($_.Status -eq "Up"){0}else{1}}},ifIndex | Select-Object -ExpandProperty MacAddress']);
+    for (const line of out.split(/\r?\n/)) add(line.trim());
+  } else if (process.platform === 'linux') {
+    const fs = require('fs');
+    const phys = [];
+    try {
+      for (const name of fs.readdirSync('/sys/class/net')) {
+        try {
+          if (fs.readFileSync(`/sys/class/net/${name}/addr_assign_type`, 'utf8').trim() !== '0') continue; // permanent hardware address only
+          const mac = fs.readFileSync(`/sys/class/net/${name}/address`, 'utf8').trim();
+          const wired = /^(en|eth)/.test(name);
+          phys.push({ name, mac, rank: wired ? 0 : /^wl/.test(name) ? 1 : 2 });
+        } catch {}
+      }
+    } catch {}
+    phys.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
+    for (const p of phys) add(p.mac);
+  }
+  // Fallback / extra candidates: interfaces that are up now, minus known virtual ones.
+  const skip = /^(awdl|llw|utun|ap\d|bridge|vmnet|vboxnet|docker|veth|tun|tap|anpi|gif|stf|lo)/i;
+  for (const [name, ifaces] of Object.entries(os.networkInterfaces())) {
+    if (skip.test(name)) continue;
+    for (const i of ifaces || []) if (!i.internal) add(i.mac);
+  }
+  _macCache = macs;
+  return macs;
+}
+
+// The MAC shown to the user (and sent to the admin): the built-in adapter's.
 function primaryMac() {
   return machineMacs()[0] || null;
 }
-
 
 // RFC 4648 base32 (no padding): only A-Z and 2-7, so dashes/spaces added for
 // readability can never collide with the code itself, and it is
