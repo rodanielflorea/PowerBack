@@ -46,7 +46,7 @@ function b32decode(str) {
 // a number of days from today.
 function makeLicense(mac, days, date) {
   const m = normalizeMac(mac);
-  if (m.length !== 12) return { error: 'MAC address must have 12 hex digits (e.g. AA:BB:CC:DD:EE:FF).' };
+  if (m.length !== 12 && m.length !== 32) return { error: 'Computer ID must be a MAC address (12 hex digits, e.g. AA:BB:CC:DD:EE:FF) or a hardware UUID (32 hex digits).' };
   const today = Math.floor(Date.now() / DAY_MS);
   let expiryDay;
   if (date) {
@@ -64,7 +64,8 @@ function makeLicense(mac, days, date) {
   buf.writeUInt32LE(expiryDay, 0);
   sig.copy(buf, 4);
   const code = b32encode(buf).replace(/(.{6})(?=.)/g, '$1-');
-  return { code, expiresAt: (expiryDay + 1) * DAY_MS, mac: m };
+  const shown = m.length === 32 ? m.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5') : m.replace(/(..)(?=.)/g, '$1:');
+  return { code, expiresAt: (expiryDay + 1) * DAY_MS, mac: shown };
 }
 
 ipcMain.handle('gen', (_e, { mac, days, date }) => makeLicense(mac, days, date));

@@ -21,28 +21,56 @@ function normalizeMac(mac) {
   return String(mac || '').toUpperCase().replace(/[^0-9A-F]/g, '');
 }
 
-function formatMac(mac) {
-  return normalizeMac(mac).replace(/(..)(?=.)/g, '$1:');
+// Display form: a 12-hex MAC as AA:BB:CC:DD:EE:FF, a 32-hex hardware UUID as
+// 8-4-4-4-12 groups. (Either is accepted by the generator.)
+function formatMac(id) {
+  const n = normalizeMac(id);
+  if (n.length === 32) return n.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
+  return n.replace(/(..)(?=.)/g, '$1:');
 }
 
-// All real MACs on this machine (excludes loopback/zero). A license matches if
-// it was issued for ANY of them, so switching between Wi-Fi and Ethernet on
-// the same PC keeps working.
-function machineMacs() {
-  const macs = new Set();
-  for (const ifaces of Object.values(os.networkInterfaces())) {
-    for (const i of ifaces || []) {
-      const m = normalizeMac(i.mac);
-      if (m && m !== '000000000000' && !i.internal) macs.add(m);
-    }
+function run(cmd, args) {
+  try { return require('child_process').execFileSync(cmd, args, { encoding: 'utf8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return ''; }
+}
+
+// Every identifier this machine can be recognised by. A license matches if it
+// was issued for ANY of them.
+//   macOS:   the Hardware UUID (never changes) first, then the burned-in
+//            Wi-Fi/Ethernet addresses from networksetup (stable even when the
+//            interface is down or Wi-Fi "Private Address" randomisation is on),
+//            then whatever interfaces are up right now.
+//   Linux:   /etc/machine-id first, then live MACs.
+//   Windows: live MACs (the physical adapter is stable there).
+// Interfaces with generated/rotating MACs (AirDrop awdl, hotspot, VPN tunnels)
+// are excluded so they are never shown as the computer ID.
+let _idsCache = null;
+function machineIds() {
+  if (_idsCache) return _idsCache;
+  const ids = [];
+  const add = (v) => { const n = normalizeMac(v); if (n && n !== '000000000000' && !ids.includes(n)) ids.push(n); };
+  if (process.platform === 'darwin') {
+    const m = /"IOPlatformUUID"\s*=\s*"([0-9A-Fa-f-]+)"/.exec(run('ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice']));
+    if (m) add(m[1]);
+    for (const mm of run('networksetup', ['-listallhardwareports']).matchAll(/Ethernet Address:\s*([0-9a-fA-F:]{17})/g)) add(mm[1]);
+  } else if (process.platform === 'linux') {
+    try { add(require('fs').readFileSync('/etc/machine-id', 'utf8').trim()); } catch {}
   }
-  return [...macs];
+  const skip = /^(awdl|llw|utun|ap\d|bridge|vmnet|vboxnet|docker|veth|tun|tap|anpi|gif|stf)/i;
+  for (const [name, ifaces] of Object.entries(os.networkInterfaces())) {
+    if (skip.test(name)) continue;
+    for (const i of ifaces || []) if (!i.internal) add(i.mac);
+  }
+  _idsCache = ids;
+  return ids;
 }
 
+// Kept for callers that think in MACs; returns all identifiers.
+function machineMacs() { return machineIds(); }
+
+// The identifier shown to the user (and sent to the admin): the most stable one.
 function primaryMac() {
-  return machineMacs()[0] || null;
+  return machineIds()[0] || null;
 }
-
 
 // RFC 4648 base32 (no padding): only A-Z and 2-7, so dashes/spaces added for
 // readability can never collide with the code itself, and it is
@@ -135,6 +163,7 @@ module.exports = {
   normalizeMac,
   formatMac,
   machineMacs,
+  machineIds,
   primaryMac,
   verifyLicense,
   checkStoredLicense,
