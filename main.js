@@ -1341,6 +1341,7 @@ function hasTesseract() {
 // Capture2Text exe is not available.
 // Grab the capture rect from the screen as a PNG file (any platform).
 async function captureRectPng(rect) {
+  macScreenPermissionWarn();
   const display = screen.getDisplayNearestPoint({ x: Math.round(rect.x1), y: Math.round(rect.y1) });
   const dsf = display.scaleFactor || 1;
   const thumbW = Math.round(display.bounds.width * dsf);
@@ -1618,6 +1619,7 @@ async function handleSnipDone(rect) {
   if (selectorWin) { try { selectorWin.close(); } catch {} selectorWin = null; }
   // Let the selector vanish before grabbing pixels.
   await new Promise(r => setTimeout(r, 180));
+  macScreenPermissionWarn();
   try {
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
@@ -2290,6 +2292,21 @@ ipcMain.handle('install-linux-tools', () => new Promise((resolve) => {
 }));
 app.on('will-quit', () => stopMacSystemAudio());
 
+// macOS: screenshots, area snips and OCR all read the screen through
+// desktopCapturer, which needs the "Screen & System Audio Recording"
+// permission. Without it macOS returns a blank/wallpaper-only image and no
+// error, so warn the user explicitly (the OS shows its prompt on first use;
+// the grant takes effect after the app is reopened).
+function macScreenPermissionWarn() {
+  if (process.platform !== 'darwin') return true;
+  let st = 'unknown';
+  try { st = require('electron').systemPreferences.getMediaAccessStatus('screen'); } catch {}
+  if (st === 'granted') return true;
+  if (win && !win.isDestroyed()) win.webContents.send('capture-error',
+    'Screen capture needs the Screen & System Audio Recording permission: System Settings → Privacy & Security → Screen & System Audio Recording → enable RemoteDevJobAce, then Quit & reopen the app (Settings → Check).');
+  return false;
+}
+
 // macOS microphone permission: 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown'.
 ipcMain.handle('get-mic-permission', () => {
   if (process.platform !== 'darwin') return 'granted';
@@ -2314,6 +2331,7 @@ ipcMain.handle('get-click-through', () => state.clickThrough);
 ipcMain.handle('hide', () => hideMain());
 ipcMain.handle('quit', () => app.quit());
 ipcMain.handle('get-desktop-source-id', async () => {
+  macScreenPermissionWarn();
   try {
     const sources = await desktopCapturer.getSources({ types: ['screen'] });
     return sources[0] ? sources[0].id : null;
