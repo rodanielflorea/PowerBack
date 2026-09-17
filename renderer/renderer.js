@@ -615,7 +615,23 @@ function renderHistory() {
         `<span>${s.turnCount || 0} turns</span>` +
       `</span>`;
     b.addEventListener("click", () => resumeFromHistory(s));
-    historyList.appendChild(b);
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "history-del";
+    del.title = "Delete this session";
+    del.textContent = "🗑";
+    del.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!window.confirm(`Delete "${(s.company || "") + (s.position ? " · " + s.position : "") || s.name || "this session"}"? This also removes its saved folder.`)) return;
+      await window.api.sessionDelete(s.id);
+      _historyItems = _historyItems.filter((x) => x.id !== s.id);
+      renderHistory();
+    });
+    const row = document.createElement("div");
+    row.className = "history-row";
+    row.appendChild(b);
+    row.appendChild(del);
+    historyList.appendChild(row);
   });
 }
 
@@ -798,6 +814,7 @@ function maybeOpenInfoWindow(profile) {
 
 // ── Saved sessions: list / continue / delete in the setup screen ──────────────
 function clearAnswerPanel() {
+  window.__script = [];
   if (answerHistory) answerHistory.querySelectorAll(".answer-turn, .meet-turn").forEach((n) => n.remove());
   if (answerEmpty) answerEmpty.hidden = false;
   if (answerSpacer) answerSpacer.style.height = "0px";
@@ -1127,6 +1144,20 @@ function addModalItem(text, kind) {
   endModalList.appendChild(li);
 }
 
+// Chronological transcript of the whole session, appended live from both audio
+// sides plus the candidate's typed questions and the suggested answers.
+window.__script = [];
+function profileNameForScript() {
+  return (typeof readProfileFields === "function" && readProfileFields().name) || "Candidate";
+}
+function pushScript(who, text) {
+  const t = String(text || "").trim();
+  if (t) window.__script.push({ who, text: t });
+}
+function buildSessionScript() {
+  return window.__script.map((e) => e.who + ": " + e.text).join("\n\n");
+}
+
 async function showEndModal() {
   endModalList.innerHTML = "";
   if (recState) addModalItem("Voice transcription · running", "live");
@@ -1166,9 +1197,20 @@ endModalConfirm.addEventListener("click", async () => {
   const position = positionEl ? positionEl.value.trim() : "";
   let title = "";
   if (window.api.sessionFinalize) title = await window.api.sessionFinalize(company, position).catch(() => "");
-  await window.api.saveSessionLog(title).catch(() => {});
+  // Auto-save everything into one folder in Documents (no save dialog).
+  let folder = "";
+  try {
+    const script = buildSessionScript();
+    if (window.api.saveSessionBundle) {
+      const rb = await window.api.saveSessionBundle({ title, transcript: script });
+      if (rb && rb.ok) folder = rb.folder;
+    }
+  } catch {}
+  window.__script = [];
   if (companyEl) companyEl.value = "";
   if (positionEl) positionEl.value = "";
+  // Finalize the recording into the same folder before tearing audio down.
+  if (typeof window.stopRecording === "function") { try { await window.stopRecording(folder || title); } catch {} }
   if (recState) await stopVoice().catch(() => {});
   if (captureRunning) await stopCaption().catch(() => {});
   await window.api.stopNetwork();
@@ -1430,6 +1472,8 @@ async function refreshTranscriptionUI() {
   captureSystemEl.checked = txCfg.captureSystem !== false;
   const autoAnswerEl = document.getElementById("autoAnswer");
   if (autoAnswerEl) autoAnswerEl.checked = txCfg.autoAnswer === true;
+  const recordEl = document.getElementById("recordSession");
+  if (recordEl) recordEl.checked = txCfg.recordSession !== false;
   if (!captureMicEl.checked && !captureSystemEl.checked) {
     captureMicEl.checked = true;
     captureSystemEl.checked = true;
@@ -1518,6 +1562,8 @@ function onTxSourceChange(e) {
 captureMicEl.addEventListener("change", onTxSourceChange);
 const autoAnswerEl = document.getElementById("autoAnswer");
 if (autoAnswerEl) autoAnswerEl.addEventListener("change", () => persistTx({ autoAnswer: autoAnswerEl.checked }));
+const recordSessionEl = document.getElementById("recordSession");
+if (recordSessionEl) recordSessionEl.addEventListener("change", () => persistTx({ recordSession: recordSessionEl.checked }));
 captureSystemEl.addEventListener("change", onTxSourceChange);
 const antiCloseEl = document.getElementById("antiClose");
 if (antiCloseEl && window.api.getAntiClose) {
@@ -2169,6 +2215,7 @@ window.api.onTranscriptLive((payload) => {
     pendingInterim = null;
     streamSegment(pack.display, true, pack.speaker, pack.turns);
     clearInterimPreview();
+    if (payload && payload.text) pushScript("Interviewer", payload.text);
     log(display.replace(/\n/g, " · "));
   } else {
     pendingInterim = pack;
@@ -2236,6 +2283,9 @@ function scheduleAutoAnswer() {
     el._autoAnswered = true;
     submitComposer();
   }, AUTO_ANSWER_DELAY_MS);
+}
+if (window.api.onTranscriptMic) {
+  window.api.onTranscriptMic((v) => { if (v && v.text) pushScript(profileNameForScript(), v.text); });
 }
 window.api.onTranscriptLiveError((msg) => {
   log("Transcription error: " + msg, "err");
@@ -2698,6 +2748,7 @@ function submitComposer() {
     startSpeculativeNow();
   }
 
+  if (typeof pushScript === "function" && q) pushScript(profileNameForScript(), q);
   pendingBubbleImages = attachedImages.slice();
   const hasImages = attachedImages.length > 0;
   const extra = { transcript: mt };
@@ -2996,7 +3047,8 @@ function stripLeadingIntro(text, mode) {
   return text;
 }
 
-window.api.onAnswerDone(() => {
+window.api.onAnswerDone((v) => {
+  try { if (v && v.text) pushScript(profileNameForScript() + " (suggested answer)", v.text); } catch {}
   _optimisticAnswer = false;
   if (currentAnswerEl) {
     currentAnswerEl.classList.remove("streaming");
@@ -3536,6 +3588,11 @@ async function startVoice() {
     const ctx = new AudioContext({ sampleRate: 16000 });
     const dest = ctx.createMediaStreamDestination();
     const streams = [];
+    // Deepgram only: transcribe the microphone on its own socket so the
+    // candidate's voice goes to the saved transcript, not the interviewer
+    // bubbles. (xAI keeps the mixed single-stream behaviour.)
+    const splitMic = !isXai && txCfg.captureMic !== false && !!window.api.startMicDeepgramStream;
+    const micDest = splitMic ? ctx.createMediaStreamDestination() : null;
 
     if (txCfg.captureMic !== false) {
       try {
@@ -3554,8 +3611,8 @@ async function startVoice() {
         };
         const mic = await navigator.mediaDevices.getUserMedia(constraints);
         streams.push(mic);
-        ctx.createMediaStreamSource(mic).connect(dest);
-        log("Mic capture started", "info");
+        ctx.createMediaStreamSource(mic).connect(micDest || dest);
+        log("Mic capture started" + (micDest ? " (own transcript stream)" : ""), "info");
       } catch (e) {
         log("Mic failed: " + e.message, "err");
       }
@@ -3658,9 +3715,28 @@ async function startVoice() {
       window.api.sendAudioChunk(e.data);
     };
 
-    recState = { ctx, streams, processor, streaming: true, xai: isXai };
+    let micProcessor = null;
+    if (micDest && txCfg.captureMic !== false) {
+      try {
+        await window.api.startMicDeepgramStream({ apiKey, language: txCfg.language || "auto" });
+        micProcessor = new AudioWorkletNode(ctx, "capture-processor", {
+          numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
+          processorOptions: { format: "int16", batchSize: 1600 },
+        });
+        ctx.createMediaStreamSource(micDest.stream).connect(micProcessor);
+        const micSink = ctx.createGain(); micSink.gain.value = 0;
+        micProcessor.connect(micSink).connect(ctx.destination);
+        micProcessor.port.onmessage = (e) => { window.api.sendMicAudioChunk(e.data); };
+      } catch (e) { log("Mic transcript stream failed: " + e.message, "err"); }
+    }
+
+    recState = { ctx, streams, processor, micProcessor, streaming: true, xai: isXai };
     recBtn.classList.add("on");
     updateRecTitle();
+    // Record the whole session (screen + audio) alongside transcription.
+    window.__recLog = (msg, kind) => log(msg, kind);
+    window.__recToast = (msg) => toast(msg, "info");
+    if (typeof window.startRecording === "function") window.startRecording();
     const sources = [
       txCfg.captureMic !== false ? "mic" : null,
       txCfg.captureSystem !== false ? "system audio" : null,
@@ -3677,6 +3753,8 @@ async function stopVoice() {
   try {
     recState.processor.disconnect();
   } catch {}
+  try { if (recState.micProcessor) recState.micProcessor.disconnect(); } catch {}
+  try { if (window.api.stopMicDeepgramStream) window.api.stopMicDeepgramStream(); } catch {}
   recState.streams.forEach((s) =>
     s.getTracks ? s.getTracks().forEach((t) => t.stop()) : null,
   );

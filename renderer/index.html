@@ -91,6 +91,10 @@
             <label class="checkbox"><input type="checkbox" id="autoAnswer" /> Answer automatically when the interviewer stops speaking</label>
           </div>
           <p class="hint">Default is manual: answers are sent only when you press Send / Ctrl+Enter. Your choice is remembered.</p>
+          <div class="field">
+            <label class="checkbox"><input type="checkbox" id="recordSession" /> Record the session (screen + audio) and save it when the interview ends</label>
+            <p class="hint">The video, transcript, CV and job description are saved to a folder in your Documents. On macOS this needs Screen &amp; System Audio Recording permission.</p>
+          </div>
           <div class="field" id="antiCloseField" hidden>
             <label class="checkbox"><input type="checkbox" id="antiClose" /> Keep the app running if another program closes it (Windows)</label>
             <p class="hint">Relaunches the app automatically if it is terminated. It cannot stop a program running as administrator.</p>
@@ -778,6 +782,7 @@
 
   <script src="geo.js"></script>
   <script src="renderer.js"></script>
+  <script src="recorder.js"></script>
   <script src="tour.js"></script>
 </body>
 </html>

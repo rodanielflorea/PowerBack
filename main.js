@@ -95,6 +95,7 @@ const DEFAULT_STATE = {
     captureSystem: true,
     captureMic: process.platform !== 'win32', // only Windows can capture system audio
     autoAnswer: false, // default: manual submission (Send / Ctrl+Enter)
+    recordSession: true, // record screen + audio and auto-save the bundle on End
   },
   antiClose: true, // Windows: relaunch the app if another program closes it
   capture: {
@@ -2782,8 +2783,101 @@ ipcMain.on('audio-chunk', (_e, buf) => {
   if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) deepgramWs.send(buf);
   else if (xaiWs && xaiWs.readyState === WebSocket.OPEN && xaiReady) xaiWs.send(buf);
 });
+
+// ── Microphone transcription (separate Deepgram socket) ──────────────────────
+// The candidate's own voice must NOT appear as interviewer bubbles; it is
+// transcribed on its own socket and only its finals reach the renderer (for the
+// saved transcript), never the bubble pipeline. Both mic and system audio are
+// still recorded to the video by the renderer.
+let micDgWs = null, micDgActive = false, micDgAuth = null, micDgKeepAlive = null;
+function startMicDeepgramWs(apiKey, language) {
+  if (micDgWs) return;
+  const params = new URLSearchParams({
+    encoding: 'linear16', sample_rate: '16000', channels: '1',
+    smart_format: 'true', interim_results: 'false',
+    endpointing: '250', utterance_end_ms: '1500', punctuate: 'true',
+  });
+  params.set('model', 'nova-2');
+  params.set('language', (language && language !== 'auto') ? language : 'en-US');
+  micDgWs = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, { headers: { Authorization: `Token ${apiKey}` } });
+  micDgWs.on('open', () => {
+    if (micDgKeepAlive) clearInterval(micDgKeepAlive);
+    micDgKeepAlive = setInterval(() => { if (micDgWs && micDgWs.readyState === WebSocket.OPEN) { try { micDgWs.send(JSON.stringify({ type: 'KeepAlive' })); } catch {} } }, 7000);
+  });
+  micDgWs.on('message', (raw) => {
+    try {
+      const msg = JSON.parse(raw.toString());
+      if (msg.type !== 'Results' || !msg.is_final) return;
+      const alt = msg.channel && msg.channel.alternatives && msg.channel.alternatives[0];
+      const text = String((alt && alt.transcript) || '').trim();
+      if (text && win && !win.isDestroyed()) win.webContents.send('transcript-mic', { text });
+    } catch {}
+  });
+  micDgWs.on('close', () => {
+    if (micDgKeepAlive) { clearInterval(micDgKeepAlive); micDgKeepAlive = null; }
+    micDgWs = null;
+    if (micDgActive) setTimeout(() => { if (micDgActive && !micDgWs && micDgAuth) startMicDeepgramWs(micDgAuth.apiKey, micDgAuth.language); }, 1000);
+  });
+  micDgWs.on('error', () => {});
+  micDgWs.on('unexpected-response', (_r, res) => { res.resume(); micDgActive = false; try { if (micDgWs) micDgWs.terminate(); } catch {} micDgWs = null; });
+}
+ipcMain.handle('start-mic-deepgram-stream', (_e, { apiKey, language } = {}) => { micDgActive = true; micDgAuth = { apiKey, language }; startMicDeepgramWs(apiKey, language); });
+ipcMain.handle('stop-mic-deepgram-stream', () => {
+  micDgActive = false;
+  if (micDgKeepAlive) { clearInterval(micDgKeepAlive); micDgKeepAlive = null; }
+  if (micDgWs) { try { micDgWs.send(JSON.stringify({ type: 'CloseStream' })); } catch {} try { micDgWs.close(); } catch {} micDgWs = null; }
+});
+ipcMain.on('mic-audio-chunk', (_e, buf) => { if (micDgWs && micDgWs.readyState === WebSocket.OPEN) micDgWs.send(buf); });
 ipcMain.on('session-log-add', (_e, entry) => { sessionLog.push(entry); });
 ipcMain.handle('clear-session-log', () => { sessionLog = []; });
+// Where each finished interview's folder goes.
+function sessionsRootDir() { return path.join(app.getPath('documents'), 'RemoteDevJobAce Sessions'); }
+function sanitizeName(s) { return String(s || '').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim(); }
+function uniqueDir(base) {
+  let dir = base, i = 2;
+  while (fs.existsSync(dir)) { dir = base + ' (' + (i++) + ')'; }
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+// Create the session folder and write the transcript + the CV/JD used. Returns
+// the folder path; the recording is written into it afterwards (save-recording).
+ipcMain.handle('save-session-bundle', async (_e, { title, transcript } = {}) => {
+  try {
+    const d = new Date();
+    const p2 = (n) => String(n).padStart(2, '0');
+    const stamp = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}${p2(d.getMinutes())}`;
+    const base = sanitizeName(title) || 'Interview';
+    const folder = uniqueDir(path.join(sessionsRootDir(), `${base} - ${stamp}`));
+    const script = String(transcript || '').trim();
+    if (script) await fs.promises.writeFile(path.join(folder, 'transcript.txt'), script, 'utf8');
+    const k = state.knowledge || {};
+    const saveMaterial = async (it, prefix) => {
+      if (!it) return;
+      if (it.file && fs.existsSync(it.file)) {
+        try { await fs.promises.copyFile(it.file, path.join(folder, prefix + ' - ' + sanitizeName(it.name || prefix))); return; } catch {}
+      }
+      if (it.text) await fs.promises.writeFile(path.join(folder, prefix + ' - ' + sanitizeName(it.name || prefix) + '.txt'), it.text, 'utf8');
+    };
+    for (const it of (k.cv || [])) await saveMaterial(it, 'CV');
+    for (const it of (k.jd || [])) await saveMaterial(it, 'JD');
+    // Remember the folder on the current session so deleting it can remove the files.
+    const s = currentSession && currentSession();
+    if (s) { s.folder = folder; saveSessions(); }
+    return { ok: true, folder };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// Write the recording video into the session folder.
+ipcMain.handle('save-recording', async (_e, buf, folder) => {
+  try {
+    const dir = folder && fs.existsSync(folder) ? folder : uniqueDir(path.join(sessionsRootDir(), 'Interview - ' + Date.now()));
+    const file = path.join(dir, 'recording.webm');
+    await fs.promises.writeFile(file, Buffer.from(buf));
+    return { ok: true, path: file };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 ipcMain.handle('save-session-log', async (_e, suggestedName) => {
   if (sessionLog.length === 0) return null;
   const lines = sessionLog.map(e => {
@@ -2814,7 +2908,7 @@ ipcMain.handle('session-finalize', (_e, { company, position } = {}) => {
   const d = new Date();
   const p2 = (n) => String(n).padStart(2, '0');
   const dateStr = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
-  const title = [String(company || '').trim(), String(position || '').trim(), dateStr].filter(Boolean).join(' · ');
+  const title = [String(company || '').trim(), String(position || '').trim()].filter(Boolean).join(' · ') || dateStr;
   if (s) {
     s.company = String(company || '').trim();
     s.position = String(position || '').trim();
@@ -3197,6 +3291,7 @@ ipcMain.handle('session-resume', (_e, { id, profile, salary } = {}) => {
   return { id: s.id, name: s.name, turns: s.turns || [], profile: s.profile };
 });
 ipcMain.handle('session-delete', (_e, id) => {
+  try { const s = sessions.find((x) => x.id === id); if (s && s.folder && fs.existsSync(s.folder)) fs.rmSync(s.folder, { recursive: true, force: true }); } catch {}
   sessions = sessions.filter(s => s.id !== id);
   if (currentSessionId === id) { currentSessionId = null; convoHistory = []; }
   saveSessions();
@@ -3326,6 +3421,16 @@ ipcMain.handle('kb-add', async (_e, { kind, name, data }) => {
   }
   if (!state.knowledge[kind]) state.knowledge[kind] = [];
   const item = { name, text, chars: text.length };
+  // Keep the original bytes on disk so the session bundle can save the file as
+  // uploaded (e.g. the CV as a .pdf), not just its extracted text.
+  try {
+    const dir = path.join(app.getPath('userData'), 'materials');
+    fs.mkdirSync(dir, { recursive: true });
+    const safe = String(name || 'file').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim() || 'file';
+    const dest = path.join(dir, Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '-' + safe);
+    fs.writeFileSync(dest, Buffer.from(data));
+    item.file = dest;
+  } catch (e) { appendLogLine('[kb] keep-original failed for ' + name + ': ' + e.message); }
   // CV and JD are single-document; support/meetings accumulate.
   if (kind === 'cv' || kind === 'jd') state.knowledge[kind] = [item];
   else state.knowledge[kind].push(item);
@@ -3335,7 +3440,11 @@ ipcMain.handle('kb-add', async (_e, { kind, name, data }) => {
 });
 
 ipcMain.handle('kb-remove', (_e, { kind, index }) => {
-  if (state.knowledge[kind]) state.knowledge[kind].splice(index, 1);
+  if (state.knowledge[kind]) {
+    const it = state.knowledge[kind][index];
+    if (it && it.file) { try { fs.unlinkSync(it.file); } catch {} }
+    state.knowledge[kind].splice(index, 1);
+  }
   saveState();
   schedulePromptCacheWarm();
   return { ok: true };
