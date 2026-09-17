@@ -1427,8 +1427,6 @@ async function refreshTranscriptionUI() {
   if (xaiKeyEl) xaiKeyEl.value = txCfg.xaiApiKey || "";
   languageSelect.value = txCfg.language || "auto";
   captureMicEl.checked = txCfg.captureMic !== false;
-  const autoAnswerEl = document.getElementById("autoAnswer");
-  if (autoAnswerEl) autoAnswerEl.checked = txCfg.autoAnswer !== false;
   captureSystemEl.checked = txCfg.captureSystem !== false;
   if (!captureMicEl.checked && !captureSystemEl.checked) {
     captureMicEl.checked = true;
@@ -1517,8 +1515,6 @@ function onTxSourceChange(e) {
 }
 captureMicEl.addEventListener("change", onTxSourceChange);
 captureSystemEl.addEventListener("change", onTxSourceChange);
-const autoAnswerEl = document.getElementById("autoAnswer");
-if (autoAnswerEl) autoAnswerEl.addEventListener("change", () => persistTx({ autoAnswer: autoAnswerEl.checked }));
 const antiCloseEl = document.getElementById("antiClose");
 if (antiCloseEl && window.api.getAntiClose) {
   window.api.getAntiClose().then((s) => {
@@ -2198,7 +2194,6 @@ window.api.onUtteranceEnd(() => {
   clearInterimPreview();
   // Prefetch a meeting reaction only if the user is not already typing a question.
   if (!composerInput || !composerInput.value.trim()) kickSpeculative(true);
-  scheduleAutoAnswer();
 });
 
 // macOS system audio: PCM chunks from the helper are pushed into the feed node.
@@ -2211,31 +2206,10 @@ if (window.api.onMacSystemAudioEnded) {
   window.api.onMacSystemAudioEnded((code) => { if (macSysFeed && recState) { macSysFeed = null; toast("System audio capture stopped (helper exited " + code + ").", "err"); } });
 }
 
-// ── Auto-answer ───────────────────────────────────────────────────────────────
-// When the interviewer stops speaking, wait a beat to be sure the question is
-// complete, then submit the transcript exactly as pressing Send would. The
-// speculative prefetch usually has the answer ready by then. Off via Settings.
-let autoAnswerTimer = null;
+// Answers are sent manually only (Send button / Ctrl+Enter). The interviewer's
+// speech is still transcribed and an answer is prefetched, but never submitted
+// on its own.
 let lastSpeechAt = 0;
-const AUTO_ANSWER_DELAY_MS = 1200;
-const AUTO_ANSWER_MIN_WORDS = 3;
-function scheduleAutoAnswer() {
-  if (autoAnswerTimer) { clearTimeout(autoAnswerTimer); autoAnswerTimer = null; }
-  if (txCfg && txCfg.autoAnswer === false) return;
-  const el = lastMeetEl;
-  if (!el || el._autoAnswered) return;
-  autoAnswerTimer = setTimeout(() => {
-    autoAnswerTimer = null;
-    if (lastMeetEl !== el || el._autoAnswered) return;
-    if (Date.now() - lastSpeechAt < AUTO_ANSWER_DELAY_MS - 100) { scheduleAutoAnswer(); return; } // they kept talking
-    if (liveSeg || (composerInput && composerInput.value.trim())) return;
-    if (answerIsStreaming() || _optimisticAnswer) return;
-    const text = liveMeetText();
-    if (!text || text.split(/\s+/).length < AUTO_ANSWER_MIN_WORDS) return;
-    el._autoAnswered = true;
-    submitComposer();
-  }, AUTO_ANSWER_DELAY_MS);
-}
 window.api.onTranscriptLiveError((msg) => {
   log("Transcription error: " + msg, "err");
   if (recState && recState.streaming) {
