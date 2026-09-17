@@ -18,18 +18,58 @@ function square(size) {
     .png();
 }
 
+function isFresh(out) {
+  try {
+    return fs.statSync(out).mtimeMs >= fs.statSync(SRC).mtimeMs;
+  } catch {
+    return false;
+  }
+}
+
+// Windows Explorer / COM Surrogate (dllhost) memory-maps .ico files for
+// thumbnails. Overwrite then fails with UNKNOWN / "user-mapped section",
+// but renaming the locked file still works.
+function writeFileReplace(dest, data) {
+  const tmp = `${dest}.tmp`;
+  const bak = `${dest}.bak`;
+  fs.writeFileSync(tmp, data);
+  if (fs.existsSync(dest)) {
+    try {
+      fs.unlinkSync(dest);
+    } catch {
+      try {
+        if (fs.existsSync(bak)) fs.unlinkSync(bak);
+      } catch {
+        /* leftover bak from a previous run */
+      }
+      fs.renameSync(dest, bak);
+    }
+  }
+  fs.renameSync(tmp, dest);
+  try {
+    if (fs.existsSync(bak)) fs.unlinkSync(bak);
+  } catch {
+    /* bak may still be mapped; harmless leftover */
+  }
+}
+
 (async () => {
   if (!fs.existsSync(SRC)) {
     console.error('Missing build/icon-source.png');
     process.exit(1);
   }
+  if (isFresh(PNG) && isFresh(ICO)) {
+    console.log('Icons up to date');
+    return;
+  }
   // 512px: electron-builder's Linux targets want at least 512x512.
-  await square(512).toFile(PNG);
+  const pngBuf = await square(512).toBuffer();
+  writeFileReplace(PNG, pngBuf);
   console.log('Wrote', PNG);
 
   const buffers = await Promise.all(SIZES.map((s) => square(s).toBuffer()));
   const ico = await pngToIco(buffers);
-  fs.writeFileSync(ICO, ico);
+  writeFileReplace(ICO, ico);
   console.log('Wrote', ICO, `(${SIZES.length} sizes)`);
 })().catch((e) => {
   console.error(e);
