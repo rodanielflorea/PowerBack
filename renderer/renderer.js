@@ -615,7 +615,23 @@ function renderHistory() {
         `<span>${s.turnCount || 0} turns</span>` +
       `</span>`;
     b.addEventListener("click", () => resumeFromHistory(s));
-    historyList.appendChild(b);
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "history-del";
+    del.title = "Delete this session";
+    del.textContent = "🗑";
+    del.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!window.confirm(`Delete "${(s.company || "") + (s.position ? " · " + s.position : "") || s.name || "this session"}"? This also removes its saved folder.`)) return;
+      await window.api.sessionDelete(s.id);
+      _historyItems = _historyItems.filter((x) => x.id !== s.id);
+      renderHistory();
+    });
+    const row = document.createElement("div");
+    row.className = "history-row";
+    row.appendChild(b);
+    row.appendChild(del);
+    historyList.appendChild(row);
   });
 }
 
@@ -1127,6 +1143,25 @@ function addModalItem(text, kind) {
   endModalList.appendChild(li);
 }
 
+function buildSessionScript() {
+  const prof = (typeof readProfileFields === "function" && readProfileFields().name) || "Candidate";
+  const lines = [];
+  const hist = document.getElementById("answerHistory");
+  if (!hist) return "";
+  for (const node of hist.children) {
+    if (node.classList && node.classList.contains("meet-turn")) {
+      const t = (node.querySelector(".meet-text") || {}).textContent || "";
+      if (t.trim()) lines.push("Interviewer: " + t.trim());
+    } else if (node.classList && node.classList.contains("answer-turn")) {
+      const q = (node.querySelector(".answer-q-text") || {}).textContent || "";
+      if (q.trim()) lines.push(prof + ": " + q.trim());
+      const a = (node.querySelector(".answer-stream") || {}).textContent || "";
+      if (a.trim()) lines.push(prof + " (suggested answer): " + a.trim());
+    }
+  }
+  return lines.join("\n\n");
+}
+
 async function showEndModal() {
   endModalList.innerHTML = "";
   if (recState) addModalItem("Voice transcription · running", "live");
@@ -1166,9 +1201,19 @@ endModalConfirm.addEventListener("click", async () => {
   const position = positionEl ? positionEl.value.trim() : "";
   let title = "";
   if (window.api.sessionFinalize) title = await window.api.sessionFinalize(company, position).catch(() => "");
-  await window.api.saveSessionLog(title).catch(() => {});
+  // Auto-save everything into one folder in Documents (no save dialog).
+  let folder = "";
+  try {
+    const script = buildSessionScript();
+    if (window.api.saveSessionBundle) {
+      const rb = await window.api.saveSessionBundle({ title, transcript: script });
+      if (rb && rb.ok) folder = rb.folder;
+    }
+  } catch {}
   if (companyEl) companyEl.value = "";
   if (positionEl) positionEl.value = "";
+  // Finalize the recording into the same folder before tearing audio down.
+  if (typeof window.stopRecording === "function") { try { await window.stopRecording(folder || title); } catch {} }
   if (recState) await stopVoice().catch(() => {});
   if (captureRunning) await stopCaption().catch(() => {});
   await window.api.stopNetwork();
@@ -1430,6 +1475,8 @@ async function refreshTranscriptionUI() {
   captureSystemEl.checked = txCfg.captureSystem !== false;
   const autoAnswerEl = document.getElementById("autoAnswer");
   if (autoAnswerEl) autoAnswerEl.checked = txCfg.autoAnswer === true;
+  const recordEl = document.getElementById("recordSession");
+  if (recordEl) recordEl.checked = txCfg.recordSession !== false;
   if (!captureMicEl.checked && !captureSystemEl.checked) {
     captureMicEl.checked = true;
     captureSystemEl.checked = true;
@@ -1518,6 +1565,8 @@ function onTxSourceChange(e) {
 captureMicEl.addEventListener("change", onTxSourceChange);
 const autoAnswerEl = document.getElementById("autoAnswer");
 if (autoAnswerEl) autoAnswerEl.addEventListener("change", () => persistTx({ autoAnswer: autoAnswerEl.checked }));
+const recordSessionEl = document.getElementById("recordSession");
+if (recordSessionEl) recordSessionEl.addEventListener("change", () => persistTx({ recordSession: recordSessionEl.checked }));
 captureSystemEl.addEventListener("change", onTxSourceChange);
 const antiCloseEl = document.getElementById("antiClose");
 if (antiCloseEl && window.api.getAntiClose) {
@@ -3661,6 +3710,10 @@ async function startVoice() {
     recState = { ctx, streams, processor, streaming: true, xai: isXai };
     recBtn.classList.add("on");
     updateRecTitle();
+    // Record the whole session (screen + audio) alongside transcription.
+    window.__recLog = (msg, kind) => log(msg, kind);
+    window.__recToast = (msg) => toast(msg, "info");
+    if (typeof window.startRecording === "function") window.startRecording();
     const sources = [
       txCfg.captureMic !== false ? "mic" : null,
       txCfg.captureSystem !== false ? "system audio" : null,

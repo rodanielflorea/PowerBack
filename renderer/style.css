@@ -2665,3 +2665,14 @@ body.role-supporter .mode-toggle-btn { display: none !important; }
 .diag-name { font-size: 13px; font-weight: 600; }
 .diag-detail { font-size: 12px; color: var(--muted); }
 .diag-fix { font-size: 12px; color: var(--text); margin-top: 3px; }
+
+/* History rows: item + delete */
+.history-row { display: flex; align-items: stretch; gap: 6px; }
+.history-row .history-item { flex: 1; }
+.history-del {
+  -webkit-app-region: no-drag;
+  flex-shrink: 0; width: 40px; border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--bg); color: var(--muted); font-size: 15px; cursor: pointer;
+  transition: background var(--t) var(--ease), color var(--t) var(--ease), border-color var(--t) var(--ease);
+}
+.history-del:hover { background: rgba(220,38,38,.10); color: var(--rec-on); border-color: rgba(220,38,38,.45); }

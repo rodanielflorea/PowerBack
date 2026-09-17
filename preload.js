@@ -148,6 +148,8 @@ contextBridge.exposeInMainWorld('api', {
   stopXaiStream: () => ipcRenderer.invoke('stop-xai-stream'),
   sendAudioChunk: (buf) => ipcRenderer.send('audio-chunk', buf),
   saveSessionLog: (name) => ipcRenderer.invoke('save-session-log', name),
+  saveSessionBundle: (data) => ipcRenderer.invoke('save-session-bundle', data),
+  saveRecording: (buf, folder) => ipcRenderer.invoke('save-recording', buf, folder),
   sessionFinalize: (company, position) => ipcRenderer.invoke('session-finalize', { company, position }),
   clearSessionLog: () => ipcRenderer.invoke('clear-session-log'),
   sessionLogAdd: (entry) => ipcRenderer.send('session-log-add', entry),

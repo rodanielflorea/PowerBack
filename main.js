@@ -95,6 +95,7 @@ const DEFAULT_STATE = {
     captureSystem: true,
     captureMic: process.platform !== 'win32', // only Windows can capture system audio
     autoAnswer: false, // default: manual submission (Send / Ctrl+Enter)
+    recordSession: true, // record screen + audio and auto-save the bundle on End
   },
   antiClose: true, // Windows: relaunch the app if another program closes it
   capture: {
@@ -2784,6 +2785,47 @@ ipcMain.on('audio-chunk', (_e, buf) => {
 });
 ipcMain.on('session-log-add', (_e, entry) => { sessionLog.push(entry); });
 ipcMain.handle('clear-session-log', () => { sessionLog = []; });
+// Where each finished interview's folder goes.
+function sessionsRootDir() { return path.join(app.getPath('documents'), 'RemoteDevJobAce Sessions'); }
+function sanitizeName(s) { return String(s || '').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim(); }
+function uniqueDir(base) {
+  let dir = base, i = 2;
+  while (fs.existsSync(dir)) { dir = base + ' (' + (i++) + ')'; }
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+// Create the session folder and write the transcript + the CV/JD used. Returns
+// the folder path; the recording is written into it afterwards (save-recording).
+ipcMain.handle('save-session-bundle', async (_e, { title, transcript } = {}) => {
+  try {
+    const d = new Date();
+    const p2 = (n) => String(n).padStart(2, '0');
+    const stamp = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}${p2(d.getMinutes())}`;
+    const base = sanitizeName(title) || 'Interview';
+    const folder = uniqueDir(path.join(sessionsRootDir(), `${base} - ${stamp}`));
+    const script = String(transcript || '').trim();
+    if (script) await fs.promises.writeFile(path.join(folder, 'transcript.txt'), script, 'utf8');
+    const k = state.knowledge || {};
+    for (const it of (k.cv || [])) if (it && it.text) await fs.promises.writeFile(path.join(folder, 'CV - ' + sanitizeName(it.name || 'cv') + '.txt'), it.text, 'utf8');
+    for (const it of (k.jd || [])) if (it && it.text) await fs.promises.writeFile(path.join(folder, 'JD - ' + sanitizeName(it.name || 'jd') + '.txt'), it.text, 'utf8');
+    // Remember the folder on the current session so deleting it can remove the files.
+    const s = currentSession && currentSession();
+    if (s) { s.folder = folder; saveSessions(); }
+    return { ok: true, folder };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// Write the recording video into the session folder.
+ipcMain.handle('save-recording', async (_e, buf, folder) => {
+  try {
+    const dir = folder && fs.existsSync(folder) ? folder : uniqueDir(path.join(sessionsRootDir(), 'Interview - ' + Date.now()));
+    const file = path.join(dir, 'recording.webm');
+    await fs.promises.writeFile(file, Buffer.from(buf));
+    return { ok: true, path: file };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 ipcMain.handle('save-session-log', async (_e, suggestedName) => {
   if (sessionLog.length === 0) return null;
   const lines = sessionLog.map(e => {
@@ -2814,7 +2856,7 @@ ipcMain.handle('session-finalize', (_e, { company, position } = {}) => {
   const d = new Date();
   const p2 = (n) => String(n).padStart(2, '0');
   const dateStr = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
-  const title = [String(company || '').trim(), String(position || '').trim(), dateStr].filter(Boolean).join(' · ');
+  const title = [String(company || '').trim(), String(position || '').trim()].filter(Boolean).join(' · ') || dateStr;
   if (s) {
     s.company = String(company || '').trim();
     s.position = String(position || '').trim();
@@ -3197,6 +3239,7 @@ ipcMain.handle('session-resume', (_e, { id, profile, salary } = {}) => {
   return { id: s.id, name: s.name, turns: s.turns || [], profile: s.profile };
 });
 ipcMain.handle('session-delete', (_e, id) => {
+  try { const s = sessions.find((x) => x.id === id); if (s && s.folder && fs.existsSync(s.folder)) fs.rmSync(s.folder, { recursive: true, force: true }); } catch {}
   sessions = sessions.filter(s => s.id !== id);
   if (currentSessionId === id) { currentSessionId = null; convoHistory = []; }
   saveSessions();
