@@ -1427,9 +1427,9 @@ async function refreshTranscriptionUI() {
   if (xaiKeyEl) xaiKeyEl.value = txCfg.xaiApiKey || "";
   languageSelect.value = txCfg.language || "auto";
   captureMicEl.checked = txCfg.captureMic !== false;
-  const autoAnswerEl = document.getElementById("autoAnswer");
-  if (autoAnswerEl) autoAnswerEl.checked = txCfg.autoAnswer !== false;
   captureSystemEl.checked = txCfg.captureSystem !== false;
+  const autoAnswerEl = document.getElementById("autoAnswer");
+  if (autoAnswerEl) autoAnswerEl.checked = txCfg.autoAnswer === true;
   if (!captureMicEl.checked && !captureSystemEl.checked) {
     captureMicEl.checked = true;
     captureSystemEl.checked = true;
@@ -1516,9 +1516,9 @@ function onTxSourceChange(e) {
   syncTxSourceUi();
 }
 captureMicEl.addEventListener("change", onTxSourceChange);
-captureSystemEl.addEventListener("change", onTxSourceChange);
 const autoAnswerEl = document.getElementById("autoAnswer");
 if (autoAnswerEl) autoAnswerEl.addEventListener("change", () => persistTx({ autoAnswer: autoAnswerEl.checked }));
+captureSystemEl.addEventListener("change", onTxSourceChange);
 const antiCloseEl = document.getElementById("antiClose");
 if (antiCloseEl && window.api.getAntiClose) {
   window.api.getAntiClose().then((s) => {
@@ -2211,17 +2211,18 @@ if (window.api.onMacSystemAudioEnded) {
   window.api.onMacSystemAudioEnded((code) => { if (macSysFeed && recState) { macSysFeed = null; toast("System audio capture stopped (helper exited " + code + ").", "err"); } });
 }
 
-// ── Auto-answer ───────────────────────────────────────────────────────────────
-// When the interviewer stops speaking, wait a beat to be sure the question is
-// complete, then submit the transcript exactly as pressing Send would. The
-// speculative prefetch usually has the answer ready by then. Off via Settings.
+// ── Auto-answer (off by default) ─────────────────────────────────────────────
+// Manual submission is the default. When the user enables "Answer
+// automatically" in Settings, the transcript is submitted (exactly as Send
+// would) a beat after the interviewer stops speaking; the prefetch usually has
+// the answer ready. The choice is stored in transcription.autoAnswer.
 let autoAnswerTimer = null;
 let lastSpeechAt = 0;
 const AUTO_ANSWER_DELAY_MS = 1200;
 const AUTO_ANSWER_MIN_WORDS = 3;
 function scheduleAutoAnswer() {
   if (autoAnswerTimer) { clearTimeout(autoAnswerTimer); autoAnswerTimer = null; }
-  if (txCfg && txCfg.autoAnswer === false) return;
+  if (!txCfg || !txCfg.autoAnswer) return; // default (unset/false) = manual
   const el = lastMeetEl;
   if (!el || el._autoAnswered) return;
   autoAnswerTimer = setTimeout(() => {

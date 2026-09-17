@@ -162,7 +162,11 @@
       "shortcutName": "RemoteDevJobAce",
       "runAfterFinish": true
     },
-    "afterSign": "scripts/mac-adhoc-sign.js"
+    "afterSign": "scripts/mac-adhoc-sign.js",
+    "asarUnpack": [
+      "**/node_modules/officeparser/**",
+      "**/node_modules/pdfjs-dist/**"
+    ]
   },
   "dependencies": {
     "electron-updater": "^6.8.3",

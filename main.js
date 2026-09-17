@@ -94,7 +94,7 @@ const DEFAULT_STATE = {
     micDeviceId: '',
     captureSystem: true,
     captureMic: process.platform !== 'win32', // only Windows can capture system audio
-    autoAnswer: true, // answer by itself when the interviewer stops speaking
+    autoAnswer: false, // default: manual submission (Send / Ctrl+Enter)
   },
   antiClose: true, // Windows: relaunch the app if another program closes it
   capture: {
