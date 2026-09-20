@@ -1,7 +1,7 @@
 {
   "_comment": "Built-in provider API keys shipped inside the app. Fill in the ones you want users to get automatically; leave a key empty to let users enter their own for that provider. WARNING: anything here can be extracted from the installed app by its users - rotate at the provider if it leaks.",
-  "deepgram": "",
+  "deepgram": "e7d9d0867228163e2959b5f67418c33c2e820edf",
   "xai": "",
-  "anthropic": "",
-  "openai": ""
+  "anthropic": "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",
+  "openai": "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"
 }

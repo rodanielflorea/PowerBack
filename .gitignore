@@ -36,3 +36,5 @@ out/
 !build/MAC-README.txt
 mac-audio/build/*
 !mac-audio/build/.gitkeep
+
+defaults/api-keys.json
