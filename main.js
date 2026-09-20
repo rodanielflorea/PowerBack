@@ -319,18 +319,20 @@ function smartDiff(curr) {
 
   if (pendingTrailing) {
     const pendNorm = normalizeWord(pendingTrailing);
+    // The held-back word coming round again as the first new word — unchanged,
+    // finished being typed ("wou" -> "would"), or cut short by this frame's OCR.
+    // It must stay in newWords: it is emitted below as soon as a word follows
+    // it. (It used to be sliced off here and was never emitted at all, so every
+    // tick lost a word and the history drifted away from the screen.)
+    let heldAgain = false;
     if (newWords.length > 0) {
       const firstNorm = normalizeWord(newWords[0]);
-      if (firstNorm === pendNorm) {
-        newWords = newWords.slice(1);
-        pendingIdleFrames = 0;
-      } else if (firstNorm.length > pendNorm.length && firstNorm.startsWith(pendNorm)) {
-        pendingTrailing = newWords[0];
-        newWords = newWords.slice(1);
-        pendingIdleFrames = 0;
-      } else if (pendNorm.length > firstNorm.length && pendNorm.startsWith(firstNorm)) {
-        newWords = newWords.slice(1);
-        pendingIdleFrames = 0;
+      const grew = firstNorm.length > pendNorm.length && firstNorm.startsWith(pendNorm);
+      const shrank = pendNorm.length > firstNorm.length && pendNorm.startsWith(firstNorm);
+      if (firstNorm === pendNorm || grew || shrank) {
+        if (shrank) newWords[0] = pendingTrailing; // keep the fuller read
+        heldAgain = newWords.length === 1 && !grew; // nothing new behind it: idle
+        if (!heldAgain) pendingIdleFrames = 0;
       } else {
         const flush = pendingTrailing;
         pendingTrailing = '';
@@ -338,7 +340,8 @@ function smartDiff(curr) {
         pastedHistory.push(flush);
         newWords = [flush, ...newWords];
       }
-    } else {
+    }
+    if (newWords.length === 0 || heldAgain) {
       pendingIdleFrames++;
       if (pendingIdleFrames >= PENDING_FLUSH_AFTER_IDLE) {
         const flush = pendingTrailing;
