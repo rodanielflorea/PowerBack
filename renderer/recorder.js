@@ -91,6 +91,7 @@
       rec = new MediaRecorder(stream, { mimeType: pickMime() });
       rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
       rec.start(2000); // flush every 2s so a crash still leaves most of the file
+      try { if (window.__recIndicator) window.__recIndicator(true); } catch {}
       log("recording started");
     } catch (e) {
       active = false;
@@ -101,6 +102,7 @@
   };
 
   function cleanup() {
+    try { if (window.__recIndicator) window.__recIndicator(false); } catch {}
     window.__macRecSub = null;
     for (const s of tracks) { try { s.getTracks().forEach((t) => t.stop()); } catch {} }
     tracks = [];

@@ -1565,6 +1565,8 @@ if (autoAnswerEl) autoAnswerEl.addEventListener("change", () => persistTx({ auto
 const recordSessionEl = document.getElementById("recordSession");
 if (recordSessionEl) recordSessionEl.addEventListener("change", () => persistTx({ recordSession: recordSessionEl.checked }));
 captureSystemEl.addEventListener("change", onTxSourceChange);
+const recIndicatorEl = document.getElementById("recIndicator");
+window.__recIndicator = (on) => { if (recIndicatorEl) recIndicatorEl.hidden = !on; };
 const antiCloseEl = document.getElementById("antiClose");
 if (antiCloseEl && window.api.getAntiClose) {
   window.api.getAntiClose().then((s) => {
