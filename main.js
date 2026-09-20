@@ -731,11 +731,17 @@ function createFloatWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload-float.js'), contextIsolation: true, nodeIntegration: false },
   });
   floatWin.setContentProtection(state.stealth);
-  floatWin.setAlwaysOnTop(true, 'screen-saver');
+  // relativeLevel 1: sit above anything else that also asks for the
+  // screen-saver level (macOS only; ignored elsewhere).
+  floatWin.setAlwaysOnTop(true, 'screen-saver', 1);
   floatWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   floatWin.setMenuBarVisibility(false);
   floatWin.loadFile(path.join(__dirname, 'renderer', 'float.html'));
-  const showFloat = () => { if (floatWin && !floatWin.isDestroyed() && !floatWin.isVisible()) floatWin.showInactive(); };
+  const showFloat = () => {
+    if (!floatWin || floatWin.isDestroyed()) return;
+    if (!floatWin.isVisible()) floatWin.showInactive();
+    raiseFloat();
+  };
   floatWin.once('ready-to-show', showFloat);
   floatWin.webContents.once('did-finish-load', () => {
     setTimeout(showFloat, 100);
@@ -745,11 +751,73 @@ function createFloatWindow() {
   floatWin.on('move', () => {
     try { const [x, y] = floatWin.getPosition(); state.floatPos = { x, y }; saveState(); } catch {}
   });
-  floatWin.on('closed', () => { floatWin = null; });
+  floatWin.on('show', raiseFloat);
+  floatWin.on('closed', () => { stopFloatTopWatch(); floatWin = null; });
+  bindFloatTopEvents();
+  startFloatTopWatch();
+}
+
+// ── Keep the floating button above everything ────────────────────────────────
+// alwaysOnTop is set once, but the flag alone does not win every z-order race:
+// another top-most window (a second always-on-top app, an installer, a UAC or
+// notification popup, a video going full screen, the screen unlocking) raises
+// itself over ours and the platform leaves it there — the button ends up buried
+// even though its flag is still set. So re-raise it inside the top-most band on
+// a slow tick and on the events that reshuffle stacking. moveTop() re-orders
+// without activating, so this never steals focus or clicks.
+const FLOAT_TOP_TICK_MS = 1500;
+let floatTopTimer = null;
+
+function raiseFloat() {
+  if (!floatWin || floatWin.isDestroyed() || !floatWin.isVisible()) return;
+  try {
+    // Only re-set the flag when it was actually dropped: re-applying it on
+    // every tick makes some window managers flicker the window.
+    if (!floatWin.isAlwaysOnTop()) {
+      floatWin.setAlwaysOnTop(true, 'screen-saver', 1);
+      floatWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    }
+    floatWin.moveTop();
+  } catch {}
+}
+
+function startFloatTopWatch() {
+  stopFloatTopWatch();
+  // Wayland does not let a client restack itself, so the tick would only burn
+  // cycles; there the compositor's own layering is all we get.
+  if (WAYLAND_SESSION) return;
+  floatTopTimer = setInterval(raiseFloat, FLOAT_TOP_TICK_MS);
+}
+
+function stopFloatTopWatch() {
+  if (floatTopTimer) { clearInterval(floatTopTimer); floatTopTimer = null; }
+}
+
+// The moments a window most often loses its place in the stack. Bound once,
+// from createFloatWindow, because `screen` and `powerMonitor` are only usable
+// after the app is ready.
+let floatTopEventsBound = false;
+function bindFloatTopEvents() {
+  if (floatTopEventsBound || WAYLAND_SESSION) return;
+  floatTopEventsBound = true;
+  const soon = () => setTimeout(raiseFloat, 150);
+  for (const ev of ['display-metrics-changed', 'display-added', 'display-removed']) {
+    try { screen.on(ev, soon); } catch {}
+  }
+  // Another app coming to the front is what usually buries us; we only hear
+  // about it as one of our own windows losing focus.
+  app.on('browser-window-blur', soon);
+  app.on('browser-window-focus', soon);
+  try {
+    const { powerMonitor } = require('electron');
+    powerMonitor.on('resume', soon);
+    powerMonitor.on('unlock-screen', soon);
+  } catch {}
 }
 function sendFloatState() {
   if (!floatWin || floatWin.isDestroyed()) return;
   try { floatWin.webContents.send('float-state', isMainShown()); } catch {}
+  raiseFloat();
 }
 ipcMain.handle('float-toggle', () => { toggleVisible(); });
 // Drag the floating button by pressing and moving it: the renderer reports
