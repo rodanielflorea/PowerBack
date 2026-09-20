@@ -2056,6 +2056,8 @@ textarea.meet-editbox {
 }
 .modal-title { margin: 0; font-size: 14px; font-weight: 700; }
 .modal-body { padding: 14px 18px; font-size: 12.5px; line-height: 1.55; }
+/* Share link for the uploaded session bundle — must show the whole URL. */
+.upload-link { width: 100%; box-sizing: border-box; font-family: ui-monospace, Menlo, Consolas, monospace; }
 .modal-lead { margin: 0 0 10px; color: var(--muted); }
 
 .modal-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }

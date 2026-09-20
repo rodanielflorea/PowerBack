@@ -112,7 +112,7 @@
   }
 
   // Finalize the recording and save it. `baseName` seeds the filename.
-  window.stopRecording = function stopRecording(baseName) {
+  window.stopRecording = function stopRecording(folder, base) {
     if (!active) return Promise.resolve();
     active = false;
     return new Promise((resolve) => {
@@ -121,7 +121,7 @@
           if (chunks.length && window.api.saveRecording) {
             const blob = new Blob(chunks, { type: "video/webm" });
             const buf = await blob.arrayBuffer();
-            const r = await window.api.saveRecording(buf, baseName || "");
+            const r = await window.api.saveRecording(buf, folder || "", base || "");
             if (r && r.ok) log("recording saved: " + r.path);
             else log("recording save failed: " + ((r && r.error) || "unknown"), "err");
             if (r && r.ok && window.__recToast) window.__recToast("Recording saved to " + r.path);

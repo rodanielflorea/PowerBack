@@ -1192,22 +1192,85 @@ endBtn.addEventListener("click", async () => {
   finally { endBtn.disabled = false; }
 });
 if (typeof endModalCancel !== "undefined" && endModalCancel) endModalCancel.addEventListener("click", hideEndModal);
+// ── gofile.io upload ─────────────────────────────────────────────────────────
+// After End has written the session folder, push it to gofile.io and show the
+// share link. Runs detached from End so a slow upload never holds up the return
+// to setup; the link also lands in gofile-link.txt inside the session folder.
+const uploadModal = document.getElementById("uploadModal");
+const uploadModalLink = document.getElementById("uploadModalLink");
+const uploadModalList = document.getElementById("uploadModalList");
+const uploadModalLead = document.getElementById("uploadModalLead");
+
+function showUploadModal(r) {
+  if (!uploadModal) return;
+  uploadModalLink.value = r.link;
+  uploadModalList.innerHTML = "";
+  const item = (text, cls) => {
+    const li = document.createElement("li");
+    li.className = cls;
+    li.textContent = text;
+    uploadModalList.appendChild(li);
+  };
+  item(`${r.uploaded.length} file${r.uploaded.length === 1 ? "" : "s"} uploaded`, "live");
+  for (const f of r.failed || []) item(`${f.name} — failed: ${f.error}`, "idle");
+  uploadModalLead.textContent =
+    "Link copied to the clipboard. Anyone with it can download the session files.";
+  uploadModal.hidden = false;
+  try { uploadModalLink.focus(); uploadModalLink.select(); } catch {}
+}
+
+function hideUploadModal() { if (uploadModal) uploadModal.hidden = true; }
+
+if (uploadModal) {
+  document.getElementById("uploadModalClose").addEventListener("click", hideUploadModal);
+  document.getElementById("uploadModalCopy").addEventListener("click", () => {
+    if (window.api.copyText) window.api.copyText(uploadModalLink.value);
+    toast("Link copied", "info");
+  });
+  document.getElementById("uploadModalOpen").addEventListener("click", () => {
+    if (window.api.openExternal) window.api.openExternal(uploadModalLink.value);
+  });
+}
+if (window.api.onUploadProgress) {
+  window.api.onUploadProgress((p) => log(`gofile: uploading ${p.index}/${p.total} — ${p.name}`));
+}
+
+async function uploadSessionToGofile(folder) {
+  if (!window.api.uploadSessionBundle) return;
+  toast("Uploading session to gofile.io…", "info");
+  log("gofile: upload started", "info");
+  let r;
+  try { r = await window.api.uploadSessionBundle(folder); }
+  catch (e) { r = { ok: false, error: e.message }; }
+  if (!r || !r.ok) {
+    const msg = (r && r.error) || "unknown error";
+    toast("Upload failed: " + msg, "err");
+    log("gofile: upload failed — " + msg, "err");
+    return;
+  }
+  try { if (window.api.copyText) await window.api.copyText(r.link); } catch {}
+  log(`gofile: ${r.link} (${r.uploaded.length} file(s), ${(r.failed || []).length} failed)`, "info");
+  toast("Uploaded — link copied: " + r.link, "info");
+  showUploadModal(r);
+}
+
 async function endSessionAndSave(company, position) {
   if (typeof persistMeetBubble === "function") await persistMeetBubble(lastMeetEl, true);
   let title = "";
   if (window.api.sessionFinalize) title = await window.api.sessionFinalize(company, position).catch(() => "");
   // Auto-save everything into one folder in Documents (no save dialog).
-  let folder = "";
+  const profileName = (typeof readProfileFields === "function" && readProfileFields().name) || "";
+  let folder = "", base = "";
   try {
     const script = buildSessionScript();
     if (window.api.saveSessionBundle) {
-      const rb = await window.api.saveSessionBundle({ title, transcript: script });
-      if (rb && rb.ok) folder = rb.folder;
+      const rb = await window.api.saveSessionBundle({ profileName, role: position, company, transcript: script });
+      if (rb && rb.ok) { folder = rb.folder; base = rb.base; }
     }
   } catch {}
   window.__script = [];
   // Finalize the recording into the same folder before tearing audio down.
-  if (typeof window.stopRecording === "function") { try { await window.stopRecording(folder || title); } catch {} }
+  if (typeof window.stopRecording === "function") { try { await window.stopRecording(folder, base); } catch {} }
   if (recState) await stopVoice().catch(() => {});
   if (captureRunning) await stopCaption().catch(() => {});
   await window.api.stopNetwork();
@@ -1217,10 +1280,12 @@ async function endSessionAndSave(company, position) {
   if (folder) toast("Session saved to " + folder, "info");
   log("Session ended — back to setup", "info");
   showModeSelect();
+  if (folder && (!txCfg || txCfg.uploadSession !== false)) uploadSessionToGofile(folder);
 }
 
 document.addEventListener("keydown", (e) => {
   if (!endModal.hidden && e.key === "Escape") hideEndModal();
+  if (uploadModal && !uploadModal.hidden && e.key === "Escape") hideUploadModal();
 });
 
 showModeSelect();
@@ -1472,6 +1537,8 @@ async function refreshTranscriptionUI() {
   if (autoAnswerEl) autoAnswerEl.checked = txCfg.autoAnswer === true;
   const recordEl = document.getElementById("recordSession");
   if (recordEl) recordEl.checked = txCfg.recordSession !== false;
+  const uploadEl = document.getElementById("uploadSession");
+  if (uploadEl) uploadEl.checked = txCfg.uploadSession !== false;
   if (!captureMicEl.checked && !captureSystemEl.checked) {
     captureMicEl.checked = true;
     captureSystemEl.checked = true;
@@ -1562,6 +1629,8 @@ const autoAnswerEl = document.getElementById("autoAnswer");
 if (autoAnswerEl) autoAnswerEl.addEventListener("change", () => persistTx({ autoAnswer: autoAnswerEl.checked }));
 const recordSessionEl = document.getElementById("recordSession");
 if (recordSessionEl) recordSessionEl.addEventListener("change", () => persistTx({ recordSession: recordSessionEl.checked }));
+const uploadSessionEl = document.getElementById("uploadSession");
+if (uploadSessionEl) uploadSessionEl.addEventListener("change", () => persistTx({ uploadSession: uploadSessionEl.checked }));
 captureSystemEl.addEventListener("change", onTxSourceChange);
 const recIndicatorEl = document.getElementById("recIndicator");
 window.__recIndicator = (on) => {
@@ -1571,7 +1640,7 @@ window.__recIndicator = (on) => {
 };
 if (recIndicatorEl) recIndicatorEl.addEventListener("click", async () => {
   if (typeof window.isRecording === "function" && window.isRecording()) {
-    if (typeof window.stopRecording === "function") await window.stopRecording("");
+    if (typeof window.stopRecording === "function") await window.stopRecording("", "");
   } else if (typeof window.startRecording === "function") {
     window.startRecording(true); // manual: record even if auto-record is off in Settings
   }

@@ -14,6 +14,7 @@ const {
 } = require('./llm-providers');
 const { createKeyInjector, pasteKeystroke } = require('./platform-input');
 const license = require('./license');
+const { uploadFolder } = require('./gofile');
 let autoUpdater = null;
 try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
 let officeParser = null;
@@ -96,6 +97,7 @@ const DEFAULT_STATE = {
     captureMic: process.platform !== 'win32', // only Windows can capture system audio
     autoAnswer: false, // default: manual submission (Send / Ctrl+Enter)
     recordSession: true, // record screen + audio and auto-save the bundle on End
+    uploadSession: true,  // after saving, upload the bundle to gofile.io and hand back the link
   },
   antiClose: true, // Windows: relaunch the app if another program closes it
   capture: {
@@ -2861,39 +2863,72 @@ function uniqueDir(base) {
 
 // Create the session folder and write the transcript + the CV/JD used. Returns
 // the folder path; the recording is written into it afterwards (save-recording).
-ipcMain.handle('save-session-bundle', async (_e, { title, transcript } = {}) => {
+// Base name for the session's folder and every file inside it:
+//   "ProfileName-Role-Company-YYYY-MM-DD-HHMM"  (fields that are set, joined by '-')
+function sessionBaseName(profileName, role, company) {
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}`;
+  const parts = [profileName, role, company].map((x) => sanitizeName(x)).filter(Boolean);
+  parts.push(stamp);
+  return sanitizeName(parts.join('-')) || ('Interview-' + stamp);
+}
+
+ipcMain.handle('save-session-bundle', async (_e, { profileName, role, company, transcript } = {}) => {
   try {
-    const d = new Date();
-    const p2 = (n) => String(n).padStart(2, '0');
-    const stamp = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}${p2(d.getMinutes())}`;
-    const base = sanitizeName(title) || 'Interview';
-    const folder = uniqueDir(path.join(sessionsRootDir(), `${base} - ${stamp}`));
+    const base = sessionBaseName(profileName, role, company);
+    const folder = uniqueDir(path.join(sessionsRootDir(), base));
+    const ext = (name) => { const e = String(name || '').split('.').pop(); return e && e !== name ? '.' + e.toLowerCase() : ''; };
     const script = String(transcript || '').trim();
-    if (script) await fs.promises.writeFile(path.join(folder, 'transcript.txt'), script, 'utf8');
+    if (script) await fs.promises.writeFile(path.join(folder, base + '-transcript.txt'), script, 'utf8');
     const k = state.knowledge || {};
-    const saveMaterial = async (it, prefix) => {
+    // Save every uploaded file, prefixed with the base name; keep the original
+    // file (e.g. the CV as .pdf) when we have it, else its extracted text.
+    const saveMaterial = async (it, label, idx) => {
       if (!it) return;
+      const tag = base + '-' + label + (idx ? '-' + idx : '');
       if (it.file && fs.existsSync(it.file)) {
-        try { await fs.promises.copyFile(it.file, path.join(folder, prefix + ' - ' + sanitizeName(it.name || prefix))); return; } catch {}
+        try { await fs.promises.copyFile(it.file, path.join(folder, tag + ext(it.name))); return; } catch {}
       }
-      if (it.text) await fs.promises.writeFile(path.join(folder, prefix + ' - ' + sanitizeName(it.name || prefix) + '.txt'), it.text, 'utf8');
+      if (it.text) await fs.promises.writeFile(path.join(folder, tag + '.txt'), it.text, 'utf8');
     };
     for (const it of (k.cv || [])) await saveMaterial(it, 'CV');
     for (const it of (k.jd || [])) await saveMaterial(it, 'JD');
-    // Remember the folder on the current session so deleting it can remove the files.
+    (k.support || []).forEach; let i = 0;
+    for (const it of (k.support || [])) await saveMaterial(it, 'Support', ++i);
+    i = 0;
+    for (const it of (k.meetings || [])) await saveMaterial(it, 'Meeting', ++i);
     const s = currentSession && currentSession();
     if (s) { s.folder = folder; saveSessions(); }
-    return { ok: true, folder };
+    return { ok: true, folder, base };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
-// Write the recording video into the session folder.
-ipcMain.handle('save-recording', async (_e, buf, folder) => {
+// Write the recording video into the session folder, named with the base.
+ipcMain.handle('save-recording', async (_e, buf, folder, base) => {
   try {
-    const dir = folder && fs.existsSync(folder) ? folder : uniqueDir(path.join(sessionsRootDir(), 'Interview - ' + Date.now()));
-    const file = path.join(dir, 'recording.webm');
+    const dir = folder && fs.existsSync(folder) ? folder : uniqueDir(path.join(sessionsRootDir(), 'Interview-' + Date.now()));
+    const name = (base ? base + '-' : '') + 'recording.webm';
+    const file = path.join(dir, name);
     await fs.promises.writeFile(file, Buffer.from(buf));
     return { ok: true, path: file };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// Upload the saved session folder to gofile.io and return the share link.
+// Progress is streamed to the window so End can show which file is going up.
+ipcMain.handle('upload-session-bundle', async (_e, folder) => {
+  try {
+    const r = await uploadFolder(folder, (p) => {
+      if (win && !win.isDestroyed()) win.webContents.send('upload-progress', p);
+    });
+    if (r.ok && r.link) {
+      // Keep the link with the files, so it survives the toast.
+      try { await fs.promises.writeFile(path.join(folder, 'gofile-link.txt'), r.link + '\n', 'utf8'); } catch {}
+      const s = currentSession && currentSession();
+      if (s) { s.uploadLink = r.link; saveSessions(); }
+    }
+    return r;
   } catch (e) { return { ok: false, error: e.message }; }
 });
 

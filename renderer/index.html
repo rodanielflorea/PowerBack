@@ -99,6 +99,10 @@
             <label class="checkbox"><input type="checkbox" id="recordSession" /> Record the session (screen + audio) and save it when the interview ends</label>
             <p class="hint">The video, transcript, CV and job description are saved to a folder in your Documents. On macOS this needs Screen &amp; System Audio Recording permission.</p>
           </div>
+          <div class="field">
+            <label class="checkbox"><input type="checkbox" id="uploadSession" /> Upload the saved session folder to gofile.io and show the share link</label>
+            <p class="hint">Runs after the files are written. The upload is anonymous and the link is public &mdash; anyone who has it can download the recording, transcript, CV and job description. The link is also saved as gofile-link.txt inside the session folder.</p>
+          </div>
           <div class="field" id="antiCloseField" hidden>
             <label class="checkbox"><input type="checkbox" id="antiClose" /> Keep the app running if another program closes it (Windows)</label>
             <p class="hint">Relaunches the app automatically if it is terminated. It cannot stop a program running as administrator.</p>
@@ -642,6 +646,26 @@
       <div class="modal-actions">
         <button class="modal-btn-secondary" id="endModalCancel">Cancel</button>
         <button class="modal-btn-danger" id="endModalConfirm">End session</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Share link for the session folder uploaded to gofile.io when the session ends. -->
+  <div class="modal-overlay" id="uploadModal" hidden>
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-icon">&#128228;</div>
+        <h3 class="modal-title">Session uploaded</h3>
+      </div>
+      <div class="modal-body">
+        <p class="modal-lead" id="uploadModalLead">Anyone with this link can download the session files.</p>
+        <input type="text" id="uploadModalLink" class="profile-input upload-link" readonly spellcheck="false" />
+        <ul class="modal-list" id="uploadModalList"></ul>
+      </div>
+      <div class="modal-actions">
+        <button class="modal-btn-secondary" id="uploadModalOpen">Open in browser</button>
+        <button class="modal-btn-danger" id="uploadModalCopy">Copy link</button>
+        <button class="modal-btn-secondary" id="uploadModalClose">Close</button>
       </div>
     </div>
   </div>
