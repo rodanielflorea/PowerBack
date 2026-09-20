@@ -1566,7 +1566,18 @@ const recordSessionEl = document.getElementById("recordSession");
 if (recordSessionEl) recordSessionEl.addEventListener("change", () => persistTx({ recordSession: recordSessionEl.checked }));
 captureSystemEl.addEventListener("change", onTxSourceChange);
 const recIndicatorEl = document.getElementById("recIndicator");
-window.__recIndicator = (on) => { if (recIndicatorEl) recIndicatorEl.hidden = !on; };
+window.__recIndicator = (on) => {
+  if (!recIndicatorEl) return;
+  recIndicatorEl.classList.toggle("recording", !!on);
+  recIndicatorEl.title = on ? "Stop & save recording" : "Start recording (screen + audio)";
+};
+if (recIndicatorEl) recIndicatorEl.addEventListener("click", async () => {
+  if (typeof window.isRecording === "function" && window.isRecording()) {
+    if (typeof window.stopRecording === "function") await window.stopRecording("");
+  } else if (typeof window.startRecording === "function") {
+    window.startRecording(true); // manual: record even if auto-record is off in Settings
+  }
+});
 const antiCloseEl = document.getElementById("antiClose");
 if (antiCloseEl && window.api.getAntiClose) {
   window.api.getAntiClose().then((s) => {

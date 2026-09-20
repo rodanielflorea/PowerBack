@@ -70,11 +70,11 @@
 
   let mixDest = null;
 
-  window.startRecording = async function startRecording() {
+  window.startRecording = async function startRecording(force) {
     if (active) return;
     let cfg = {};
     try { cfg = (await window.api.getTranscriptionConfig()) || {}; } catch {}
-    if (cfg.recordSession === false) return; // recording turned off in Settings
+    if (!force && cfg.recordSession === false) return; // auto-record off; manual click still records
     active = true;
     chunks = [];
     tracks = [];

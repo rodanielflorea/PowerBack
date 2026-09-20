@@ -2677,10 +2677,12 @@ body.role-supporter .mode-toggle-btn { display: none !important; }
 }
 .history-del:hover { background: rgba(220,38,38,.10); color: var(--rec-on); border-color: rgba(220,38,38,.45); }
 
-/* Recording indicator in the header — red camera with a blinking dot */
-.rec-indicator { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; -webkit-app-region: no-drag; }
-.rec-indicator[hidden] { display: none; }
+/* Recording toggle in the header — click to start/stop. Grey when idle, red
+   with a blinking dot while recording. */
+.rec-indicator { display: inline-flex; align-items: center; gap: 4px; width: auto; padding: 0 6px; -webkit-app-region: no-drag; }
 .rec-indicator svg { width: 16px; height: 16px; display: block; }
-.rec-indicator svg rect, .rec-indicator svg path { fill: var(--rec-on); }
-.rec-dot-live { width: 7px; height: 7px; border-radius: 50%; background: var(--rec-on); box-shadow: 0 0 5px rgba(220,38,38,.8); animation: recBlink 1s steps(1, end) infinite; }
-@keyframes recBlink { 50% { opacity: 0; } }
+.rec-indicator svg rect, .rec-indicator svg path { fill: var(--muted); }
+.rec-indicator.recording svg rect, .rec-indicator.recording svg path { fill: var(--rec-on); }
+.rec-dot-live { width: 7px; height: 7px; border-radius: 50%; background: var(--rec-on); box-shadow: 0 0 5px rgba(220,38,38,.8); opacity: 0; }
+.rec-indicator.recording .rec-dot-live { animation: recBlink 1s steps(1, end) infinite; }
+@keyframes recBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
