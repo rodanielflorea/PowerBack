@@ -1184,17 +1184,16 @@ function hideEndModal() {
   endModal.hidden = true;
 }
 
-endBtn.addEventListener("click", showEndModal);
-endModalCancel.addEventListener("click", hideEndModal);
-endModalConfirm.addEventListener("click", async () => {
-  endModal.hidden = true;
+endBtn.addEventListener("click", async () => {
+  endBtn.disabled = true;
+  let info = { company: "", role: "" };
+  try { if (window.api.extractJdInfo) info = (await window.api.extractJdInfo()) || info; } catch {}
+  try { await endSessionAndSave(info.company || "", info.role || ""); }
+  finally { endBtn.disabled = false; }
+});
+if (typeof endModalCancel !== "undefined" && endModalCancel) endModalCancel.addEventListener("click", hideEndModal);
+async function endSessionAndSave(company, position) {
   if (typeof persistMeetBubble === "function") await persistMeetBubble(lastMeetEl, true);
-  // Compose the session title from company/position (+ date), then save the
-  // transcript using that title as the suggested filename.
-  const companyEl = document.getElementById("endCompany");
-  const positionEl = document.getElementById("endPosition");
-  const company = companyEl ? companyEl.value.trim() : "";
-  const position = positionEl ? positionEl.value.trim() : "";
   let title = "";
   if (window.api.sessionFinalize) title = await window.api.sessionFinalize(company, position).catch(() => "");
   // Auto-save everything into one folder in Documents (no save dialog).
@@ -1207,8 +1206,6 @@ endModalConfirm.addEventListener("click", async () => {
     }
   } catch {}
   window.__script = [];
-  if (companyEl) companyEl.value = "";
-  if (positionEl) positionEl.value = "";
   // Finalize the recording into the same folder before tearing audio down.
   if (typeof window.stopRecording === "function") { try { await window.stopRecording(folder || title); } catch {} }
   if (recState) await stopVoice().catch(() => {});
@@ -1217,9 +1214,10 @@ endModalConfirm.addEventListener("click", async () => {
   teardownPeers();
   delete netActionBtn.dataset.connecting;
   if (window.api.infoClose) window.api.infoClose();
+  if (folder) toast("Session saved to " + folder, "info");
   log("Session ended — back to setup", "info");
   showModeSelect();
-});
+}
 
 document.addEventListener("keydown", (e) => {
   if (!endModal.hidden && e.key === "Escape") hideEndModal();

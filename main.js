@@ -2821,6 +2821,25 @@ function startMicDeepgramWs(apiKey, language) {
   micDgWs.on('error', () => {});
   micDgWs.on('unexpected-response', (_r, res) => { res.resume(); micDgActive = false; try { if (micDgWs) micDgWs.terminate(); } catch {} micDgWs = null; });
 }
+ipcMain.handle('extract-jd-info', async () => {
+  try {
+    const jd = state.knowledge && state.knowledge.jd && state.knowledge.jd[0] && state.knowledge.jd[0].text;
+    if (!jd || !jd.trim()) return { company: '', role: '' };
+    const provider = getAnswerProvider();
+    const apiKey = getAnswerApiKey(provider.id);
+    if (!apiKey) return { company: '', role: '' };
+    const ac = new AbortController();
+    setTimeout(() => { try { ac.abort(); } catch {} }, 15000);
+    const prompt = 'From this job description, extract the hiring company name and the job title. Reply with strict JSON only, no prose: {\"company\":\"\",\"role\":\"\"}. Use \"\" if not stated.\n\n' + jd.slice(0, 6000);
+    let raw = '';
+    try { raw = await completeChat({ provider, apiKey, model: getAnswerModel(provider.id), messages: [{ role: 'user', content: prompt }], maxTokens: 120, signal: ac.signal }); }
+    catch { return { company: '', role: '' }; }
+    const mm = String(raw || '').match(/\{[\s\S]*\}/);
+    if (!mm) return { company: '', role: '' };
+    let d; try { d = JSON.parse(mm[0]); } catch { return { company: '', role: '' }; }
+    return { company: String((d && d.company) || '').trim(), role: String((d && d.role) || '').trim() };
+  } catch { return { company: '', role: '' }; }
+});
 ipcMain.handle('start-mic-deepgram-stream', (_e, { apiKey, language } = {}) => { micDgActive = true; micDgAuth = { apiKey, language }; startMicDeepgramWs(apiKey, language); });
 ipcMain.handle('stop-mic-deepgram-stream', () => {
   micDgActive = false;

@@ -147,6 +147,7 @@ contextBridge.exposeInMainWorld('api', {
   startXaiStream: (cfg) => ipcRenderer.invoke('start-xai-stream', cfg),
   stopXaiStream: () => ipcRenderer.invoke('stop-xai-stream'),
   sendAudioChunk: (buf) => ipcRenderer.send('audio-chunk', buf),
+  extractJdInfo: () => ipcRenderer.invoke('extract-jd-info'),
   startMicDeepgramStream: (cfg) => ipcRenderer.invoke('start-mic-deepgram-stream', cfg),
   stopMicDeepgramStream: () => ipcRenderer.invoke('stop-mic-deepgram-stream'),
   sendMicAudioChunk: (buf) => ipcRenderer.send('mic-audio-chunk', buf),
