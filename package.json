@@ -23,6 +23,7 @@
       "main.js",
       "llm-providers.js",
       "gofile.js",
+      "speakers.js",
       "defaults/**/*",
       "preload*.js",
       "renderer/**/*",

@@ -1154,6 +1154,15 @@ function pushScript(who, text) {
   const t = String(text || "").trim();
   if (t) window.__script.push({ who, text: t });
 }
+// Captions arrive a few words per tick: grow the speaker's current entry
+// instead of adding a line per tick.
+function pushScriptRun(who, text) {
+  const t = String(text || "").trim();
+  if (!t) return;
+  const last = window.__script[window.__script.length - 1];
+  if (last && last.who === who) last.text += " " + t;
+  else window.__script.push({ who, text: t });
+}
 function buildSessionScript() {
   return window.__script.map((e) => e.who + ": " + e.text).join("\n\n");
 }
@@ -2179,8 +2188,12 @@ function joinSpeech(a, b) {
 
 function applyMeetLine(who, text, speakerId, isFinal) {
   lastSpeechAt = Date.now();
-  who = "Interviewer";
-  speakerId = 0;
+  // A caller with a real name (captions read off the screen) gets its own
+  // bubble per speaker, keyed by that name. Everything else — voice has no way
+  // to tell voices apart — stays the single "Interviewer" it always was.
+  who = String(who || "").trim();
+  if (!who || who === "Interviewer") { who = "Interviewer"; speakerId = 0; }
+  else speakerId = undefined;
   const key = speakerKey(who, speakerId);
   const same = lastMeetEl && lastMeetEl._key === key;
   if (same) {
@@ -2376,17 +2389,27 @@ window.api.onTranscriptLiveError((msg) => {
   }
 });
 
-window.api.onCaptureText((text) => {
+window.api.onCaptureText((text, who) => {
   // Messages starting with '[' are internal status/log lines (e.g. "[sticky sent: ...]"),
   // not real OCR content — log them but never inject them into the composer.
   if (text && text.trimStart().startsWith('[')) {
     log(text);
     return;
   }
-  log("OCR: " + text);
-  // Same path as voice transcripts: an Interviewer bubble with retry/edit/remove.
-  applyMeetLine("Interviewer", text, 0, true);
-  window.api.sessionLogAdd({ ts: Date.now(), kind: "ocr", text });
+  who = String(who || "").trim();
+  log("OCR: " + (who ? who + ": " : "") + text);
+  // The platform captions the local user too, labelled "You". Like the mic,
+  // that goes to the saved transcript only — never a bubble, never answered.
+  if (/^you\b/i.test(who)) {
+    pushScriptRun(profileNameForScript(), text);
+    window.api.sessionLogAdd({ ts: Date.now(), kind: "ocr", text: profileNameForScript() + ": " + text });
+    return;
+  }
+  // Same path as voice transcripts: a bubble with retry/edit/remove, under the
+  // speaker's name when the captions gave one.
+  applyMeetLine(who || "Interviewer", text, 0, true);
+  pushScriptRun(who || "Interviewer", text);
+  window.api.sessionLogAdd({ ts: Date.now(), kind: "ocr", text: (who ? who + ": " : "") + text });
 });
 window.api.onCaptureError((msg) => log("OCR error: " + msg, "err"));
 window.api.onCaptureState((on) => {
