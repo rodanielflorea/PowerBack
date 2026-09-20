@@ -2056,6 +2056,8 @@ textarea.meet-editbox {
 }
 .modal-title { margin: 0; font-size: 14px; font-weight: 700; }
 .modal-body { padding: 14px 18px; font-size: 12.5px; line-height: 1.55; }
+/* Share link for the uploaded session bundle — must show the whole URL. */
+.upload-link { width: 100%; box-sizing: border-box; font-family: ui-monospace, Menlo, Consolas, monospace; }
 .modal-lead { margin: 0 0 10px; color: var(--muted); }
 
 .modal-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
@@ -2676,3 +2678,13 @@ body.role-supporter .mode-toggle-btn { display: none !important; }
   transition: background var(--t) var(--ease), color var(--t) var(--ease), border-color var(--t) var(--ease);
 }
 .history-del:hover { background: rgba(220,38,38,.10); color: var(--rec-on); border-color: rgba(220,38,38,.45); }
+
+/* Recording toggle in the header — click to start/stop. Grey when idle, red
+   with a blinking dot while recording. */
+.rec-indicator { display: inline-flex; align-items: center; gap: 4px; width: auto; padding: 0 6px; -webkit-app-region: no-drag; }
+.rec-indicator svg { width: 16px; height: 16px; display: block; }
+.rec-indicator svg rect, .rec-indicator svg path { fill: var(--muted); }
+.rec-indicator.recording svg rect, .rec-indicator.recording svg path { fill: var(--rec-on); }
+.rec-dot-live { width: 7px; height: 7px; border-radius: 50%; background: var(--rec-on); box-shadow: 0 0 5px rgba(220,38,38,.8); opacity: 0; }
+.rec-indicator.recording .rec-dot-live { animation: recBlink 1s steps(1, end) infinite; }
+@keyframes recBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }

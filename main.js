@@ -14,6 +14,7 @@ const {
 } = require('./llm-providers');
 const { createKeyInjector, pasteKeystroke } = require('./platform-input');
 const license = require('./license');
+const { uploadFolder } = require('./gofile');
 let autoUpdater = null;
 try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
 let officeParser = null;
@@ -96,6 +97,7 @@ const DEFAULT_STATE = {
     captureMic: process.platform !== 'win32', // only Windows can capture system audio
     autoAnswer: false, // default: manual submission (Send / Ctrl+Enter)
     recordSession: true, // record screen + audio and auto-save the bundle on End
+    uploadSession: true,  // after saving, upload the bundle to gofile.io and hand back the link
   },
   antiClose: true, // Windows: relaunch the app if another program closes it
   capture: {
@@ -729,11 +731,17 @@ function createFloatWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload-float.js'), contextIsolation: true, nodeIntegration: false },
   });
   floatWin.setContentProtection(state.stealth);
-  floatWin.setAlwaysOnTop(true, 'screen-saver');
+  // relativeLevel 1: sit above anything else that also asks for the
+  // screen-saver level (macOS only; ignored elsewhere).
+  floatWin.setAlwaysOnTop(true, 'screen-saver', 1);
   floatWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   floatWin.setMenuBarVisibility(false);
   floatWin.loadFile(path.join(__dirname, 'renderer', 'float.html'));
-  const showFloat = () => { if (floatWin && !floatWin.isDestroyed() && !floatWin.isVisible()) floatWin.showInactive(); };
+  const showFloat = () => {
+    if (!floatWin || floatWin.isDestroyed()) return;
+    if (!floatWin.isVisible()) floatWin.showInactive();
+    raiseFloat();
+  };
   floatWin.once('ready-to-show', showFloat);
   floatWin.webContents.once('did-finish-load', () => {
     setTimeout(showFloat, 100);
@@ -743,11 +751,73 @@ function createFloatWindow() {
   floatWin.on('move', () => {
     try { const [x, y] = floatWin.getPosition(); state.floatPos = { x, y }; saveState(); } catch {}
   });
-  floatWin.on('closed', () => { floatWin = null; });
+  floatWin.on('show', raiseFloat);
+  floatWin.on('closed', () => { stopFloatTopWatch(); floatWin = null; });
+  bindFloatTopEvents();
+  startFloatTopWatch();
+}
+
+// ── Keep the floating button above everything ────────────────────────────────
+// alwaysOnTop is set once, but the flag alone does not win every z-order race:
+// another top-most window (a second always-on-top app, an installer, a UAC or
+// notification popup, a video going full screen, the screen unlocking) raises
+// itself over ours and the platform leaves it there — the button ends up buried
+// even though its flag is still set. So re-raise it inside the top-most band on
+// a slow tick and on the events that reshuffle stacking. moveTop() re-orders
+// without activating, so this never steals focus or clicks.
+const FLOAT_TOP_TICK_MS = 1500;
+let floatTopTimer = null;
+
+function raiseFloat() {
+  if (!floatWin || floatWin.isDestroyed() || !floatWin.isVisible()) return;
+  try {
+    // Only re-set the flag when it was actually dropped: re-applying it on
+    // every tick makes some window managers flicker the window.
+    if (!floatWin.isAlwaysOnTop()) {
+      floatWin.setAlwaysOnTop(true, 'screen-saver', 1);
+      floatWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    }
+    floatWin.moveTop();
+  } catch {}
+}
+
+function startFloatTopWatch() {
+  stopFloatTopWatch();
+  // Wayland does not let a client restack itself, so the tick would only burn
+  // cycles; there the compositor's own layering is all we get.
+  if (WAYLAND_SESSION) return;
+  floatTopTimer = setInterval(raiseFloat, FLOAT_TOP_TICK_MS);
+}
+
+function stopFloatTopWatch() {
+  if (floatTopTimer) { clearInterval(floatTopTimer); floatTopTimer = null; }
+}
+
+// The moments a window most often loses its place in the stack. Bound once,
+// from createFloatWindow, because `screen` and `powerMonitor` are only usable
+// after the app is ready.
+let floatTopEventsBound = false;
+function bindFloatTopEvents() {
+  if (floatTopEventsBound || WAYLAND_SESSION) return;
+  floatTopEventsBound = true;
+  const soon = () => setTimeout(raiseFloat, 150);
+  for (const ev of ['display-metrics-changed', 'display-added', 'display-removed']) {
+    try { screen.on(ev, soon); } catch {}
+  }
+  // Another app coming to the front is what usually buries us; we only hear
+  // about it as one of our own windows losing focus.
+  app.on('browser-window-blur', soon);
+  app.on('browser-window-focus', soon);
+  try {
+    const { powerMonitor } = require('electron');
+    powerMonitor.on('resume', soon);
+    powerMonitor.on('unlock-screen', soon);
+  } catch {}
 }
 function sendFloatState() {
   if (!floatWin || floatWin.isDestroyed()) return;
   try { floatWin.webContents.send('float-state', isMainShown()); } catch {}
+  raiseFloat();
 }
 ipcMain.handle('float-toggle', () => { toggleVisible(); });
 // Drag the floating button by pressing and moving it: the renderer reports
@@ -2821,6 +2891,25 @@ function startMicDeepgramWs(apiKey, language) {
   micDgWs.on('error', () => {});
   micDgWs.on('unexpected-response', (_r, res) => { res.resume(); micDgActive = false; try { if (micDgWs) micDgWs.terminate(); } catch {} micDgWs = null; });
 }
+ipcMain.handle('extract-jd-info', async () => {
+  try {
+    const jd = state.knowledge && state.knowledge.jd && state.knowledge.jd[0] && state.knowledge.jd[0].text;
+    if (!jd || !jd.trim()) return { company: '', role: '' };
+    const provider = getAnswerProvider();
+    const apiKey = getAnswerApiKey(provider.id);
+    if (!apiKey) return { company: '', role: '' };
+    const ac = new AbortController();
+    setTimeout(() => { try { ac.abort(); } catch {} }, 15000);
+    const prompt = 'From this job description, extract the hiring company name and the job title. Reply with strict JSON only, no prose: {\"company\":\"\",\"role\":\"\"}. Use \"\" if not stated.\n\n' + jd.slice(0, 6000);
+    let raw = '';
+    try { raw = await completeChat({ provider, apiKey, model: getAnswerModel(provider.id), messages: [{ role: 'user', content: prompt }], maxTokens: 120, signal: ac.signal }); }
+    catch { return { company: '', role: '' }; }
+    const mm = String(raw || '').match(/\{[\s\S]*\}/);
+    if (!mm) return { company: '', role: '' };
+    let d; try { d = JSON.parse(mm[0]); } catch { return { company: '', role: '' }; }
+    return { company: String((d && d.company) || '').trim(), role: String((d && d.role) || '').trim() };
+  } catch { return { company: '', role: '' }; }
+});
 ipcMain.handle('start-mic-deepgram-stream', (_e, { apiKey, language } = {}) => { micDgActive = true; micDgAuth = { apiKey, language }; startMicDeepgramWs(apiKey, language); });
 ipcMain.handle('stop-mic-deepgram-stream', () => {
   micDgActive = false;
@@ -2842,39 +2931,72 @@ function uniqueDir(base) {
 
 // Create the session folder and write the transcript + the CV/JD used. Returns
 // the folder path; the recording is written into it afterwards (save-recording).
-ipcMain.handle('save-session-bundle', async (_e, { title, transcript } = {}) => {
+// Base name for the session's folder and every file inside it:
+//   "ProfileName-Role-Company-YYYY-MM-DD-HHMM"  (fields that are set, joined by '-')
+function sessionBaseName(profileName, role, company) {
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}`;
+  const parts = [profileName, role, company].map((x) => sanitizeName(x)).filter(Boolean);
+  parts.push(stamp);
+  return sanitizeName(parts.join('-')) || ('Interview-' + stamp);
+}
+
+ipcMain.handle('save-session-bundle', async (_e, { profileName, role, company, transcript } = {}) => {
   try {
-    const d = new Date();
-    const p2 = (n) => String(n).padStart(2, '0');
-    const stamp = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}${p2(d.getMinutes())}`;
-    const base = sanitizeName(title) || 'Interview';
-    const folder = uniqueDir(path.join(sessionsRootDir(), `${base} - ${stamp}`));
+    const base = sessionBaseName(profileName, role, company);
+    const folder = uniqueDir(path.join(sessionsRootDir(), base));
+    const ext = (name) => { const e = String(name || '').split('.').pop(); return e && e !== name ? '.' + e.toLowerCase() : ''; };
     const script = String(transcript || '').trim();
-    if (script) await fs.promises.writeFile(path.join(folder, 'transcript.txt'), script, 'utf8');
+    if (script) await fs.promises.writeFile(path.join(folder, base + '-transcript.txt'), script, 'utf8');
     const k = state.knowledge || {};
-    const saveMaterial = async (it, prefix) => {
+    // Save every uploaded file, prefixed with the base name; keep the original
+    // file (e.g. the CV as .pdf) when we have it, else its extracted text.
+    const saveMaterial = async (it, label, idx) => {
       if (!it) return;
+      const tag = base + '-' + label + (idx ? '-' + idx : '');
       if (it.file && fs.existsSync(it.file)) {
-        try { await fs.promises.copyFile(it.file, path.join(folder, prefix + ' - ' + sanitizeName(it.name || prefix))); return; } catch {}
+        try { await fs.promises.copyFile(it.file, path.join(folder, tag + ext(it.name))); return; } catch {}
       }
-      if (it.text) await fs.promises.writeFile(path.join(folder, prefix + ' - ' + sanitizeName(it.name || prefix) + '.txt'), it.text, 'utf8');
+      if (it.text) await fs.promises.writeFile(path.join(folder, tag + '.txt'), it.text, 'utf8');
     };
     for (const it of (k.cv || [])) await saveMaterial(it, 'CV');
     for (const it of (k.jd || [])) await saveMaterial(it, 'JD');
-    // Remember the folder on the current session so deleting it can remove the files.
+    (k.support || []).forEach; let i = 0;
+    for (const it of (k.support || [])) await saveMaterial(it, 'Support', ++i);
+    i = 0;
+    for (const it of (k.meetings || [])) await saveMaterial(it, 'Meeting', ++i);
     const s = currentSession && currentSession();
     if (s) { s.folder = folder; saveSessions(); }
-    return { ok: true, folder };
+    return { ok: true, folder, base };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
-// Write the recording video into the session folder.
-ipcMain.handle('save-recording', async (_e, buf, folder) => {
+// Write the recording video into the session folder, named with the base.
+ipcMain.handle('save-recording', async (_e, buf, folder, base) => {
   try {
-    const dir = folder && fs.existsSync(folder) ? folder : uniqueDir(path.join(sessionsRootDir(), 'Interview - ' + Date.now()));
-    const file = path.join(dir, 'recording.webm');
+    const dir = folder && fs.existsSync(folder) ? folder : uniqueDir(path.join(sessionsRootDir(), 'Interview-' + Date.now()));
+    const name = (base ? base + '-' : '') + 'recording.webm';
+    const file = path.join(dir, name);
     await fs.promises.writeFile(file, Buffer.from(buf));
     return { ok: true, path: file };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// Upload the saved session folder to gofile.io and return the share link.
+// Progress is streamed to the window so End can show which file is going up.
+ipcMain.handle('upload-session-bundle', async (_e, folder) => {
+  try {
+    const r = await uploadFolder(folder, (p) => {
+      if (win && !win.isDestroyed()) win.webContents.send('upload-progress', p);
+    });
+    if (r.ok && r.link) {
+      // Keep the link with the files, so it survives the toast.
+      try { await fs.promises.writeFile(path.join(folder, 'gofile-link.txt'), r.link + '\n', 'utf8'); } catch {}
+      const s = currentSession && currentSession();
+      if (s) { s.uploadLink = r.link; saveSessions(); }
+    }
+    return r;
   } catch (e) { return { ok: false, error: e.message }; }
 });
 

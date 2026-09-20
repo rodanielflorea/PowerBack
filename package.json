@@ -1,6 +1,6 @@
 {
   "name": "RemoteDevJobAce",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Answer Coaching Engine",
   "main": "main.js",
   "scripts": {
@@ -22,6 +22,7 @@
     "files": [
       "main.js",
       "llm-providers.js",
+      "gofile.js",
       "defaults/**/*",
       "preload*.js",
       "renderer/**/*",

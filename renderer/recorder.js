@@ -70,11 +70,11 @@
 
   let mixDest = null;
 
-  window.startRecording = async function startRecording() {
+  window.startRecording = async function startRecording(force) {
     if (active) return;
     let cfg = {};
     try { cfg = (await window.api.getTranscriptionConfig()) || {}; } catch {}
-    if (cfg.recordSession === false) return; // recording turned off in Settings
+    if (!force && cfg.recordSession === false) return; // auto-record off; manual click still records
     active = true;
     chunks = [];
     tracks = [];
@@ -91,6 +91,7 @@
       rec = new MediaRecorder(stream, { mimeType: pickMime() });
       rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
       rec.start(2000); // flush every 2s so a crash still leaves most of the file
+      try { if (window.__recIndicator) window.__recIndicator(true); } catch {}
       log("recording started");
     } catch (e) {
       active = false;
@@ -101,6 +102,7 @@
   };
 
   function cleanup() {
+    try { if (window.__recIndicator) window.__recIndicator(false); } catch {}
     window.__macRecSub = null;
     for (const s of tracks) { try { s.getTracks().forEach((t) => t.stop()); } catch {} }
     tracks = [];
@@ -110,7 +112,7 @@
   }
 
   // Finalize the recording and save it. `baseName` seeds the filename.
-  window.stopRecording = function stopRecording(baseName) {
+  window.stopRecording = function stopRecording(folder, base) {
     if (!active) return Promise.resolve();
     active = false;
     return new Promise((resolve) => {
@@ -119,7 +121,7 @@
           if (chunks.length && window.api.saveRecording) {
             const blob = new Blob(chunks, { type: "video/webm" });
             const buf = await blob.arrayBuffer();
-            const r = await window.api.saveRecording(buf, baseName || "");
+            const r = await window.api.saveRecording(buf, folder || "", base || "");
             if (r && r.ok) log("recording saved: " + r.path);
             else log("recording save failed: " + ((r && r.error) || "unknown"), "err");
             if (r && r.ok && window.__recToast) window.__recToast("Recording saved to " + r.path);
