@@ -15,6 +15,7 @@ const {
 const { createKeyInjector, pasteKeystroke } = require('./platform-input');
 const license = require('./license');
 const { uploadFolder } = require('./gofile');
+const { parseCaptionFrame, attributeEmission } = require('./speakers');
 let autoUpdater = null;
 try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
 let officeParser = null;
@@ -319,18 +320,20 @@ function smartDiff(curr) {
 
   if (pendingTrailing) {
     const pendNorm = normalizeWord(pendingTrailing);
+    // The held-back word coming round again as the first new word — unchanged,
+    // finished being typed ("wou" -> "would"), or cut short by this frame's OCR.
+    // It must stay in newWords: it is emitted below as soon as a word follows
+    // it. (It used to be sliced off here and was never emitted at all, so every
+    // tick lost a word and the history drifted away from the screen.)
+    let heldAgain = false;
     if (newWords.length > 0) {
       const firstNorm = normalizeWord(newWords[0]);
-      if (firstNorm === pendNorm) {
-        newWords = newWords.slice(1);
-        pendingIdleFrames = 0;
-      } else if (firstNorm.length > pendNorm.length && firstNorm.startsWith(pendNorm)) {
-        pendingTrailing = newWords[0];
-        newWords = newWords.slice(1);
-        pendingIdleFrames = 0;
-      } else if (pendNorm.length > firstNorm.length && pendNorm.startsWith(firstNorm)) {
-        newWords = newWords.slice(1);
-        pendingIdleFrames = 0;
+      const grew = firstNorm.length > pendNorm.length && firstNorm.startsWith(pendNorm);
+      const shrank = pendNorm.length > firstNorm.length && pendNorm.startsWith(firstNorm);
+      if (firstNorm === pendNorm || grew || shrank) {
+        if (shrank) newWords[0] = pendingTrailing; // keep the fuller read
+        heldAgain = newWords.length === 1 && !grew; // nothing new behind it: idle
+        if (!heldAgain) pendingIdleFrames = 0;
       } else {
         const flush = pendingTrailing;
         pendingTrailing = '';
@@ -338,7 +341,8 @@ function smartDiff(curr) {
         pastedHistory.push(flush);
         newWords = [flush, ...newWords];
       }
-    } else {
+    }
+    if (newWords.length === 0 || heldAgain) {
       pendingIdleFrames++;
       if (pendingIdleFrames >= PENDING_FLUSH_AFTER_IDLE) {
         const flush = pendingTrailing;
@@ -1365,7 +1369,20 @@ function enqueueTranscribe(wavBuffer) {
   return transcribeQueue;
 }
 
+// Capture2Text joins the lines of what it reads unless told not to, and the
+// speaker labels on captions are found by where they sit on a line. Should a
+// build of the CLI reject the flag, fall back to the old call for the rest of
+// the run instead of losing OCR altogether (names then only work inline).
+let c2tLineBreaks = true;
 function runOcrCapture2Text(rect, language) {
+  if (!c2tLineBreaks) return runCapture2Text(rect, language, false);
+  return runCapture2Text(rect, language, true).catch((err) =>
+    runCapture2Text(rect, language, false).then(
+      (text) => { c2tLineBreaks = false; appendLogLine('[ocr] Capture2Text refused --line-breaks: ' + err.message); return text; },
+      () => { throw err; },
+    ));
+}
+function runCapture2Text(rect, language, lineBreaks) {
   return new Promise((resolve, reject) => {
     const sf = rect.scaleFactor || 1;
     const x1 = Math.round(rect.x1 * sf);
@@ -1375,6 +1392,7 @@ function runOcrCapture2Text(rect, language) {
     const args = [
       '--screen-rect', `${x1} ${y1} ${x2} ${y2}`,
       '-l', language || 'English',
+      ...(lineBreaks ? ['--line-breaks'] : []),
     ];
     const p = spawn(CAPTURE_EXE, args, { windowsHide: true });
     let out = '';
@@ -1491,6 +1509,9 @@ function runOcr(rect, language) {
 }
 
 let ocrInFlight = false;
+// Last speaker read off the captions: words whose label has scrolled out of the
+// capture area still belong to them.
+let lastCaptionWho = '';
 let firstOcrLogged = false;
 let lastOcrEmptyAt = 0;
 async function captureTick() {
@@ -1512,11 +1533,14 @@ async function captureTick() {
       }
       return;
     }
-    const newPart = smartDiff(text);
-    const trimmed = newPart.trim();
-    if (trimmed) {
-      // OCR text now flows to the in-app question composer (renderer), not a webview.
-      if (win) win.webContents.send('capture-text', trimmed);
+    // The platform labels its captions with who is talking. Lift those labels
+    // out first so the differ only ever sees speech, then hand each run of new
+    // words to the renderer under the speaker it sits beneath.
+    const frame = parseCaptionFrame(text);
+    const newPart = smartDiff(frame.text);
+    for (const seg of attributeEmission(frame, newPart.trim(), lastCaptionWho)) {
+      if (seg.who) lastCaptionWho = seg.who;
+      if (win) win.webContents.send('capture-text', seg.text, seg.who);
     }
   } catch (e) {
     if (win) win.webContents.send('capture-error', 'OCR exec error: ' + e.message);
@@ -1532,6 +1556,7 @@ function startCaptureLoop() {
     return;
   }
   resetSmartDiffState();
+  lastCaptionWho = '';
   firstOcrLogged = false;
   lastOcrEmptyAt = 0;
   const period = Math.max(200, state.capture.pollMs || 700);
@@ -3694,7 +3719,7 @@ const QUESTION_POLICY = `QUESTIONS BACK — the default is NO question at the en
 
 function meetingStanceBlock() {
   const { hiringType } = getMeetingConfig();
-  const kb = `${whoAmILine()} This is a 1:1 hiring call. Transcript lines tagged Interviewer are the other person. The setup profile name is you. Your knowledge base is whatever was uploaded (CV and/or JD and/or support). Missing files are fine. You are the candidate, not a helper who follows their lead.`;
+  const kb = `${whoAmILine()} This is a 1:1 hiring call. Transcript lines are tagged with who spoke: Interviewer, or the speaker's own name when the meeting captions show it. Every tag that is not your name is the other side. The setup profile name is you. Your knowledge base is whatever was uploaded (CV and/or JD and/or support). Missing files are fine. You are the candidate, not a helper who follows their lead.`;
   const typeHint = STAGE_GUIDANCE[hiringType] || '';
   return `MEETING STANCE — HIRING INTERVIEW (${hiringType}): ${kb}\n${typeHint}\n${ANSWER_SHAPE}\n${QUESTION_POLICY} If they state an opinion, do not auto-agree. Never invent experience. One spoken turn only.`;
 }

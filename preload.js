@@ -51,7 +51,7 @@ contextBridge.exposeInMainWorld('api', {
   onMacSystemAudioEnded: (cb) => ipcRenderer.on('mac-system-audio-ended', (_e, code) => cb(code)),
   requestMicPermission: () => ipcRenderer.invoke('request-mic-permission'),
   onStealthChanged: (cb) => ipcRenderer.on('stealth-changed', (_e, v) => cb(v)),
-  onCaptureText: (cb) => ipcRenderer.on('capture-text', (_e, v) => cb(v)),
+  onCaptureText: (cb) => ipcRenderer.on('capture-text', (_e, v, who) => cb(v, who)),
   onCaptureError: (cb) => ipcRenderer.on('capture-error', (_e, v) => cb(v)),
   onCaptureRectChanged: (cb) => ipcRenderer.on('capture-rect-changed', (_e, v) => cb(v)),
   onCaptureState: (cb) => ipcRenderer.on('capture-state', (_e, v) => cb(v)),
