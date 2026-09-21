@@ -61,6 +61,12 @@ const muteToggleBtn = document.getElementById("muteToggleBtn");
 const logBody = document.getElementById("logBody");
 
 let txCfg = null;
+// Read the saved settings at startup. They used to be loaded only when Settings
+// was opened or voice mode started, so after a restart in caption mode the
+// remembered choices (auto-submission on, upload off) were never applied.
+if (window.api && window.api.getTranscriptionConfig) {
+  window.api.getTranscriptionConfig().then((c) => { if (!txCfg && c) txCfg = c; }).catch(() => {});
+}
 let capCfg = null;
 let mode = "voice";
 
