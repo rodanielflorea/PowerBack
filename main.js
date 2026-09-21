@@ -3244,24 +3244,42 @@ function ensureSession() {
   currentSessionId = s.id;
   return s;
 }
-function recordMeetTurn(who, text, sealed) {
+// `self` marks the app user's own speech: stored as a 'meet' turn (so it stays
+// out of the answer history like the rest of the transcript) with self:true.
+// `id` names the bubble the update belongs to. With named speakers and the
+// user's own bubble, several bubbles are open at once, so "the last unsealed
+// turn" is no longer enough to tell which one is growing.
+function recordMeetTurn(who, text, sealed, self, id) {
   who = String(who || 'Interviewer').trim() || 'Interviewer';
   text = String(text || '').trim();
+  id = String(id || '');
   const s = ensureSession();
   if (!s.turns) s.turns = [];
-  const last = s.turns.length ? s.turns[s.turns.length - 1] : null;
+  let at = -1;
+  if (id) {
+    for (let i = s.turns.length - 1; i >= Math.max(0, s.turns.length - 40); i--) {
+      if (s.turns[i] && s.turns[i].kind === 'meet' && s.turns[i].id === id) { at = i; break; }
+    }
+  } else {
+    const li = s.turns.length - 1;
+    if (li >= 0 && s.turns[li].kind === 'meet' && !s.turns[li].sealed) at = li;
+  }
   if (!text) {
-    if (last && last.kind === 'meet' && !last.sealed) s.turns.pop();
+    if (at >= 0) s.turns.splice(at, 1);
     s.updatedAt = Date.now();
     if (meetSaveTimer) { clearTimeout(meetSaveTimer); meetSaveTimer = null; }
     return saveSessions();
   }
-  if (last && last.kind === 'meet' && !last.sealed) {
-    last.who = who;
-    last.text = text;
-    if (sealed) last.sealed = true;
+  if (at >= 0) {
+    const open = s.turns[at];
+    open.who = who;
+    open.text = text;
+    if (sealed) open.sealed = true;
   } else {
-    s.turns.push({ kind: 'meet', ts: Date.now(), who, text, sealed: !!sealed });
+    const turn = { kind: 'meet', ts: Date.now(), who, text, sealed: !!sealed };
+    if (id) turn.id = id;
+    if (self) turn.self = true;
+    s.turns.push(turn);
   }
   s.updatedAt = Date.now();
   if (sealed) {
@@ -3274,7 +3292,7 @@ function recordMeetTurn(who, text, sealed) {
 }
 ipcMain.handle('session-record-meet', (_e, payload) => {
   const p = payload || {};
-  return recordMeetTurn(p.who, p.text, !!p.sealed);
+  return recordMeetTurn(p.who, p.text, !!p.sealed, !!p.self, p.id);
 });
 function genSessionId() { return 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 loadSessions();
