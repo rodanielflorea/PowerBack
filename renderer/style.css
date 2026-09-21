@@ -1035,6 +1035,11 @@ textarea.meet-editbox {
   box-shadow: var(--shadow-sm);
 }
 .meet-live .meet-text { opacity: 0.82; }
+/* "Name : words" — the speaker's name leads the text inside the bubble. */
+.meet-name { font-weight: 700; }
+.meet-name::after { content: " : "; font-weight: 400; opacity: 0.85; }
+/* The app user's own speech: same place in the flow, quieter, no actions. */
+.meet-self .meet-text { background: var(--surface-2); color: var(--text); }
 
 /* Question bubble — user, right-aligned */
 .answer-q {

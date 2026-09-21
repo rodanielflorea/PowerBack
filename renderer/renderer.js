@@ -61,6 +61,12 @@ const muteToggleBtn = document.getElementById("muteToggleBtn");
 const logBody = document.getElementById("logBody");
 
 let txCfg = null;
+// Read the saved settings at startup. They used to be loaded only when Settings
+// was opened or voice mode started, so after a restart in caption mode the
+// remembered choices (auto-submission on, upload off) were never applied.
+if (window.api && window.api.getTranscriptionConfig) {
+  window.api.getTranscriptionConfig().then((c) => { if (!txCfg && c) txCfg = c; }).catch(() => {});
+}
 let capCfg = null;
 let mode = "voice";
 
@@ -1034,6 +1040,7 @@ function renderLoadedTurns(turns) {
       const who = t.who || "Interviewer";
       const text = String(t.text || "").trim();
       if (!text) return;
+      if (t.self) { addMeetBubble(who, text, false, { self: true }); return; }
       addMeetBubble(who, text, false);
       meetingTurns.push({ who, text });
       if (meetingTurns.length > 80) meetingTurns.shift();
@@ -1996,7 +2003,9 @@ function persistMeetBubble(el, sealed) {
   const text = el
     ? String((el._textEl && el._textEl.textContent) || el._committed || "").trim()
     : "";
-  return window.api.sessionRecordMeet({ who, text, sealed: !!sealed });
+  // The id ties every update to its own saved turn: with named speakers and the
+  // user's own bubble, several bubbles can be open at once.
+  return window.api.sessionRecordMeet({ who, text, sealed: !!sealed, self: !!(el && el._self), id: (el && el._tid) || "" });
 }
 
 function meetingTranscriptText() {
@@ -2050,15 +2059,21 @@ function clearMeetBubble(el) {
   if (typeof syncSendEnabled === "function") syncSendEnabled();
 }
 
-function addMeetBubble(who, text, live) {
+// A transcript bubble reads "Name : what they said". opts.self marks the app
+// user's own speech: shown for the record, but it has no answer actions and is
+// never what Send / auto-answer / the prefetch respond to.
+function addMeetBubble(who, text, live, opts) {
   if (!answerHistory) return null;
   if (answerEmpty) answerEmpty.hidden = true;
+  const isSelf = !!(opts && opts.self);
   const el = document.createElement("div");
-  el.className = "meet-turn" + (live ? " meet-live" : "");
+  el.className = "meet-turn" + (live ? " meet-live" : "") + (isSelf ? " meet-self" : "");
   const head = document.createElement("div");
   head.className = "meet-head";
-  const name = document.createElement("div");
-  name.className = "meet-who";
+  // The name lives inside the bubble, ahead of the words. It is its own span so
+  // _textEl stays the words alone — that is what gets answered, edited, saved.
+  const name = document.createElement("span");
+  name.className = "meet-name";
   name.textContent = who;
   const actions = document.createElement("div");
   actions.className = "meet-actions";
@@ -2093,16 +2108,22 @@ function addMeetBubble(who, text, live) {
   const when = document.createElement("span");
   when.className = "meet-time";
   when.textContent = fmtTime(Date.now());
-  head.appendChild(name);
   head.appendChild(when);
-  head.appendChild(actions);
+  if (!isSelf) head.appendChild(actions);
   const body = document.createElement("div");
   body.className = "meet-text";
-  body.textContent = text;
+  const words = document.createElement("span");
+  words.className = "meet-words";
+  words.textContent = text;
+  body.appendChild(name);
+  body.appendChild(words);
   el.appendChild(head);
   el.appendChild(body);
   el._whoEl = name;
-  el._textEl = body;
+  el._textEl = words;
+  el._bodyEl = body;
+  el._self = isSelf;
+  el._tid = "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   el._who = who;
   el._committed = live ? "" : text;
   ensureSpacer();
@@ -2130,9 +2151,10 @@ function beginMeetEdit(el) {
   const send = document.createElement("button");
   send.type = "button"; send.className = "meet-edit-btn meet-edit-btn--primary"; send.textContent = "Answer";
   row.appendChild(cancel); row.appendChild(send);
-  body.hidden = true;
+  const shell = el._bodyEl || body;
+  shell.hidden = true;
   el.appendChild(ta); el.appendChild(row);
-  const finish = () => { ta.remove(); row.remove(); body.hidden = false; el._editing = false; };
+  const finish = () => { ta.remove(); row.remove(); shell.hidden = false; el._editing = false; };
   cancel.addEventListener("click", finish);
   send.addEventListener("click", () => {
     const t = ta.value.trim();
@@ -2195,7 +2217,10 @@ function applyMeetLine(who, text, speakerId, isFinal) {
   if (!who || who === "Interviewer") { who = "Interviewer"; speakerId = 0; }
   else speakerId = undefined;
   const key = speakerKey(who, speakerId);
-  const same = lastMeetEl && lastMeetEl._key === key;
+  // Once the app user has said something of their own, the other side's next
+  // words open a new bubble under it, so the panel stays in spoken order.
+  const same = lastMeetEl && lastMeetEl._key === key && !selfSpokeSince;
+  selfSpokeSince = false;
   if (same) {
     if (lastMeetEl._whoEl) lastMeetEl._whoEl.textContent = who;
     lastMeetEl._who = who;
@@ -2259,6 +2284,33 @@ function applyMeetLine(who, text, speakerId, isFinal) {
   } else if (typeof syncSendEnabled === "function") {
     syncSendEnabled();
   }
+}
+
+// ── The app user's own speech ────────────────────────────────────────────────
+// Mic finals (voice mode) and captions labelled "You" (caption mode) land here:
+// a bubble under the profile name. It deliberately stays out of lastMeetEl and
+// meetingTurns — everything that answers works off those, and the app must
+// never answer, prefetch for, or "react to" what its own user just said.
+let lastSelfEl = null;
+let selfSpokeSince = false;
+// A quick "yeah" / "right" while the other person is mid-question must not cut
+// their bubble in two (Send would then answer only the second half).
+const SELF_SPLIT_MIN_WORDS = 4;
+function applySelfLine(text) {
+  const t = String(text || "").trim();
+  if (!t) return;
+  const who = profileNameForScript();
+  const newest = answerSpacer ? answerSpacer.previousElementSibling : (answerHistory && answerHistory.lastElementChild);
+  if (lastSelfEl && lastSelfEl.isConnected && newest === lastSelfEl) {
+    lastSelfEl._committed = joinSpeech(lastSelfEl._committed, t);
+    lastSelfEl._textEl.textContent = lastSelfEl._committed;
+    try { lastSelfEl.scrollIntoView({ block: "nearest" }); } catch {}
+  } else {
+    lastSelfEl = addMeetBubble(who, t, false, { self: true });
+    if (!lastSelfEl) return;
+  }
+  if (lastSelfEl._committed.split(/\s+/).length >= SELF_SPLIT_MIN_WORDS) selfSpokeSince = true;
+  persistMeetBubble(lastSelfEl, false);
 }
 
 function streamSegment(text, isFinal, speakerId, turns) {
@@ -2378,7 +2430,11 @@ function scheduleAutoAnswer() {
   }, AUTO_ANSWER_DELAY_MS);
 }
 if (window.api.onTranscriptMic) {
-  window.api.onTranscriptMic((v) => { if (v && v.text) pushScript(profileNameForScript(), v.text); });
+  window.api.onTranscriptMic((v) => {
+    if (!v || !v.text) return;
+    pushScript(profileNameForScript(), v.text);
+    applySelfLine(v.text);
+  });
 }
 window.api.onTranscriptLiveError((msg) => {
   log("Transcription error: " + msg, "err");
@@ -2399,9 +2455,10 @@ window.api.onCaptureText((text, who) => {
   who = String(who || "").trim();
   log("OCR: " + (who ? who + ": " : "") + text);
   // The platform captions the local user too, labelled "You". Like the mic,
-  // that goes to the saved transcript only — never a bubble, never answered.
+  // that becomes the user's own bubble under their profile name — never answered.
   if (/^you\b/i.test(who)) {
     pushScriptRun(profileNameForScript(), text);
+    applySelfLine(text);
     window.api.sessionLogAdd({ ts: Date.now(), kind: "ocr", text: profileNameForScript() + ": " + text });
     return;
   }
