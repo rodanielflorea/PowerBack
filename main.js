@@ -107,7 +107,9 @@ const DEFAULT_STATE = {
   capture: {
     rect: null,
     language: 'English',
-    pollMs: 700,
+    // How often the caption area is read. The loop never overlaps OCR runs, so
+    // a short interval means "as soon as the last read finished".
+    pollMs: 400,
     showOverlay: false,
   },
   network: {
@@ -422,6 +424,9 @@ function loadState() {
       meeting: { ...DEFAULT_STATE.meeting, ...(raw.meeting || {}) },
       hotkeys: { ...HOTKEY_DEFAULTS, ...(raw.hotkeys || {}) },
     };
+    // The caption poll default was 700 ms. A saved 700 is that old default
+    // written back by saveState, not a choice, so move it to the new default.
+    if (state.capture.pollMs === 700) state.capture.pollMs = DEFAULT_STATE.capture.pollMs;
     for (const k of Object.keys(HOTKEY_DEFAULTS)) {
       if (!state.hotkeys[k] && HOTKEY_DEFAULTS[k]) state.hotkeys[k] = HOTKEY_DEFAULTS[k];
     }
@@ -1567,7 +1572,7 @@ function startCaptureLoop() {
   lastCaptionWho = '';
   firstOcrLogged = false;
   lastOcrEmptyAt = 0;
-  const period = Math.max(200, state.capture.pollMs || 700);
+  const period = Math.max(200, state.capture.pollMs || DEFAULT_STATE.capture.pollMs);
   captureLoop = setInterval(captureTick, period);
   captureTick();
   if (win) win.webContents.send('capture-state', true);

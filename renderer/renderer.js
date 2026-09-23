@@ -1678,7 +1678,7 @@ micSelect.addEventListener("change", () =>
 async function refreshCaptureUI() {
   capCfg = await window.api.getCaptureConfig();
   captureLanguageEl.value = capCfg.language || "English";
-  capturePollMsEl.value = capCfg.pollMs || 700;
+  capturePollMsEl.value = capCfg.pollMs || 400;
   if (captureShowOverlayEl) captureShowOverlayEl.checked = !!capCfg.showOverlay;
   renderCaptureRect(capCfg.rect);
 }
@@ -3910,7 +3910,7 @@ async function startCaption() {
     "Caption capture started (" +
       (capCfg.language || "English") +
       ", poll " +
-      (capCfg.pollMs || 700) +
+      (capCfg.pollMs || 400) +
       "ms)",
     "info",
   );
