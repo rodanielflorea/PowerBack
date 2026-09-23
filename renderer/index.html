@@ -49,7 +49,6 @@
 
   <aside class="right-rail iv-btn" id="rightRail">
     <button class="rail-btn" id="settingsBtn" title="Settings &amp; user guide">&#9881;</button>
-    <button class="rail-btn mode-toggle-btn" id="modeToggleBtn" title="Toggle mode: OCR ↔ Voice (Alt+D)">OCR</button>
     <button class="rail-btn rec-btn" id="recBtn" title="Start transcription (Alt+C)">
       <svg class="mic-icon" viewBox="0 0 24 24" aria-hidden="true">
         <rect x="9" y="3" width="6" height="11" rx="3" />
@@ -154,10 +153,6 @@
       <!-- Hidden, no-nav panes kept so existing wiring keeps working; removed in cleanup. -->
       <div class="settings-tab" data-tab="general" hidden>
         <section class="settings-section">
-          <div class="field-row">
-            <label class="radio"><input type="radio" name="mode" value="voice" id="modeVoice" /> Voice</label>
-            <label class="radio"><input type="radio" name="mode" value="caption" id="modeCaption" /> Caption</label>
-          </div>
           <div class="updater-row">
             <span class="updater-version" id="updaterVersion">version &mdash;</span>
             <button id="updaterCheckBtn">Check for updates</button>
@@ -168,47 +163,6 @@
       </div>
 
       <div class="settings-tab" data-tab="voice" hidden></div>
-
-      <div class="settings-tab" data-tab="caption" hidden>
-        <section class="settings-section">
-          <h3>OCR area</h3>
-          <p class="hint">Select a screen area (e.g. video caption strip). Polled, diffed, new text is sent into the loaded site's chat input.</p>
-          <div class="field">
-            <label>Capture area</label>
-            <div class="path-row">
-              <input type="text" id="captureRect" readonly placeholder="No area selected" />
-              <button id="selectAreaBtn">Select</button>
-            </div>
-          </div>
-          <p class="hint">Tip: bind <b>Reset capture area</b> in Hotkeys (default Ctrl+Q) to re-pick mid-run.</p>
-        </section>
-
-        <section class="settings-section caption-options-block">
-          <h3>OCR options</h3>
-          <div class="field-row">
-            <div class="field" style="flex:1">
-              <label for="captureLanguage">Language</label>
-              <select id="captureLanguage">
-                <option>English</option>
-                <option>French</option>
-                <option>German</option>
-                <option>Japanese</option>
-                <option>Korean</option>
-                <option>Russian</option>
-                <option>Spanish</option>
-              </select>
-            </div>
-            <div class="field" style="flex:1">
-              <label for="capturePollMs">Poll (ms)</label>
-              <input type="number" id="capturePollMs" min="200" max="5000" step="100" />
-            </div>
-          </div>
-          <div class="field-row" style="margin-top:6px">
-            <label class="checkbox"><input type="checkbox" id="captureShowOverlay" /> Show red border around the OCR area while capturing</label>
-          </div>
-          <p class="hint">Before starting: pick the site in the rail dropdown, focus the chat input, then press the rail dot.</p>
-        </section>
-      </div>
 
       <div class="settings-tab" data-tab="network" hidden>
         <section class="settings-section">
@@ -291,7 +245,7 @@
         <section class="settings-section">
           <h3>Activity log</h3>
           <div class="log-box">
-            <div class="log-header">Voice transcription &middot; OCR captions &middot; errors</div>
+            <div class="log-header">Voice transcription &middot; errors</div>
             <div class="log-body" id="logBody"></div>
           </div>
           <div class="log-actions">
@@ -357,7 +311,6 @@
             <tr><td>Eye</td><td><b>Stealth</b>: a crossed-out green eye = the window is invisible to screen sharing and recordings. Keep it that way during calls.</td></tr>
             <tr><td>Cursor</td><td><b>Click-through</b>: when orange, mouse clicks pass through the app to whatever is behind it. Press <span class="kbd">Alt+Q</span> to switch it off again.</td></tr>
             <tr><td>Microphone</td><td>Start / stop listening. Red and pulsing = listening. It starts by itself when the interview begins.</td></tr>
-            <tr><td>Voice / OCR</td><td>Where questions come from: <i>Voice</i> listens to the call audio (normal). <i>OCR</i> reads text from an area of your screen instead — useful for written tests.</td></tr>
             <tr><td>Model letters</td><td>Choose which AI model writes the answers. The default is fine.</td></tr>
             <tr><td>1 – 5 slider</td><td>Typing speed for <i>Write to IDE</i> — only shown in <b>Code</b> mode.</td></tr>
             <tr><td>Red power icon</td><td>End the interview and go back to the welcome screen.</td></tr>
@@ -401,7 +354,6 @@
             <tr><td><span class="kbd">Ctrl+Alt+H</span></td><td>Hide / show the app</td></tr>
             <tr><td><span class="kbd">Ctrl+H</span></td><td>Stealth on / off</td></tr>
             <tr><td><span class="kbd">Alt+C</span></td><td>Start / stop listening</td></tr>
-            <tr><td><span class="kbd">Alt+D</span></td><td>Voice ↔ OCR mode</td></tr>
             <tr><td><span class="kbd">Alt+Q</span></td><td>Click-through on / off</td></tr>
             <tr><td><span class="kbd">Ctrl+Enter</span></td><td>Send the question you typed</td></tr>
             <tr><td><span class="kbd">Shift+Z</span></td><td>Remove the latest transcript bubble</td></tr>
@@ -738,7 +690,7 @@
       <p class="welcome-subtitle">Quick orientation in 30 seconds</p>
       <ul class="welcome-list">
         <li><b>Two roles:</b> <b>Speaker</b> hosts on a port; <b>Supporter</b> dials in to help.</li>
-        <li><b>Two active modes:</b> <b>Caption</b> (OCRs a screen area into the chat input) or <b>Voice</b> (transcribes spoken audio into the focused app).</li>
+        <li><b>Voice mode:</b> transcribes the call audio live; questions come from what is said.</li>
         <li><b>Stealth shield</b> in the header hides the window from screen-recording / meeting share-screen.</li>
         <li><b>Opacity slider</b> in the header — click and drag to fade the window.</li>
         <li><b>For meeting relay (A speaks to a Zoom/Meet/Teams call):</b> install the free VB-Cable driver and pick "CABLE Input" in Network settings.</li>

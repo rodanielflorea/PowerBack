@@ -23,7 +23,6 @@
       "main.js",
       "llm-providers.js",
       "gofile.js",
-      "speakers.js",
       "defaults/**/*",
       "preload*.js",
       "renderer/**/*",
@@ -52,15 +51,6 @@
         "nsis"
       ],
       "icon": "build/icon.ico",
-      "extraResources": [
-        {
-          "from": "caption2text",
-          "to": "caption2text",
-          "filter": [
-            "**/*"
-          ]
-        }
-      ],
       "executableName": "DevAssistant"
     },
     "portable": {
@@ -86,7 +76,6 @@
         "libatspi2.0-0",
         "libuuid1",
         "libsecret-1-0",
-        "tesseract-ocr",
         "xdotool"
       ],
       "fpm": [
@@ -119,7 +108,7 @@
       "extendInfo": {
         "NSMicrophoneUsageDescription": "RemoteDevJobAce listens to your interview call to transcribe it.",
         "NSAppleEventsUsageDescription": "RemoteDevJobAce types answers and pastes text into other apps for you.",
-        "NSScreenCaptureUsageDescription": "RemoteDevJobAce reads text from a screen area in OCR mode.",
+        "NSScreenCaptureUsageDescription": "RemoteDevJobAce captures the screen for screenshots, area snips and the recording.",
         "NSAudioCaptureUsageDescription": "RemoteDevJobAce captures the audio of your interview call to transcribe it."
       },
       "hardenedRuntime": false,
@@ -134,8 +123,7 @@
           "from": "mac-audio/build/",
           "to": "mac-audio/",
           "filter": [
-            "system-audio",
-            "ocr"
+            "system-audio"
           ]
         }
       ],

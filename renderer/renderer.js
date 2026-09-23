@@ -13,9 +13,6 @@ const recBtn = document.getElementById("recBtn");
 const settingsOverlay = document.getElementById("settingsOverlay");
 const settingsCloseBtn = document.getElementById("settingsCloseBtn");
 
-const modeVoice = document.getElementById("modeVoice");
-const modeCaption = document.getElementById("modeCaption");
-
 const micSelect = document.getElementById("micSelect");
 const captureMicEl = document.getElementById("captureMic");
 const captureSystemEl = document.getElementById("captureSystem");
@@ -26,11 +23,6 @@ const deepgramKeyEl = document.getElementById("deepgramKey");
 const xaiKeyEl = document.getElementById("xaiKey");
 const languageSelect = document.getElementById("languageSelect");
 
-const captureRectEl = document.getElementById("captureRect");
-const selectAreaBtn = document.getElementById("selectAreaBtn");
-const captureLanguageEl = document.getElementById("captureLanguage");
-const capturePollMsEl = document.getElementById("capturePollMs");
-const captureShowOverlayEl = document.getElementById("captureShowOverlay");
 
 const hotkeyList = document.getElementById("hotkeyList");
 const resetAllHotkeysBtn = document.getElementById("resetAllHotkeysBtn");
@@ -61,14 +53,11 @@ const muteToggleBtn = document.getElementById("muteToggleBtn");
 const logBody = document.getElementById("logBody");
 
 let txCfg = null;
-// Read the saved settings at startup. They used to be loaded only when Settings
-// was opened or voice mode started, so after a restart in caption mode the
-// remembered choices (auto-submission on, upload off) were never applied.
+// Read the saved settings at startup, so remembered choices (auto-submission,
+// upload) apply before Settings is ever opened.
 if (window.api && window.api.getTranscriptionConfig) {
   window.api.getTranscriptionConfig().then((c) => { if (!txCfg && c) txCfg = c; }).catch(() => {});
 }
-let capCfg = null;
-let mode = "voice";
 
 // ===== Custom select — replaces native <select> popups which are OS-level windows
 // and therefore bypass setContentProtection (stealth). The custom dropdown renders
@@ -536,7 +525,6 @@ function hideSetup() {
   const role = "speaker";
   applyRoleClass(role);
   if (answerMain) answerMain.hidden = false;
-  if (typeof updateModeToggleBtn === "function") updateModeToggleBtn();
 }
 
 // Mode-chooser + back navigation.
@@ -692,7 +680,7 @@ async function runDiagnostics() {
   const restartHint = document.getElementById("diagRestartHint");
   if (restartHint) restartHint.hidden = !res.macRestartHint;
   const installBtn = document.getElementById("diagInstallBtn");
-  if (installBtn) installBtn.hidden = !(res.canInstallTools && (res.checks || []).some((c) => !c.ok && /tesseract|Typing tool/.test(c.name)));
+  if (installBtn) installBtn.hidden = !(res.canInstallTools && (res.checks || []).some((c) => !c.ok && /Typing tool/.test(c.name)));
 }
 const diagRelaunchBtn = document.getElementById("diagRelaunchBtn");
 if (diagRelaunchBtn) diagRelaunchBtn.addEventListener("click", () => { if (window.api.relaunchApp) window.api.relaunchApp(); });
@@ -763,9 +751,6 @@ if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
   } else {
     patch.speakerPort = 2000;
   }
-  await window.api.setMode("voice");
-  mode = "voice";
-  updateModeToggleBtn();
   await window.api.setNetworkConfig(patch);
   netCfg = await window.api.getNetworkConfig();
   await window.api.startNetwork();
@@ -1019,9 +1004,6 @@ async function continueSession(id) {
   const data = await window.api.sessionLoad(id);
   if (!data) return;
   // Sessions are speaker-side (answer panel). Start in voice mode as speaker.
-  await window.api.setMode("voice");
-  mode = "voice";
-  updateModeToggleBtn();
   await window.api.setNetworkConfig({ role: "speaker", speakerPort: 2000 });
   netCfg = await window.api.getNetworkConfig();
   await window.api.startNetwork();
@@ -1162,15 +1144,6 @@ function pushScript(who, text) {
   const t = String(text || "").trim();
   if (t) window.__script.push({ who, text: t });
 }
-// Captions arrive a few words per tick: grow the speaker's current entry
-// instead of adding a line per tick.
-function pushScriptRun(who, text) {
-  const t = String(text || "").trim();
-  if (!t) return;
-  const last = window.__script[window.__script.length - 1];
-  if (last && last.who === who) last.text += " " + t;
-  else window.__script.push({ who, text: t });
-}
 function buildSessionScript() {
   return window.__script.map((e) => e.who + ": " + e.text).join("\n\n");
 }
@@ -1178,8 +1151,7 @@ function buildSessionScript() {
 async function showEndModal() {
   endModalList.innerHTML = "";
   if (recState) addModalItem("Voice transcription · running", "live");
-  else if (captureRunning) addModalItem("Caption capture · running", "live");
-  else addModalItem(`Active mode · ${mode || "none"} (idle)`, "idle");
+  else addModalItem("Voice transcription · idle", "idle");
 
   const status = await window.api.getNetworkStatus().catch(() => ({}));
   if (status.bound) {
@@ -1289,7 +1261,6 @@ async function endSessionAndSave(company, position) {
   // Finalize the recording into the same folder before tearing audio down.
   if (typeof window.stopRecording === "function") { try { await window.stopRecording(folder, base); } catch {} }
   if (recState) await stopVoice().catch(() => {});
-  if (captureRunning) await stopCaption().catch(() => {});
   await window.api.stopNetwork();
   teardownPeers();
   delete netActionBtn.dataset.connecting;
@@ -1429,11 +1400,9 @@ function openSettings() {
   settingsOverlay.hidden = false;
   const isSupporter = netCfg && netCfg.role === "supporter";
   activateTab("apikeys");
-  refreshModeUI();
   refreshTranscriptionUI();
   refreshMeetingUI();
   loadAvoidPhrases();
-  refreshCaptureUI();
   refreshMicList();
   refreshHotkeysUI();
   refreshNetworkUI();
@@ -1484,48 +1453,9 @@ async function loadPersistedLog() {
   } catch {}
 }
 
-async function refreshModeUI() {
-  mode = await window.api.getMode();
-  modeVoice.checked = mode !== "caption";
-  modeCaption.checked = mode === "caption";
-  updateRecTitle();
-  updateTabVisibility(mode);
-  updateModeToggleBtn();
-}
-
-function updateTabVisibility(activeMode) {
-  const voiceBtn = document.querySelector('.tab-btn[data-tab="voice"]');
-  const captionBtn = document.querySelector('.tab-btn[data-tab="caption"]');
-  const isCaption = activeMode === "caption";
-  if (voiceBtn) voiceBtn.style.display = isCaption ? "none" : "";
-  if (captionBtn) captionBtn.style.display = isCaption ? "" : "none";
-  const hiddenActive = document.querySelector(".tab-btn.active");
-  if (hiddenActive && hiddenActive.style.display === "none")
-    activateTab("general");
-}
-
 function updateRecTitle() {
-  const verb = recState || captureRunning ? "Stop" : "Start";
-  const what = mode === "caption" ? "caption capture" : "voice transcription";
-  recBtn.title = `${verb} ${what}`;
+  recBtn.title = `${recState ? "Stop" : "Start"} voice transcription`;
 }
-
-modeVoice.addEventListener("change", async () => {
-  if (modeVoice.checked) {
-    mode = "voice";
-    await window.api.setMode("voice");
-    updateRecTitle();
-    updateTabVisibility("voice");
-  }
-});
-modeCaption.addEventListener("change", async () => {
-  if (modeCaption.checked) {
-    mode = "caption";
-    await window.api.setMode("caption");
-    updateRecTitle();
-    updateTabVisibility("caption");
-  }
-});
 
 // Show only the key field that belongs to the selected engine.
 function updateEngineBlocks(engine) {
@@ -1675,60 +1605,6 @@ micSelect.addEventListener("change", () =>
   persistTx({ micDeviceId: micSelect.value }),
 );
 
-async function refreshCaptureUI() {
-  capCfg = await window.api.getCaptureConfig();
-  captureLanguageEl.value = capCfg.language || "English";
-  capturePollMsEl.value = capCfg.pollMs || 400;
-  if (captureShowOverlayEl) captureShowOverlayEl.checked = !!capCfg.showOverlay;
-  renderCaptureRect(capCfg.rect);
-}
-
-function renderCaptureRect(rect) {
-  if (!rect) {
-    captureRectEl.value = "";
-    captureRectEl.placeholder = "No area selected";
-  } else {
-    const w = rect.x2 - rect.x1;
-    const h = rect.y2 - rect.y1;
-    captureRectEl.value = `(${rect.x1}, ${rect.y1}) ${w}×${h}${rect.scaleFactor && rect.scaleFactor !== 1 ? ` @${rect.scaleFactor}x` : ""}`;
-  }
-}
-
-async function persistCap(patch) {
-  capCfg = { ...(capCfg || {}), ...patch };
-  await window.api.setCaptureConfig(patch);
-}
-
-captureLanguageEl.addEventListener("change", () =>
-  persistCap({ language: captureLanguageEl.value }),
-);
-if (captureShowOverlayEl)
-  captureShowOverlayEl.addEventListener("change", () =>
-    persistCap({ showOverlay: captureShowOverlayEl.checked }),
-  );
-capturePollMsEl.addEventListener("change", () => {
-  const v = parseInt(capturePollMsEl.value, 10);
-  if (Number.isFinite(v) && v >= 200) persistCap({ pollMs: v });
-});
-selectAreaBtn.addEventListener("click", async () => {
-  log("Selecting capture area — drag a rectangle, Esc to cancel", "info");
-  await window.api.selectCaptureArea();
-});
-
-window.api.onCaptureRectChanged((rect) => {
-  capCfg = { ...(capCfg || {}), rect };
-  renderCaptureRect(rect);
-  log(
-    `Capture area set: ${rect.x1},${rect.y1} → ${rect.x2},${rect.y2}`,
-    "info",
-  );
-  if (pendingCaptureStart) {
-    pendingCaptureStart = false;
-    window.api.startCaptureLoop();
-    log("Auto-starting caption capture with new area", "info");
-  }
-});
-
 const HOTKEY_LABELS = {
   toggleVisibility: "Toggle window visibility",
   moveLeft: "Move window left",
@@ -1739,11 +1615,9 @@ const HOTKEY_LABELS = {
   opacityDown: "Opacity down",
   scrollUp: "Scroll answers up",
   scrollDown: "Scroll answers down",
-  resetCaptureArea: "Reset capture area (re-pick)",
   reloadSite: "Reload window",
   toggleStealth: "Toggle stealth",
-  toggleRecording: "Start/stop voice or caption",
-  toggleMode: "Toggle OCR ↔ Voice mode",
+  toggleRecording: "Start/stop voice transcription",
   pushToTalk: "Push-to-talk (toggle supporter mic)",
   closeSticky: "Close sticky note",
   openSticky: "Open sticky note",
@@ -1927,10 +1801,6 @@ window.api.onToggleRecording(() => {
   recBtn.click();
 });
 
-window.api.onToggleMode(() => {
-  doToggleMode();
-});
-
 if (window.api.onClearMeetBubble) {
   window.api.onClearMeetBubble(() => {
     const el = currentMeetBubble();
@@ -1961,7 +1831,7 @@ function showInterimPreview(text) {
 }
 const composerInput = document.getElementById("composerInput");
 
-// One-shot append (OCR): drop text onto the end of the composer.
+// One-shot append: drop text onto the end of the composer.
 function appendToComposer(text) {
   const t = (text || "").trim();
   if (!t || !composerInput) return;
@@ -1996,7 +1866,7 @@ function speakerLineBlock(text) {
 // speaker turn, each line reading "Name : what they said" — the other side and
 // the app user alike. Send / auto-answer seals the bubble and the next words
 // open a new one. Each line keeps its committed words and a live tail (an
-// interim hypothesis in voice mode, the not-yet-confirmed last word in caption
+// interim hypothesis
 // mode), so the newest words show the moment they are heard.
 function lineDisplay(l) { return joinSpeech(l.text, l.live); }
 function renderLine(l) {
@@ -2245,9 +2115,8 @@ function applyMeetLine(who, text, speakerId, isFinal) {
       syncLine(last);
     } else {
       // Someone else starts. The previous line's live tail is dropped, not
-      // committed: an unconfirmed caption word comes back as a final, and a
-      // voice interim is contained in the final that follows it — committing
-      // it here would show the word twice.
+      // committed: an interim is contained in the final that follows it, so
+      // committing it here would show the words twice.
       if (last && last.live) { last.live = ""; syncLine(last); }
       appendLine(el, who, isFinal ? text : "", isFinal ? "" : text);
       speakerChanged = !!last;
@@ -2275,10 +2144,10 @@ function streamSegment(text, isFinal, speakerId, turns) {
 }
 
 // Coalesce the stream of interim hypotheses to a steady ~12fps so the input
-// updates smoothly (like a live caption) instead of stuttering on every packet.
+// updates smoothly instead of stuttering on every packet.
 let pendingInterim = null;
 let interimFlushTimer = null;
-const CAPTION_FLUSH_MS = 80;
+const INTERIM_FLUSH_MS = 80;
 function scheduleInterimFlush() {
   if (interimFlushTimer) return;
   interimFlushTimer = setTimeout(() => {
@@ -2295,7 +2164,7 @@ function scheduleInterimFlush() {
       );
       showInterimPreview(display);
     }
-  }, CAPTION_FLUSH_MS);
+  }, INTERIM_FLUSH_MS);
 }
 window.api.onTranscriptLive((payload) => {
   const display = speakerLineBlock(
@@ -2395,49 +2264,8 @@ window.api.onTranscriptLiveError((msg) => {
   }
 });
 
-window.api.onCaptureText((text, who) => {
-  // Messages starting with '[' are internal status/log lines (e.g. "[sticky sent: ...]"),
-  // not real OCR content — log them but never inject them into the composer.
-  if (text && text.trimStart().startsWith('[')) {
-    log(text);
-    return;
-  }
-  who = String(who || "").trim();
-  log("OCR: " + (who ? who + ": " : "") + text);
-  // The platform captions the local user too, labelled "You". Like the mic,
-  // the user's own words go to the saved transcript only — never a bubble.
-  if (/^you\b/i.test(who)) {
-    pushScriptRun(profileNameForScript(), text);
-    window.api.sessionLogAdd({ ts: Date.now(), kind: "ocr", text: profileNameForScript() + ": " + text });
-    return;
-  }
-  // Same path as voice transcripts: a bubble with retry/edit/remove, under the
-  // speaker's name when the captions gave one.
-  applyMeetLine(who || "Interviewer", text, 0, true);
-  pushScriptRun(who || "Interviewer", text);
-  window.api.sessionLogAdd({ ts: Date.now(), kind: "ocr", text: (who ? who + ": " : "") + text });
-});
-window.api.onCaptureError((msg) => log("OCR error: " + msg, "err"));
-// The caption word not yet confirmed by the differ: a live tail on its line.
-if (window.api.onCaptureLive) {
-  window.api.onCaptureLive((word, who) => {
-    who = String(who || "").trim();
-    if (!word) {
-      // Nothing pending: drop any live tail left on the last line.
-      const ls = bubbleLines(lastMeetEl); const l = ls[ls.length - 1];
-      if (l && l.live) { l.live = ""; syncLine(l); lastMeetEl.classList.remove("meet-live"); }
-      return;
-    }
-    if (/^you\b/i.test(who)) return; // the user's own words never reach a bubble
-    applyMeetLine(who || "Interviewer", word, 0, false);
-  });
-}
-window.api.onCaptureState((on) => {
-  captureRunning = !!on;
-  recBtn.classList.toggle("on", captureRunning);
-  updateRecTitle();
-});
-
+// Errors main reports on the generic error channel (paste, chat, help-me).
+window.api.onCaptureError((msg) => log("Error: " + msg, "err"));
 // ===== Answer panel =====
 const answerHistory = document.getElementById("answerHistory");
 const answerEmpty = document.getElementById("answerEmpty");
@@ -2762,7 +2590,7 @@ if (window.api.onSnipImage) window.api.onSnipImage((img) => {
 
 // ── Latency optimizations ──────────────────────────────────
 // Pre-warm TLS on first activity. Speculate as soon as the composer looks
-// like a question (typing, OCR, or a finished transcript utterance) so the
+// like a question (typing, or a finished transcript utterance) so the
 // first tokens are often already in flight when the user hits send.
 let _apiConnectionWarmed = false;
 let _speculativeTimer = null;
@@ -3630,49 +3458,6 @@ async function refreshMicList() {
 }
 
 let recState = null;
-let captureRunning = false;
-
-const modeToggleBtn = document.getElementById("modeToggleBtn");
-const selectAreaRailBtn = document.getElementById("selectAreaRailBtn");
-
-function updateModeToggleBtn() {
-  if (!modeToggleBtn) return;
-  const isVoice = mode === "voice";
-  modeToggleBtn.innerHTML = isVoice
-    ? '<svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 v0 M8 8 v8 M12 5 v14 M16 8 v8 M20 11 v2" /></svg>'
-    : '<svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8 V5 a1 1 0 0 1 1 -1 h3 M16 4 h3 a1 1 0 0 1 1 1 v3 M20 16 v3 a1 1 0 0 1 -1 1 h-3 M8 20 H5 a1 1 0 0 1 -1 -1 v-3 M7 10 h10 M7 14 h7" /></svg>';
-  modeToggleBtn.classList.toggle("mode-voice", isVoice);
-  modeToggleBtn.title = isVoice
-    ? "Currently: Voice — click or Alt+D to switch to OCR mode"
-    : "Currently: OCR — click or Alt+D to switch to Voice mode";
-}
-
-async function doToggleMode() {
-  const newMode = mode === "voice" ? "caption" : "voice";
-  const wasRunning = !!(recState || captureRunning);
-  if (recState) await stopVoice().catch(() => {});
-  if (captureRunning) await stopCaption().catch(() => {});
-  mode = newMode;
-  await window.api.setMode(newMode);
-  updateRecTitle();
-  updateTabVisibility(newMode);
-  updateModeToggleBtn();
-  log("Mode switched to " + (newMode === "voice" ? "Voice" : "OCR"), "info");
-  if (wasRunning) {
-    if (newMode === "voice") {
-      startVoice().catch((e) =>
-        log("Auto-start voice failed: " + e.message, "err"),
-      );
-    } else {
-      startCaption().catch((e) =>
-        log("Auto-start caption failed: " + e.message, "err"),
-      );
-    }
-  }
-}
-
-if (modeToggleBtn) modeToggleBtn.addEventListener("click", doToggleMode);
-
 async function startVoice() {
   if (recState) return;
   txCfg = await window.api.getTranscriptionConfig();
@@ -3892,43 +3677,9 @@ async function stopVoice() {
   log("Voice transcription stopped", "info");
 }
 
-let pendingCaptureStart = false;
-
-async function startCaption() {
-  capCfg = await window.api.getCaptureConfig();
-  if (!capCfg.rect) {
-    log(
-      "No capture area — opening selector. Capture will auto-start once you pick.",
-      "info",
-    );
-    pendingCaptureStart = true;
-    await window.api.selectCaptureArea();
-    return;
-  }
-  await window.api.startCaptureLoop();
-  log(
-    "Caption capture started (" +
-      (capCfg.language || "English") +
-      ", poll " +
-      (capCfg.pollMs || 400) +
-      "ms)",
-    "info",
-  );
-}
-
-async function stopCaption() {
-  await window.api.stopCaptureLoop();
-  log("Caption capture stopped", "info");
-}
-
 recBtn.addEventListener("click", async () => {
-  if (mode === "caption") {
-    if (captureRunning) stopCaption();
-    else startCaption();
-  } else {
-    if (recState) stopVoice();
-    else startVoice();
-  }
+  if (recState) stopVoice();
+  else startVoice();
 });
 
 let netCfg = null;
