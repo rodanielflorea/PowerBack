@@ -95,7 +95,10 @@ const DEFAULT_STATE = {
     language: 'auto',
     micDeviceId: '',
     captureSystem: true,
-    captureMic: process.platform !== 'win32', // only Windows can capture system audio
+    // The user's own voice is now part of the product (their bubble, the saved
+    // transcript, the recording), so the mic is on everywhere. It used to be
+    // off on Windows, where system audio alone covers the other side.
+    captureMic: true,
     autoAnswer: false, // default: manual submission (Send / Ctrl+Enter)
     recordSession: true, // record screen + audio and auto-save the bundle on End
     uploadSession: true,  // after saving, upload the bundle to gofile.io and hand back the link
