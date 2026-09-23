@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { parseCaptionFrame, attributeEmission, looksLikeName, cleanNameCandidate, isSelf } = require('../speakers');
+const { parseCaptionFrame, attributeEmission, looksLikeName, cleanNameCandidate, cleanOcrText, isSelf } = require('../speakers');
 
 // ── lift smartDiff + helpers out of main.js ─────────────────────────────────
 const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
@@ -145,6 +145,24 @@ test('differ: long speech through a scrolling window', () => {
   for (let i = 4; i <= w.length; i += 3) frames.push(w.slice(Math.max(0, i - 14), i).join(' '));
   frames.push(w.slice(-14).join(' '));
   assert.strictEqual(plain([...frames, ...idle(frames[frames.length - 1])]), long);
+});
+
+// ── real tesseract output (5.3.4, psm 6) captured from rendered caption panels ──
+test('tesseract: lone capital I read as a pipe is repaired', () => {
+  assert.strictEqual(cleanOcrText('so what | would do'), 'so what I would do');
+  assert.strictEqual(cleanOcrText('| think so'), 'I think so');
+  assert.strictEqual(cleanOcrText('(| agree)'), '(I agree)');
+  assert.strictEqual(cleanOcrText('a || b'), 'a || b');   // not a lone pipe
+  assert.strictEqual(cleanOcrText('x|y'), 'x|y');          // inside a token
+});
+test('tesseract: Meet-style panel, blank lines between blocks', () => {
+  const f = parseCaptionFrame('Sarah Chen\n\nso what | would do is start with the cache layer\nMarcus Lee\n\nbut does that scale past one region\n\nYou\n\nyeah we shard by region');
+  assert.deepStrictEqual(f.blocks.map((b) => b.who), ['Sarah Chen', 'Marcus Lee', 'You']);
+  assert.strictEqual(f.blocks[0].words.join(' '), 'so what I would do is start with the cache layer');
+});
+test('tesseract: Zoom-style inline panel', () => {
+  const f = parseCaptionFrame('Sarah Chen: so what | would do is start with the cache layer\nMarcus Lee: but does that scale past one region\nYou: yeah we shard by region');
+  assert.deepStrictEqual(f.blocks.map((b) => b.who), ['Sarah Chen', 'Marcus Lee', 'You']);
 });
 
 console.log(`\n${passed} passed`);
