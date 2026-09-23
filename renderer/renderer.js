@@ -1039,11 +1039,12 @@ function renderLoadedTurns(turns) {
     if (t && t.kind === "meet") {
       const who = t.who || "Interviewer";
       const text = String(t.text || "").trim();
-      if (!text) return;
-      if (t.self) { addMeetBubble(who, text, false, { self: true }); return; }
-      addMeetBubble(who, text, false);
-      meetingTurns.push({ who, text });
-      if (meetingTurns.length > 80) meetingTurns.shift();
+      if (!text || t.self) return; // an older build saved the user's own speech; it gets no bubble
+      // Newer saves carry the lines; older ones are a single speaker.
+      const lines = Array.isArray(t.lines) && t.lines.length
+        ? t.lines.filter((l) => l && !l.self).map((l) => ({ who: l.who || who, text: String(l.text || "").trim() })).filter((l) => l.text)
+        : [{ who, text }];
+      if (lines.length) addMeetBubble(lines, false);
       return;
     }
     const imgs = Array.isArray(t.images) && t.images.length ? t.images : null;
@@ -1677,7 +1678,7 @@ micSelect.addEventListener("change", () =>
 async function refreshCaptureUI() {
   capCfg = await window.api.getCaptureConfig();
   captureLanguageEl.value = capCfg.language || "English";
-  capturePollMsEl.value = capCfg.pollMs || 700;
+  capturePollMsEl.value = capCfg.pollMs || 400;
   if (captureShowOverlayEl) captureShowOverlayEl.checked = !!capCfg.showOverlay;
   renderCaptureRect(capCfg.rect);
 }
@@ -1990,39 +1991,71 @@ function speakerLineBlock(text) {
     .join("\n");
 }
 
+// ── The transcript bubble ────────────────────────────────────────────────────
+// Everything said between two submissions goes into ONE bubble, one line per
+// speaker turn, each line reading "Name : what they said" — the other side and
+// the app user alike. Send / auto-answer seals the bubble and the next words
+// open a new one. Each line keeps its committed words and a live tail (an
+// interim hypothesis in voice mode, the not-yet-confirmed last word in caption
+// mode), so the newest words show the moment they are heard.
+function lineDisplay(l) { return joinSpeech(l.text, l.live); }
+function renderLine(l) {
+  if (!l.wordsEl) return;
+  l.wordsEl.textContent = lineDisplay(l);
+  l.rowEl.classList.toggle("meet-line-live", !!l.live);
+}
+function bubbleLines(el) { return (el && el._lines) || []; }
+// The bubble's text as the model, the editor and the session file see it.
+function bubbleText(el, committedOnly) {
+  return bubbleLines(el)
+    .map((l) => ({ who: l.who, text: (committedOnly ? l.text : lineDisplay(l)).trim() }))
+    .filter((l) => l.text)
+    .map((l) => l.who + " : " + l.text)
+    .join("\n");
+}
+function appendLine(el, who, text, live) {
+  const row = document.createElement("div");
+  row.className = "meet-line";
+  const name = document.createElement("span");
+  name.className = "meet-name";
+  name.textContent = who;
+  const words = document.createElement("span");
+  words.className = "meet-words";
+  row.appendChild(name);
+  row.appendChild(words);
+  el._bodyEl.appendChild(row);
+  const turn = { who, text: "" };
+  const l = { who, text: text || "", live: live || "", rowEl: row, wordsEl: words, turn };
+  el._lines.push(l);
+  meetingTurns.push(turn);
+  if (meetingTurns.length > 80) meetingTurns.shift();
+  syncLine(l);
+  return l;
+}
+// Keep the line's DOM and its transcript turn in step with its words.
+function syncLine(l) {
+  renderLine(l);
+  l.turn.who = l.who;
+  l.turn.text = lineDisplay(l);
+}
+
 function liveMeetText() {
-  if (!lastMeetEl) return "";
-  return String(
-    (lastMeetEl._textEl && lastMeetEl._textEl.textContent) || lastMeetEl._committed || "",
-  ).trim();
+  return lastMeetEl ? bubbleText(lastMeetEl) : "";
 }
 
 function persistMeetBubble(el, sealed) {
-  if (!window.api.sessionRecordMeet) return;
-  const who = (el && (el._who || (el._whoEl && el._whoEl.textContent))) || "Interviewer";
-  const text = el
-    ? String((el._textEl && el._textEl.textContent) || el._committed || "").trim()
-    : "";
-  // The id ties every update to its own saved turn: with named speakers and the
-  // user's own bubble, several bubbles can be open at once.
-  return window.api.sessionRecordMeet({ who, text, sealed: !!sealed, self: !!(el && el._self), id: (el && el._tid) || "" });
+  if (!window.api.sessionRecordMeet || !el) return;
+  const lines = bubbleLines(el).map((l) => ({ who: l.who, text: l.text.trim() })).filter((l) => l.text);
+  const who = lines.length ? lines[0].who : "Interviewer";
+  return window.api.sessionRecordMeet({ who, text: bubbleText(el, true), lines, sealed: !!sealed, id: el._tid || "" });
 }
 
+// The last few lines, "Name: words", for the answer prompt. The open bubble's
+// lines are already in meetingTurns (each line IS a turn), live tail included.
 function meetingTranscriptText() {
-  const turns = meetingTurns.slice();
-  if (lastMeetEl) {
-    const who = lastMeetEl._who || (lastMeetEl._whoEl && lastMeetEl._whoEl.textContent) || "Interviewer";
-    const text = liveMeetText();
-    if (text) {
-      if (turns.length && turns[turns.length - 1].who === who) {
-        turns[turns.length - 1] = { who, text };
-      } else {
-        turns.push({ who, text });
-      }
-    }
-  }
-  const slice = turns.slice(-4);
-  return slice
+  return meetingTurns
+    .filter((t) => t && String(t.text || "").trim())
+    .slice(-6)
     .map((t) => {
       const body = t.text.length > 400 ? t.text.slice(-400) : t.text;
       return t.who + ": " + body;
@@ -2039,9 +2072,8 @@ function currentMeetBubble() {
 
 function clearMeetBubble(el) {
   if (!el) return;
-  if (el._textEl) el._textEl.textContent = "";
-  el._committed = "";
-  if (el._turn) el._turn.text = "";
+  for (const l of bubbleLines(el)) { l.text = ""; l.live = ""; l.turn.text = ""; if (l.rowEl) l.rowEl.remove(); }
+  el._lines = [];
   if (el === lastMeetEl || el === liveMeetEl) {
     liveSeg = "";
     pendingInterim = null;
@@ -2059,22 +2091,17 @@ function clearMeetBubble(el) {
   if (typeof syncSendEnabled === "function") syncSendEnabled();
 }
 
-// A transcript bubble reads "Name : what they said". opts.self marks the app
-// user's own speech: shown for the record, but it has no answer actions and is
-// never what Send / auto-answer / the prefetch respond to.
-function addMeetBubble(who, text, live, opts) {
+// A new bubble. `lines` is [{ who, text, live? }]; the first line may be
+// live (voice interim). Returns the element, with _lines built.
+function addMeetBubble(lines, live) {
   if (!answerHistory) return null;
   if (answerEmpty) answerEmpty.hidden = true;
-  const isSelf = !!(opts && opts.self);
   const el = document.createElement("div");
-  el.className = "meet-turn" + (live ? " meet-live" : "") + (isSelf ? " meet-self" : "");
+  el.className = "meet-turn" + (live ? " meet-live" : "");
+  el._lines = [];
+  el._tid = "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const head = document.createElement("div");
   head.className = "meet-head";
-  // The name lives inside the bubble, ahead of the words. It is its own span so
-  // _textEl stays the words alone — that is what gets answered, edited, saved.
-  const name = document.createElement("span");
-  name.className = "meet-name";
-  name.textContent = who;
   const actions = document.createElement("div");
   actions.className = "meet-actions";
   const mkBtn = (cls, title, label, onClick) => {
@@ -2087,9 +2114,8 @@ function addMeetBubble(who, text, live, opts) {
     actions.appendChild(b);
     return b;
   };
-  const bubbleText = () => String((el._textEl && el._textEl.textContent) || el._committed || "").trim();
   mkBtn("meet-retry", "Answer this again", "↻", () => {
-    const t = bubbleText();
+    const t = bubbleText(el);
     if (!t) return;
     if (el === lastMeetEl) sealMeetBubble();
     resendTurn(t, []);
@@ -2109,23 +2135,13 @@ function addMeetBubble(who, text, live, opts) {
   when.className = "meet-time";
   when.textContent = fmtTime(Date.now());
   head.appendChild(when);
-  if (!isSelf) head.appendChild(actions);
+  head.appendChild(actions);
   const body = document.createElement("div");
   body.className = "meet-text";
-  const words = document.createElement("span");
-  words.className = "meet-words";
-  words.textContent = text;
-  body.appendChild(name);
-  body.appendChild(words);
   el.appendChild(head);
   el.appendChild(body);
-  el._whoEl = name;
-  el._textEl = words;
   el._bodyEl = body;
-  el._self = isSelf;
-  el._tid = "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  el._who = who;
-  el._committed = live ? "" : text;
+  for (const l of lines || []) appendLine(el, l.who, l.text, l.live);
   ensureSpacer();
   answerHistory.insertBefore(el, answerSpacer);
   try { el.scrollIntoView({ block: "nearest" }); } catch {}
@@ -2133,13 +2149,14 @@ function addMeetBubble(who, text, live, opts) {
 }
 
 // Inline edit of a transcript bubble: textarea + Send/Cancel. Send answers the
-// edited text and keeps it in the bubble.
+// edited text and keeps it in the bubble. Lines keep their "Name : words" form;
+// a line without a name keeps the name it had.
 function beginMeetEdit(el) {
   if (!el || el._editing) return;
   el._editing = true;
   if (el === lastMeetEl) sealMeetBubble();
-  const body = el._textEl;
-  const original = String(body.textContent || el._committed || "");
+  const body = el._bodyEl;
+  const original = bubbleText(el);
   const ta = document.createElement("textarea");
   ta.className = "meet-editbox";
   ta.value = original;
@@ -2151,19 +2168,25 @@ function beginMeetEdit(el) {
   const send = document.createElement("button");
   send.type = "button"; send.className = "meet-edit-btn meet-edit-btn--primary"; send.textContent = "Answer";
   row.appendChild(cancel); row.appendChild(send);
-  const shell = el._bodyEl || body;
-  shell.hidden = true;
+  body.hidden = true;
   el.appendChild(ta); el.appendChild(row);
-  const finish = () => { ta.remove(); row.remove(); shell.hidden = false; el._editing = false; };
+  const finish = () => { ta.remove(); row.remove(); body.hidden = false; el._editing = false; };
   cancel.addEventListener("click", finish);
   send.addEventListener("click", () => {
     const t = ta.value.trim();
     if (!t) return;
-    body.textContent = t; el._committed = t;
-    if (el._turn) el._turn.text = t;
+    const old = bubbleLines(el);
+    const edited = t.split("\n").map((ln) => ln.trim()).filter(Boolean).map((ln, i) => {
+      const m = /^(.{1,60}?)\s+:\s+(.*)$/.exec(ln);
+      const prev = old[Math.min(i, old.length - 1)];
+      return m ? { who: m[1], text: m[2] } : { who: (prev && prev.who) || "Interviewer", text: ln };
+    });
+    for (const l of old) { l.turn.text = ""; if (l.rowEl) l.rowEl.remove(); }
+    el._lines = [];
+    for (const l of edited) appendLine(el, l.who, l.text, "");
     persistMeetBubble(el, true);
     finish();
-    resendTurn(t, []);
+    resendTurn(bubbleText(el), []);
   });
   ta.addEventListener("keydown", (e) => {
     if (e.key === "Escape") finish();
@@ -2172,26 +2195,16 @@ function beginMeetEdit(el) {
   ta.focus();
 }
 
+// Commit every live tail and close the bubble: the next words open a new one.
 function sealMeetBubble() {
   if (lastMeetEl) {
     lastMeetEl.classList.remove("meet-live");
-    const vis = String(
-      (lastMeetEl._textEl && lastMeetEl._textEl.textContent) || lastMeetEl._committed || "",
-    ).trim();
-    if (vis) {
-      lastMeetEl._committed = vis;
-      if (meetingTurns.length) meetingTurns[meetingTurns.length - 1].text = vis;
-      persistMeetBubble(lastMeetEl, true);
-    }
+    for (const l of bubbleLines(lastMeetEl)) { l.text = lineDisplay(l); l.live = ""; syncLine(l); }
+    if (bubbleText(lastMeetEl)) persistMeetBubble(lastMeetEl, true);
   }
   lastMeetEl = null;
   liveMeetEl = null;
   liveSeg = "";
-}
-
-function speakerKey(who, id) {
-  if (Number.isFinite(id)) return "id:" + id;
-  return "name:" + String(who || "").toLowerCase();
 }
 
 function joinSpeech(a, b) {
@@ -2208,109 +2221,48 @@ function joinSpeech(a, b) {
   return a + " " + b;
 }
 
+// One turn of speech into the open bubble. Same speaker as the last line: the
+// line grows (final words are committed, interim words replace the live tail).
+// Anyone else: a new line under theirs. The app user's own words never come
+// here — they go to the saved transcript and the recording only.
 function applyMeetLine(who, text, speakerId, isFinal) {
   lastSpeechAt = Date.now();
-  // A caller with a real name (captions read off the screen) gets its own
-  // bubble per speaker, keyed by that name. Everything else — voice has no way
-  // to tell voices apart — stays the single "Interviewer" it always was.
-  who = String(who || "").trim();
-  if (!who || who === "Interviewer") { who = "Interviewer"; speakerId = 0; }
-  else speakerId = undefined;
-  const key = speakerKey(who, speakerId);
-  // Once the app user has said something of their own, the other side's next
-  // words open a new bubble under it, so the panel stays in spoken order.
-  const same = lastMeetEl && lastMeetEl._key === key && !selfSpokeSince;
-  selfSpokeSince = false;
-  if (same) {
-    if (lastMeetEl._whoEl) lastMeetEl._whoEl.textContent = who;
-    lastMeetEl._who = who;
-    if (isFinal) {
-      lastMeetEl._committed = joinSpeech(lastMeetEl._committed, text);
-      lastMeetEl._textEl.textContent = lastMeetEl._committed;
-      lastMeetEl.classList.remove("meet-live");
-      liveSeg = "";
-      liveMeetEl = null;
-      if (lastMeetEl._turn) {
-        lastMeetEl._turn.text = lastMeetEl._committed;
-        lastMeetEl._turn.who = who;
-      } else if (meetingTurns.length) {
-        meetingTurns[meetingTurns.length - 1].text = lastMeetEl._committed;
-        meetingTurns[meetingTurns.length - 1].who = who;
-      }
-      persistMeetBubble(lastMeetEl, false);
-    } else {
-      liveSeg = text;
-      liveMeetEl = lastMeetEl;
-      lastMeetEl._textEl.textContent = joinSpeech(lastMeetEl._committed, text);
-      lastMeetEl.classList.add("meet-live");
-      if (lastMeetEl._turn) {
-        lastMeetEl._turn.text = lastMeetEl._textEl.textContent;
-        lastMeetEl._turn.who = who;
-      } else if (meetingTurns.length) {
-        meetingTurns[meetingTurns.length - 1].text = lastMeetEl._textEl.textContent;
-        meetingTurns[meetingTurns.length - 1].who = who;
-      }
-    }
-    try { lastMeetEl.scrollIntoView({ block: "nearest" }); } catch {}
-    if (typeof syncSendEnabled === "function") syncSendEnabled();
-    return;
-  }
-  const speakerChanged = !!lastMeetEl;
-  if (lastMeetEl) lastMeetEl.classList.remove("meet-live");
-  liveMeetEl = null;
-  if (isFinal) {
-    lastMeetEl = addMeetBubble(who, text, false);
-    lastMeetEl._committed = text;
-    lastMeetEl._key = key;
-    const turn = { who, text };
-    lastMeetEl._turn = turn;
-    meetingTurns.push(turn);
-    if (meetingTurns.length > 80) meetingTurns.shift();
-    liveSeg = "";
-    persistMeetBubble(lastMeetEl, false);
+  who = String(who || "").trim() || "Interviewer";
+  text = String(text || "").trim();
+  if (!text) return;
+  let el = lastMeetEl && lastMeetEl.isConnected ? lastMeetEl : null;
+  let speakerChanged = false;
+  if (!el) {
+    el = addMeetBubble([{ who, text: isFinal ? text : "", live: isFinal ? "" : text }], !isFinal);
+    if (!el) return;
+    lastMeetEl = el;
   } else {
-    lastMeetEl = addMeetBubble(who, text, true);
-    lastMeetEl._committed = "";
-    lastMeetEl._key = key;
-    liveMeetEl = lastMeetEl;
-    liveSeg = text;
-    const turn = { who, text };
-    lastMeetEl._turn = turn;
-    meetingTurns.push(turn);
-    if (meetingTurns.length > 80) meetingTurns.shift();
+    const lines = bubbleLines(el);
+    const last = lines[lines.length - 1];
+    if (last && last.who === who) {
+      if (isFinal) { last.text = joinSpeech(last.text, text); last.live = ""; }
+      else last.live = text;
+      syncLine(last);
+    } else {
+      // Someone else starts. The previous line's live tail is dropped, not
+      // committed: an unconfirmed caption word comes back as a final, and a
+      // voice interim is contained in the final that follows it — committing
+      // it here would show the word twice.
+      if (last && last.live) { last.live = ""; syncLine(last); }
+      appendLine(el, who, isFinal ? text : "", isFinal ? "" : text);
+      speakerChanged = !!last;
+    }
   }
+  el.classList.toggle("meet-live", !isFinal);
+  liveSeg = isFinal ? "" : text;
+  liveMeetEl = isFinal ? null : el;
+  if (isFinal) persistMeetBubble(el, false);
+  try { el.scrollIntoView({ block: "nearest" }); } catch {}
   if (speakerChanged && (!composerInput || !composerInput.value.trim())) {
     kickSpeculative(true);
   } else if (typeof syncSendEnabled === "function") {
     syncSendEnabled();
   }
-}
-
-// ── The app user's own speech ────────────────────────────────────────────────
-// Mic finals (voice mode) and captions labelled "You" (caption mode) land here:
-// a bubble under the profile name. It deliberately stays out of lastMeetEl and
-// meetingTurns — everything that answers works off those, and the app must
-// never answer, prefetch for, or "react to" what its own user just said.
-let lastSelfEl = null;
-let selfSpokeSince = false;
-// A quick "yeah" / "right" while the other person is mid-question must not cut
-// their bubble in two (Send would then answer only the second half).
-const SELF_SPLIT_MIN_WORDS = 4;
-function applySelfLine(text) {
-  const t = String(text || "").trim();
-  if (!t) return;
-  const who = profileNameForScript();
-  const newest = answerSpacer ? answerSpacer.previousElementSibling : (answerHistory && answerHistory.lastElementChild);
-  if (lastSelfEl && lastSelfEl.isConnected && newest === lastSelfEl) {
-    lastSelfEl._committed = joinSpeech(lastSelfEl._committed, t);
-    lastSelfEl._textEl.textContent = lastSelfEl._committed;
-    try { lastSelfEl.scrollIntoView({ block: "nearest" }); } catch {}
-  } else {
-    lastSelfEl = addMeetBubble(who, t, false, { self: true });
-    if (!lastSelfEl) return;
-  }
-  if (lastSelfEl._committed.split(/\s+/).length >= SELF_SPLIT_MIN_WORDS) selfSpokeSince = true;
-  persistMeetBubble(lastSelfEl, false);
 }
 
 function streamSegment(text, isFinal, speakerId, turns) {
@@ -2377,9 +2329,8 @@ window.api.onUtteranceEnd(() => {
     const display = typeof t === "string" ? t : t.display;
     streamSegment(display, true, t && t.speaker, t && t.turns);
   } else if (lastMeetEl && liveSeg) {
-    lastMeetEl._committed = joinSpeech(lastMeetEl._committed, liveSeg);
-    if (lastMeetEl._textEl) lastMeetEl._textEl.textContent = lastMeetEl._committed;
-    if (meetingTurns.length) meetingTurns[meetingTurns.length - 1].text = lastMeetEl._committed;
+    const ls = bubbleLines(lastMeetEl); const l = ls[ls.length - 1];
+    if (l) { l.text = lineDisplay(l); l.live = ""; syncLine(l); }
   }
   if (lastMeetEl) {
     lastMeetEl.classList.remove("meet-live");
@@ -2433,7 +2384,6 @@ if (window.api.onTranscriptMic) {
   window.api.onTranscriptMic((v) => {
     if (!v || !v.text) return;
     pushScript(profileNameForScript(), v.text);
-    applySelfLine(v.text);
   });
 }
 window.api.onTranscriptLiveError((msg) => {
@@ -2455,10 +2405,9 @@ window.api.onCaptureText((text, who) => {
   who = String(who || "").trim();
   log("OCR: " + (who ? who + ": " : "") + text);
   // The platform captions the local user too, labelled "You". Like the mic,
-  // that becomes the user's own bubble under their profile name — never answered.
+  // the user's own words go to the saved transcript only — never a bubble.
   if (/^you\b/i.test(who)) {
     pushScriptRun(profileNameForScript(), text);
-    applySelfLine(text);
     window.api.sessionLogAdd({ ts: Date.now(), kind: "ocr", text: profileNameForScript() + ": " + text });
     return;
   }
@@ -2469,6 +2418,20 @@ window.api.onCaptureText((text, who) => {
   window.api.sessionLogAdd({ ts: Date.now(), kind: "ocr", text: (who ? who + ": " : "") + text });
 });
 window.api.onCaptureError((msg) => log("OCR error: " + msg, "err"));
+// The caption word not yet confirmed by the differ: a live tail on its line.
+if (window.api.onCaptureLive) {
+  window.api.onCaptureLive((word, who) => {
+    who = String(who || "").trim();
+    if (!word) {
+      // Nothing pending: drop any live tail left on the last line.
+      const ls = bubbleLines(lastMeetEl); const l = ls[ls.length - 1];
+      if (l && l.live) { l.live = ""; syncLine(l); lastMeetEl.classList.remove("meet-live"); }
+      return;
+    }
+    if (/^you\b/i.test(who)) return; // the user's own words never reach a bubble
+    applyMeetLine(who || "Interviewer", word, 0, false);
+  });
+}
 window.api.onCaptureState((on) => {
   captureRunning = !!on;
   recBtn.classList.toggle("on", captureRunning);
@@ -3947,7 +3910,7 @@ async function startCaption() {
     "Caption capture started (" +
       (capCfg.language || "English") +
       ", poll " +
-      (capCfg.pollMs || 700) +
+      (capCfg.pollMs || 400) +
       "ms)",
     "info",
   );

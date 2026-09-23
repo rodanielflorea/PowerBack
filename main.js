@@ -95,7 +95,10 @@ const DEFAULT_STATE = {
     language: 'auto',
     micDeviceId: '',
     captureSystem: true,
-    captureMic: process.platform !== 'win32', // only Windows can capture system audio
+    // The user's own voice is now part of the product (their bubble, the saved
+    // transcript, the recording), so the mic is on everywhere. It used to be
+    // off on Windows, where system audio alone covers the other side.
+    captureMic: true,
     autoAnswer: false, // default: manual submission (Send / Ctrl+Enter)
     recordSession: true, // record screen + audio and auto-save the bundle on End
     uploadSession: true,  // after saving, upload the bundle to gofile.io and hand back the link
@@ -104,7 +107,9 @@ const DEFAULT_STATE = {
   capture: {
     rect: null,
     language: 'English',
-    pollMs: 700,
+    // How often the caption area is read. The loop never overlaps OCR runs, so
+    // a short interval means "as soon as the last read finished".
+    pollMs: 400,
     showOverlay: false,
   },
   network: {
@@ -419,6 +424,9 @@ function loadState() {
       meeting: { ...DEFAULT_STATE.meeting, ...(raw.meeting || {}) },
       hotkeys: { ...HOTKEY_DEFAULTS, ...(raw.hotkeys || {}) },
     };
+    // The caption poll default was 700 ms. A saved 700 is that old default
+    // written back by saveState, not a choice, so move it to the new default.
+    if (state.capture.pollMs === 700) state.capture.pollMs = DEFAULT_STATE.capture.pollMs;
     for (const k of Object.keys(HOTKEY_DEFAULTS)) {
       if (!state.hotkeys[k] && HOTKEY_DEFAULTS[k]) state.hotkeys[k] = HOTKEY_DEFAULTS[k];
     }
@@ -1542,6 +1550,11 @@ async function captureTick() {
       if (seg.who) lastCaptionWho = seg.who;
       if (win) win.webContents.send('capture-text', seg.text, seg.who);
     }
+    // The differ holds the frame's last word back until the next frame confirms
+    // it. Show it now as a live tail so the bubble is never a word behind the
+    // screen; it is replaced when it is confirmed.
+    const tailWho = (frame.blocks.length && frame.blocks[frame.blocks.length - 1].who) || lastCaptionWho;
+    if (win) win.webContents.send('capture-live', pendingTrailing || '', tailWho);
   } catch (e) {
     if (win) win.webContents.send('capture-error', 'OCR exec error: ' + e.message);
   } finally {
@@ -1559,7 +1572,7 @@ function startCaptureLoop() {
   lastCaptionWho = '';
   firstOcrLogged = false;
   lastOcrEmptyAt = 0;
-  const period = Math.max(200, state.capture.pollMs || 700);
+  const period = Math.max(200, state.capture.pollMs || DEFAULT_STATE.capture.pollMs);
   captureLoop = setInterval(captureTick, period);
   captureTick();
   if (win) win.webContents.send('capture-state', true);
@@ -3244,12 +3257,13 @@ function ensureSession() {
   currentSessionId = s.id;
   return s;
 }
-// `self` marks the app user's own speech: stored as a 'meet' turn (so it stays
-// out of the answer history like the rest of the transcript) with self:true.
+// `self` is kept for saves made by an older build and is no longer sent.
 // `id` names the bubble the update belongs to. With named speakers and the
 // user's own bubble, several bubbles are open at once, so "the last unsealed
 // turn" is no longer enough to tell which one is growing.
-function recordMeetTurn(who, text, sealed, self, id) {
+// `lines` is the bubble line by line ([{who,text,self?}]); `text` is the same
+// joined as "Name : words" per line, for anything that only reads text.
+function recordMeetTurn(who, text, sealed, self, id, lines) {
   who = String(who || 'Interviewer').trim() || 'Interviewer';
   text = String(text || '').trim();
   id = String(id || '');
@@ -3270,15 +3284,20 @@ function recordMeetTurn(who, text, sealed, self, id) {
     if (meetSaveTimer) { clearTimeout(meetSaveTimer); meetSaveTimer = null; }
     return saveSessions();
   }
+  const lineList = Array.isArray(lines)
+    ? lines.map((l) => ({ who: String((l && l.who) || who).trim() || who, text: String((l && l.text) || '').trim(), ...(l && l.self ? { self: true } : {}) })).filter((l) => l.text)
+    : null;
   if (at >= 0) {
     const open = s.turns[at];
     open.who = who;
     open.text = text;
+    if (lineList) open.lines = lineList;
     if (sealed) open.sealed = true;
   } else {
     const turn = { kind: 'meet', ts: Date.now(), who, text, sealed: !!sealed };
     if (id) turn.id = id;
     if (self) turn.self = true;
+    if (lineList) turn.lines = lineList;
     s.turns.push(turn);
   }
   s.updatedAt = Date.now();
@@ -3292,7 +3311,7 @@ function recordMeetTurn(who, text, sealed, self, id) {
 }
 ipcMain.handle('session-record-meet', (_e, payload) => {
   const p = payload || {};
-  return recordMeetTurn(p.who, p.text, !!p.sealed, !!p.self, p.id);
+  return recordMeetTurn(p.who, p.text, !!p.sealed, !!p.self, p.id, p.lines);
 });
 function genSessionId() { return 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 loadSessions();
@@ -3794,7 +3813,7 @@ function formatAnswerUserTurn(q, transcript, mode) {
   if (ask) {
     parts.push('The candidate typed this question in the input box. Answer it from the knowledge base. Use the meeting transcript only if it helps.\n\n' + ask);
   } else {
-    parts.push('The candidate did not type a question. The interviewer just spoke — see the last transcript lines. Respond as the candidate to what was said last: answer the question they asked, or react briefly and naturally to their statement. Always respond; never stay silent and never answer with a placeholder.');
+    parts.push('The candidate did not type a question. See the last transcript lines: each is tagged with who said it. Respond as the candidate to what was said last: answer the question they asked, or react briefly and naturally to their statement. If several people spoke, address what they said together, the most recent first. Always respond; never stay silent and never answer with a placeholder.');
   }
   return parts.join('\n\n');
 }

@@ -84,6 +84,12 @@ function nameFrom(raw, roster) {
   return looksLikeName(cleaned, roster) ? cleaned : '';
 }
 
+// Fix what OCR reliably gets wrong on caption fonts. Seen with tesseract on
+// sans-serif text: a lone capital I read as a pipe.
+function cleanOcrText(raw) {
+  return String(raw || '').replace(/(^|[\s(])\|(?=[\s.,;:!?')]|$)/g, '$1I');
+}
+
 // Split one OCR frame into speaker blocks.
 //   -> { blocks: [{ who, words: [...] }], text }   (text = speech only, no names)
 // `who` is '' for words that sit above the first visible name: the label has
@@ -91,7 +97,7 @@ function nameFrom(raw, roster) {
 function parseCaptionFrame(raw, opts = {}) {
   const roster = opts.roster instanceof Set ? opts.roster
     : new Set((opts.roster || []).map((n) => String(n).trim().toLowerCase()).filter(Boolean));
-  const lines = String(raw || '').split('\n').map((l) => l.trim());
+  const lines = cleanOcrText(raw).split('\n').map((l) => l.trim());
   const blocks = [];
   let cur = null;
   const open = (who) => { cur = { who, words: [] }; blocks.push(cur); };
@@ -162,4 +168,4 @@ function attributeEmission(frame, emitted, lastWho) {
   return out;
 }
 
-module.exports = { parseCaptionFrame, attributeEmission, looksLikeName, cleanNameCandidate, isSelf };
+module.exports = { parseCaptionFrame, attributeEmission, looksLikeName, cleanNameCandidate, cleanOcrText, isSelf };

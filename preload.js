@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('api', {
   requestMicPermission: () => ipcRenderer.invoke('request-mic-permission'),
   onStealthChanged: (cb) => ipcRenderer.on('stealth-changed', (_e, v) => cb(v)),
   onCaptureText: (cb) => ipcRenderer.on('capture-text', (_e, v, who) => cb(v, who)),
+  onCaptureLive: (cb) => ipcRenderer.on('capture-live', (_e, v, who) => cb(v, who)),
   onCaptureError: (cb) => ipcRenderer.on('capture-error', (_e, v) => cb(v)),
   onCaptureRectChanged: (cb) => ipcRenderer.on('capture-rect-changed', (_e, v) => cb(v)),
   onCaptureState: (cb) => ipcRenderer.on('capture-state', (_e, v) => cb(v)),
