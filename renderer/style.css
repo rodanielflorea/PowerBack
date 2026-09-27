@@ -553,25 +553,6 @@ body:not(.in-interview) .right-rail { display: none !important; }
   50%      { opacity: 0.5; transform: scale(0.85); }
 }
 
-.mode-icon { width: 16px; height: 16px; display: block; }
-.mode-icon path { fill: none; stroke: var(--text); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.mode-toggle-btn.mode-voice .mode-icon path { stroke: var(--accent); }
-.mode-toggle-btn {
-  font-size: 9px;
-  letter-spacing: -0.2px;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  color: var(--muted);
-  background: var(--track);
-  border-radius: 3px;
-  border: 1px solid var(--border);
-  padding: 1px 3px;
-  transition: background var(--t) var(--ease), color var(--t) var(--ease);
-}
-.mode-toggle-btn.mode-voice { background: #dbeafe; color: #1d4ed8; border-color: #93c5fd; }
-.mode-toggle-btn:hover { filter: brightness(0.96); }
-
 /* ── 11. ANSWER MAIN ───────────────────────────────────────── */
 .answer-main {
   position: fixed;
@@ -1039,7 +1020,7 @@ textarea.meet-editbox {
 .meet-line + .meet-line { margin-top: 5px; }
 .meet-name { font-weight: 700; }
 .meet-name::after { content: " : "; font-weight: 400; opacity: 0.85; }
-/* Words not confirmed yet (interim / the caption's last word). */
+/* Words not confirmed yet (interim). */
 .meet-line-live .meet-words { opacity: 0.72; }
 
 /* Question bubble — user, right-aligned */
@@ -2595,11 +2576,9 @@ textarea.meet-editbox {
 /* ── 27. BODY STATE CLASSES ────────────────────────────────── */
 body.in-interview .tab-btn[data-tab="general"],
 body.in-interview .settings-tab[data-tab="general"],
-body.in-interview .caption-options-block,
 body.in-interview .setup-only { display: none !important; }
 
-body.role-supporter .rec-btn,
-body.role-supporter .mode-toggle-btn { display: none !important; }
+body.role-supporter .rec-btn { display: none !important; }
 
 /* ── 28. MISC ──────────────────────────────────────────────── */
 .save-flash { animation: saveFlash 1.2s var(--ease); }

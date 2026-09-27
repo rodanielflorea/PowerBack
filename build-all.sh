@@ -25,7 +25,7 @@ if [ "${1:-}" = "--local" ]; then
       echo ">> macOS packages cannot be built on Linux; run without --local to build them on CI."
       ;;
     Darwin)
-      bash mac-audio/build.sh   # native helpers (system audio, OCR) — needs Xcode command-line tools
+      bash mac-audio/build.sh   # native helper (system audio) — needs Xcode command-line tools
       CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --linux --publish never
       echo ">> Windows build skipped (needs wine); run without --local to build it on CI."
       ;;

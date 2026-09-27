@@ -17,12 +17,3 @@ rm -f build/system-audio-arm64 build/system-audio-x86_64
 chmod +x build/system-audio
 codesign --force --sign - build/system-audio
 echo "built mac-audio/build/system-audio ($(lipo -archs build/system-audio))"
-
-# OCR helper (Apple Vision) — replaces tesseract on macOS.
-swiftc -O -target arm64-apple-macos11.0  -framework Vision -framework AppKit OcrVision.swift -o build/ocr-arm64
-swiftc -O -target x86_64-apple-macos11.0 -framework Vision -framework AppKit OcrVision.swift -o build/ocr-x86_64
-lipo -create build/ocr-arm64 build/ocr-x86_64 -output build/ocr
-rm -f build/ocr-arm64 build/ocr-x86_64
-chmod +x build/ocr
-codesign --force --sign - build/ocr
-echo "built mac-audio/build/ocr ($(lipo -archs build/ocr))"

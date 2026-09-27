@@ -15,7 +15,6 @@ const {
 const { createKeyInjector, pasteKeystroke } = require('./platform-input');
 const license = require('./license');
 const { uploadFolder } = require('./gofile');
-const { parseCaptionFrame, attributeEmission } = require('./speakers');
 let autoUpdater = null;
 try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
 let officeParser = null;
@@ -48,13 +47,6 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 const STATE_FILE = path.join(app.getPath('userData'), 'state.json');
 const LOG_FILE = path.join(app.getPath('userData'), 'activity.log');
 const LOG_MAX_LINES_RETURNED = 500;
-const CAPTURE_EXE = path.join(
-  app.isPackaged ? process.resourcesPath : __dirname,
-  'caption2text',
-  'Capture2Text_CLI.exe'
-);
-
-
 
 const HOTKEY_DEFAULTS = {
   toggleVisibility: 'Ctrl+Alt+H',
@@ -66,11 +58,9 @@ const HOTKEY_DEFAULTS = {
   opacityDown: 'Ctrl+Alt+[',
   scrollUp: 'Ctrl+Up',
   scrollDown: 'Ctrl+Down',
-  resetCaptureArea: 'Ctrl+Q',
   reloadSite: 'Ctrl+R',
   toggleStealth: 'Ctrl+H',
   toggleRecording: 'Alt+C',
-  toggleMode: 'Alt+D',
   pushToTalk: 'Ctrl+B',
   closeSticky: 'Ctrl+Shift+Left',
   openSticky: 'Ctrl+Shift+Right',
@@ -87,7 +77,6 @@ const HOTKEY_DEFAULTS = {
 const DEFAULT_STATE = {
   x: null, y: null, width: 380, height: 800,
   opacity: 1.0, stealth: true, clickThrough: false,
-  mode: 'voice',
   transcription: {
     engine: 'deepgram',
     deepgramApiKey: '',
@@ -104,14 +93,6 @@ const DEFAULT_STATE = {
     uploadSession: true,  // after saving, upload the bundle to gofile.io and hand back the link
   },
   antiClose: true, // Windows: relaunch the app if another program closes it
-  capture: {
-    rect: null,
-    language: 'English',
-    // How often the caption area is read. The loop never overlaps OCR runs, so
-    // a short interval means "as soon as the last read finished".
-    pollMs: 400,
-    showOverlay: false,
-  },
   network: {
     role: '',
     address: '172.16.98.11:2000',
@@ -171,210 +152,9 @@ let infoProfile = null;          // profile currently shown in the info window
 let _nagerCountries = null;      // cached [{countryCode, name}] from date.nager.at
 let chatHistory = [];
 const CHAT_HISTORY_MAX = 200;
-let captureOverlayWin = null;
-let captureLoop = null;
-let pastedHistory = [];
-let pendingRestart = false;
 let deepgramWs = null;
 let sessionLog = [];
 let state = { ...DEFAULT_STATE };
-
-const MAX_HISTORY_WORDS = 500;
-const WINDOW_K = 4;
-
-function normalizeWord(w) {
-  return w.toLowerCase().replace(/[^\w']/g, '');
-}
-
-function wordsApproxEqual(a, b) {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  const lenA = a.length, lenB = b.length;
-  if (Math.abs(lenA - lenB) > 1) return false;
-  if (lenA >= 4 && lenB >= 4) {
-    const minLen = Math.min(lenA, lenB);
-    let common = 0;
-    for (let i = 0; i < minLen; i++) {
-      if (a[i] === b[i]) common++;
-      else break;
-    }
-    if (common >= Math.max(4, minLen - 1)) return true;
-  }
-  let i = 0, j = 0, edits = 0;
-  while (i < lenA && j < lenB) {
-    if (a[i] === b[j]) { i++; j++; continue; }
-    edits++;
-    if (edits > 1) return false;
-    if (lenA > lenB) i++;
-    else if (lenB > lenA) j++;
-    else { i++; j++; }
-  }
-  edits += (lenA - i) + (lenB - j);
-  return edits <= 1;
-}
-
-function windowsApproxEqual(a, b) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (!wordsApproxEqual(a[i], b[i])) return false;
-  return true;
-}
-
-function trimSeenPrefix(newWordsNorm, histNorm, lookback) {
-  if (newWordsNorm.length === 0) return 0;
-  const tail = histNorm.slice(-lookback);
-  if (tail.length === 0) return 0;
-  let total = 0;
-  let progress = true;
-  while (progress && total < newWordsNorm.length) {
-    progress = false;
-    for (let len = Math.min(newWordsNorm.length - total, 8); len >= 1; len--) {
-      const slice = newWordsNorm.slice(total, total + len);
-      let found = false;
-      for (let i = 0; i + len <= tail.length; i++) {
-        if (windowsApproxEqual(tail.slice(i, i + len), slice)) { found = true; break; }
-      }
-      if (found) {
-        total += len;
-        progress = true;
-        break;
-      }
-    }
-  }
-  return total;
-}
-
-function dedupeInlinePhrases(words) {
-  if (words.length < 4) return words;
-  const out = words.slice();
-  for (let phraseLen = 5; phraseLen >= 2; phraseLen--) {
-    let i = 0;
-    while (i + 2 * phraseLen <= out.length) {
-      const aNorm = out.slice(i, i + phraseLen).map(normalizeWord);
-      const bNorm = out.slice(i + phraseLen, i + 2 * phraseLen).map(normalizeWord);
-      if (windowsApproxEqual(aNorm, bNorm)) {
-        out.splice(i + phraseLen, phraseLen);
-        // re-check at same i for cascading repeats
-      } else {
-        i++;
-      }
-    }
-  }
-  return out;
-}
-
-let pendingTrailing = '';
-let pendingIdleFrames = 0;
-const PENDING_FLUSH_AFTER_IDLE = 5;
-
-function resetSmartDiffState() {
-  pastedHistory = [];
-  pendingTrailing = '';
-  pendingIdleFrames = 0;
-}
-
-function smartDiff(curr) {
-  if (!curr) return '';
-  const currWords = curr.split(/\s+/).filter(Boolean);
-  if (currWords.length === 0) return '';
-
-  if (pastedHistory.length === 0 && !pendingTrailing) {
-    let head = currWords.slice(0, -1);
-    if (head.length >= 4) head = dedupeInlinePhrases(head);
-    pendingTrailing = currWords[currWords.length - 1];
-    pendingIdleFrames = 0;
-    pastedHistory = head.slice(-MAX_HISTORY_WORDS);
-    return head.length > 0 ? head.join(' ') : '';
-  }
-
-  const histNorm = pastedHistory.map(normalizeWord);
-  const currNorm = currWords.map(normalizeWord);
-
-  let prefixMatch = 0;
-  const maxN = Math.min(histNorm.length, currNorm.length);
-  for (let n = maxN; n >= 2; n--) {
-    let m = true;
-    for (let i = 0; i < n; i++) {
-      if (!wordsApproxEqual(histNorm[histNorm.length - n + i], currNorm[i])) { m = false; break; }
-    }
-    if (m) { prefixMatch = n; break; }
-  }
-
-  let windowMatch = 0;
-  if (currNorm.length >= WINDOW_K && histNorm.length >= WINDOW_K) {
-    const histWindows = [];
-    for (let i = 0; i + WINDOW_K <= histNorm.length; i++) {
-      histWindows.push(histNorm.slice(i, i + WINDOW_K));
-    }
-    for (let i = 0; i + WINDOW_K <= currNorm.length; i++) {
-      const cw = currNorm.slice(i, i + WINDOW_K);
-      for (let h = 0; h < histWindows.length; h++) {
-        if (windowsApproxEqual(histWindows[h], cw)) { windowMatch = i + WINDOW_K; break; }
-      }
-    }
-  }
-
-  const skipTo = Math.max(prefixMatch, windowMatch);
-  let newWords = currWords.slice(skipTo);
-
-  if (newWords.length > 0) {
-    const newNorm = newWords.map(normalizeWord);
-    const trimmed = trimSeenPrefix(newNorm, histNorm, 60);
-    if (trimmed > 0) newWords = newWords.slice(trimmed);
-  }
-  if (newWords.length >= 4) newWords = dedupeInlinePhrases(newWords);
-
-  if (pendingTrailing) {
-    const pendNorm = normalizeWord(pendingTrailing);
-    // The held-back word coming round again as the first new word — unchanged,
-    // finished being typed ("wou" -> "would"), or cut short by this frame's OCR.
-    // It must stay in newWords: it is emitted below as soon as a word follows
-    // it. (It used to be sliced off here and was never emitted at all, so every
-    // tick lost a word and the history drifted away from the screen.)
-    let heldAgain = false;
-    if (newWords.length > 0) {
-      const firstNorm = normalizeWord(newWords[0]);
-      const grew = firstNorm.length > pendNorm.length && firstNorm.startsWith(pendNorm);
-      const shrank = pendNorm.length > firstNorm.length && pendNorm.startsWith(firstNorm);
-      if (firstNorm === pendNorm || grew || shrank) {
-        if (shrank) newWords[0] = pendingTrailing; // keep the fuller read
-        heldAgain = newWords.length === 1 && !grew; // nothing new behind it: idle
-        if (!heldAgain) pendingIdleFrames = 0;
-      } else {
-        const flush = pendingTrailing;
-        pendingTrailing = '';
-        pendingIdleFrames = 0;
-        pastedHistory.push(flush);
-        newWords = [flush, ...newWords];
-      }
-    }
-    if (newWords.length === 0 || heldAgain) {
-      pendingIdleFrames++;
-      if (pendingIdleFrames >= PENDING_FLUSH_AFTER_IDLE) {
-        const flush = pendingTrailing;
-        pendingTrailing = '';
-        pendingIdleFrames = 0;
-        pastedHistory.push(flush);
-        pastedHistory = pastedHistory.slice(-MAX_HISTORY_WORDS);
-        return ' ' + flush;
-      }
-      return '';
-    }
-  }
-
-  if (newWords.length === 0) return '';
-
-  const newPending = newWords[newWords.length - 1];
-  const toEmit = newWords.slice(0, -1);
-  pendingTrailing = newPending;
-  pendingIdleFrames = 0;
-
-  if (toEmit.length === 0) return '';
-  if (toEmit.length > 40 && win) {
-    win.webContents.send('capture-text', `[OCR diff: large emission ${toEmit.length} words — likely match drift]`);
-  }
-  pastedHistory = pastedHistory.concat(toEmit).slice(-MAX_HISTORY_WORDS);
-  return ' ' + toEmit.join(' ');
-}
 
 // ── Built-in API keys ─────────────────────────────────────────────────────────
 // defaults/api-keys.json is shipped inside the app so users need no keys of
@@ -417,31 +197,12 @@ function loadState() {
       ...DEFAULT_STATE,
       ...raw,
       transcription: { ...DEFAULT_STATE.transcription, ...(raw.transcription || {}) },
-      capture: { ...DEFAULT_STATE.capture, ...(raw.capture || {}) },
       network: { ...DEFAULT_STATE.network, ...(raw.network || {}) },
       answer: { ...DEFAULT_STATE.answer, ...(raw.answer || {}) },
       knowledge: { ...DEFAULT_STATE.knowledge, ...(raw.knowledge || {}) },
       meeting: { ...DEFAULT_STATE.meeting, ...(raw.meeting || {}) },
       hotkeys: { ...HOTKEY_DEFAULTS, ...(raw.hotkeys || {}) },
     };
-    // The caption poll default was 700 ms. A saved 700 is that old default
-    // written back by saveState, not a choice, so move it to the new default.
-    if (state.capture.pollMs === 700) state.capture.pollMs = DEFAULT_STATE.capture.pollMs;
-    for (const k of Object.keys(HOTKEY_DEFAULTS)) {
-      if (!state.hotkeys[k] && HOTKEY_DEFAULTS[k]) state.hotkeys[k] = HOTKEY_DEFAULTS[k];
-    }
-    state.network.role = '';
-    // Migrate any retired engine value (e.g. the removed local whisper) to deepgram.
-    // Deepgram is the only transcription engine offered.
-    state.transcription.engine = 'deepgram';
-    if (!state.meeting) state.meeting = { ...DEFAULT_STATE.meeting };
-    state.meeting.kind = 'hiring';
-    if (!['intro', 'technical', 'ceo', 'hr'].includes(state.meeting.hiringType)) state.meeting.hiringType = 'intro';
-    delete state.meeting.roster;
-    delete state.prompts;
-    delete state.promptDefaultsVersion;
-    delete state.promptsSeeded;
-    if (state.answer) delete state.answer.activePromptId;
   } catch {
     state = {
       ...DEFAULT_STATE,
@@ -1377,66 +1138,6 @@ function enqueueTranscribe(wavBuffer) {
   return transcribeQueue;
 }
 
-// Capture2Text joins the lines of what it reads unless told not to, and the
-// speaker labels on captions are found by where they sit on a line. Should a
-// build of the CLI reject the flag, fall back to the old call for the rest of
-// the run instead of losing OCR altogether (names then only work inline).
-let c2tLineBreaks = true;
-function runOcrCapture2Text(rect, language) {
-  if (!c2tLineBreaks) return runCapture2Text(rect, language, false);
-  return runCapture2Text(rect, language, true).catch((err) =>
-    runCapture2Text(rect, language, false).then(
-      (text) => { c2tLineBreaks = false; appendLogLine('[ocr] Capture2Text refused --line-breaks: ' + err.message); return text; },
-      () => { throw err; },
-    ));
-}
-function runCapture2Text(rect, language, lineBreaks) {
-  return new Promise((resolve, reject) => {
-    const sf = rect.scaleFactor || 1;
-    const x1 = Math.round(rect.x1 * sf);
-    const y1 = Math.round(rect.y1 * sf);
-    const x2 = Math.round(rect.x2 * sf);
-    const y2 = Math.round(rect.y2 * sf);
-    const args = [
-      '--screen-rect', `${x1} ${y1} ${x2} ${y2}`,
-      '-l', language || 'English',
-      ...(lineBreaks ? ['--line-breaks'] : []),
-    ];
-    const p = spawn(CAPTURE_EXE, args, { windowsHide: true });
-    let out = '';
-    let err = '';
-    p.stdout.on('data', (d) => { out += d.toString(); });
-    p.stderr.on('data', (d) => { err += d.toString(); });
-    p.on('error', reject);
-    p.on('exit', (code) => {
-      if (code === 0) resolve(out.replace(/\r/g, '').trim());
-      else reject(new Error(`OCR exit ${code}: ${err.slice(-200)}`));
-    });
-  });
-}
-
-// Full language names (Capture2Text style, stored in state) -> tesseract codes.
-const TESSERACT_LANGS = {
-  English: 'eng', Russian: 'rus', Japanese: 'jpn', Chinese: 'chi_sim',
-  Spanish: 'spa', French: 'fra', German: 'deu', Portuguese: 'por',
-  Italian: 'ita', Dutch: 'nld', Turkish: 'tur', Polish: 'pol',
-  Arabic: 'ara', Korean: 'kor',
-};
-
-let tesseractAvailable = null;
-function hasTesseract() {
-  if (tesseractAvailable === null) {
-    try {
-      require('child_process').execFileSync('tesseract', ['--version'], { stdio: 'ignore' });
-      tesseractAvailable = true;
-    } catch { tesseractAvailable = false; }
-  }
-  return tesseractAvailable;
-}
-
-// Cross-platform OCR: grab the capture rect from the screen via desktopCapturer
-// and feed it to the tesseract CLI. Used everywhere the bundled Windows
-// Capture2Text exe is not available.
 // Grab the capture rect from the screen as a PNG file (any platform).
 async function captureRectPng(rect) {
   macScreenPermissionWarn();
@@ -1456,237 +1157,11 @@ async function captureRectPng(rect) {
   crop.width = Math.min(crop.width, thumbW - crop.x);
   crop.height = Math.min(crop.height, thumbH - crop.y);
   const png = source.thumbnail.crop(crop).toPNG();
-  const tmp = path.join(app.getPath('temp'), `ace-ocr-${process.pid}.png`);
+  const tmp = path.join(app.getPath('temp'), `ace-capture-${process.pid}.png`);
   fs.writeFileSync(tmp, png);
   return tmp;
 }
 
-// macOS: Apple Vision text recognition via the bundled helper — no tesseract.
-const VISION_LANGS = {
-  English: 'en-US', Russian: 'ru-RU', Japanese: 'ja-JP', Chinese: 'zh-Hans', Spanish: 'es-ES', French: 'fr-FR',
-  German: 'de-DE', Portuguese: 'pt-BR', Italian: 'it-IT', Dutch: 'nl-NL', Turkish: 'tr-TR', Polish: 'pl-PL',
-  Arabic: 'ar-SA', Korean: 'ko-KR',
-};
-function macOcrHelperPath() {
-  return path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname, 'mac-audio', 'build'), app.isPackaged ? 'mac-audio' : '', 'ocr');
-}
-async function runOcrVision(rect, language) {
-  const tmp = await captureRectPng(rect);
-  const args = [tmp, VISION_LANGS[language] || 'en-US'];
-  return new Promise((resolve, reject) => {
-    const p = spawn(macOcrHelperPath(), args);
-    let out = '';
-    let err = '';
-    p.stdout.on('data', (d) => { out += d.toString(); });
-    p.stderr.on('data', (d) => { err += d.toString(); });
-    p.on('error', reject);
-    p.on('exit', (code) => {
-      try { fs.unlinkSync(tmp); } catch {}
-      if (code === 0) resolve(out.replace(/\r/g, '').trim());
-      else reject(new Error(`OCR helper exit ${code}: ${err.slice(-200)}`));
-    });
-  });
-}
-
-async function runOcrTesseract(rect, language) {
-  if (!hasTesseract()) {
-    const hint = process.platform === 'darwin' ? 'brew install tesseract' : 'Settings → Check → Install missing tools (or: sudo apt install tesseract-ocr)';
-    throw new Error(`tesseract not installed (${hint})`);
-  }
-  const tmp = await captureRectPng(rect);
-  const lang = TESSERACT_LANGS[language] || 'eng';
-  return new Promise((resolve, reject) => {
-    const p = spawn('tesseract', [tmp, 'stdout', '-l', lang, '--psm', '6']);
-    let out = '';
-    let err = '';
-    p.stdout.on('data', (d) => { out += d.toString(); });
-    p.stderr.on('data', (d) => { err += d.toString(); });
-    p.on('error', reject);
-    p.on('exit', (code) => {
-      try { fs.unlinkSync(tmp); } catch {}
-      if (code === 0) resolve(out.replace(/\r/g, '').trim());
-      else reject(new Error(`tesseract exit ${code}: ${err.slice(-200)}`));
-    });
-  });
-}
-
-function runOcr(rect, language) {
-  if (process.platform === 'win32' && fs.existsSync(CAPTURE_EXE)) return runOcrCapture2Text(rect, language);
-  if (process.platform === 'darwin' && fs.existsSync(macOcrHelperPath())) return runOcrVision(rect, language);
-  return runOcrTesseract(rect, language);
-}
-
-let ocrInFlight = false;
-// Last speaker read off the captions: words whose label has scrolled out of the
-// capture area still belong to them.
-let lastCaptionWho = '';
-let firstOcrLogged = false;
-let lastOcrEmptyAt = 0;
-async function captureTick() {
-  if (ocrInFlight) return;
-  const cfg = state.capture;
-  if (!cfg.rect) return;
-  ocrInFlight = true;
-  try {
-    const text = await runOcr(cfg.rect, cfg.language);
-    if (!firstOcrLogged) {
-      firstOcrLogged = true;
-      if (win) win.webContents.send('capture-text', `[OCR running — first read: ${text.length} chars]`);
-    }
-    if (!text || !text.trim()) {
-      const now = Date.now();
-      if (now - lastOcrEmptyAt > 8000) {
-        lastOcrEmptyAt = now;
-        if (win) win.webContents.send('capture-error', 'OCR returned no text. Check capture area, language, and screen contrast.');
-      }
-      return;
-    }
-    // The platform labels its captions with who is talking. Lift those labels
-    // out first so the differ only ever sees speech, then hand each run of new
-    // words to the renderer under the speaker it sits beneath.
-    const frame = parseCaptionFrame(text);
-    const newPart = smartDiff(frame.text);
-    for (const seg of attributeEmission(frame, newPart.trim(), lastCaptionWho)) {
-      if (seg.who) lastCaptionWho = seg.who;
-      if (win) win.webContents.send('capture-text', seg.text, seg.who);
-    }
-    // The differ holds the frame's last word back until the next frame confirms
-    // it. Show it now as a live tail so the bubble is never a word behind the
-    // screen; it is replaced when it is confirmed.
-    const tailWho = (frame.blocks.length && frame.blocks[frame.blocks.length - 1].who) || lastCaptionWho;
-    if (win) win.webContents.send('capture-live', pendingTrailing || '', tailWho);
-  } catch (e) {
-    if (win) win.webContents.send('capture-error', 'OCR exec error: ' + e.message);
-  } finally {
-    ocrInFlight = false;
-  }
-}
-
-function startCaptureLoop() {
-  if (captureLoop) return;
-  if (!state.capture.rect) {
-    if (win) win.webContents.send('capture-error', 'No capture area selected');
-    return;
-  }
-  resetSmartDiffState();
-  lastCaptionWho = '';
-  firstOcrLogged = false;
-  lastOcrEmptyAt = 0;
-  const period = Math.max(200, state.capture.pollMs || DEFAULT_STATE.capture.pollMs);
-  captureLoop = setInterval(captureTick, period);
-  captureTick();
-  if (win) win.webContents.send('capture-state', true);
-  if (state.capture.showOverlay) showCaptureOverlay();
-}
-
-function triggerResetCaptureArea() {
-  const wasRunning = !!captureLoop;
-  if (wasRunning) {
-    stopCaptureLoop();
-    pendingRestart = true;
-  }
-  openAreaSelector();
-}
-
-function stopCaptureLoop() {
-  if (captureLoop) clearInterval(captureLoop);
-  captureLoop = null;
-  if (pendingTrailing) {
-    const flush = pendingTrailing;
-    pendingTrailing = '';
-    pendingIdleFrames = 0;
-    pastedHistory.push(flush);
-    pastedHistory = pastedHistory.slice(-MAX_HISTORY_WORDS);
-    if (win) win.webContents.send('capture-text', flush);
-  }
-  if (win) win.webContents.send('capture-state', false);
-  hideCaptureOverlay();
-}
-
-function showCaptureOverlay() {
-  const r = state.capture.rect;
-  if (!r) return;
-  const sf = r.scaleFactor || 1;
-  const x = Math.round(r.x1);
-  const y = Math.round(r.y1);
-  const w = Math.max(20, Math.round(r.x2 - r.x1));
-  const h = Math.max(20, Math.round(r.y2 - r.y1));
-  if (captureOverlayWin && !captureOverlayWin.isDestroyed()) {
-    try { captureOverlayWin.setBounds({ x, y, width: w, height: h }); captureOverlayWin.showInactive(); } catch {}
-    return;
-  }
-  captureOverlayWin = new BrowserWindow({
-    x, y, width: w, height: h,
-    frame: false,
-    transparent: true,
-    skipTaskbar: true,
-    alwaysOnTop: true,
-    resizable: false,
-    movable: false,
-    focusable: false,
-    hasShadow: false,
-    show: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
-  });
-  captureOverlayWin.setIgnoreMouseEvents(true);
-  captureOverlayWin.setAlwaysOnTop(true, 'screen-saver');
-  captureOverlayWin.setContentProtection(true);
-  captureOverlayWin.loadFile(path.join(__dirname, 'renderer', 'capture-overlay.html'));
-  captureOverlayWin.once('ready-to-show', () => captureOverlayWin.showInactive());
-  captureOverlayWin.on('closed', () => { captureOverlayWin = null; });
-}
-
-function hideCaptureOverlay() {
-  if (captureOverlayWin && !captureOverlayWin.isDestroyed()) {
-    try { captureOverlayWin.close(); } catch {}
-  }
-  captureOverlayWin = null;
-}
-
-function openAreaSelector() {
-  if (selectorWin) return;
-  if (!win) return;
-  const wasVisible = win.isVisible();
-  win.hide();
-  setTimeout(() => {
-    const cursor = screen.getCursorScreenPoint();
-    const display = screen.getDisplayNearestPoint(cursor);
-    selectorWin = new BrowserWindow({
-      x: display.bounds.x,
-      y: display.bounds.y,
-      width: display.bounds.width,
-      height: display.bounds.height,
-      frame: false,
-      transparent: true,
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      resizable: false,
-      movable: false,
-      hasShadow: false,
-      fullscreenable: false,
-      webPreferences: {
-        preload: path.join(__dirname, 'preload-selector.js'),
-        contextIsolation: true,
-        nodeIntegration: false,
-      },
-    });
-    selectorWin.setAlwaysOnTop(true, 'screen-saver');
-    selectorWin.loadFile(path.join(__dirname, 'renderer', 'selector.html'));
-    selectorWin.once('ready-to-show', () => selectorWin.show());
-    selectorWin.on('closed', () => {
-      selectorWin = null;
-      if (wasVisible && win) win.show();
-      if (win) win.webContents.send('selector-closed');
-    });
-  }, 150);
-}
-
-// ── Alt+S area-snip: drag-select a screen region → attach it as an image ──────
-// Reuses the selector window. The selector is content-protected while stealth
-// is on, and the main window is hidden during selection + capture, so neither
-// appears in the captured region or in any screen recording.
-let snipMode = false;
-let snipPrevVisible = true;
 function openSnipSelector() {
   if (selectorWin || snipMode) return;
   if (!win) return;
@@ -1750,41 +1225,13 @@ async function handleSnipDone(rect) {
   if (snipPrevVisible && win) win.show();
 }
 
-ipcMain.on('selector-done', (_e, rect) => {
-  if (snipMode) { handleSnipDone(rect || {}); return; }
-  if (rect && selectorWin) {
-    const [winX, winY] = selectorWin.getPosition();
-    const display = screen.getDisplayMatching(selectorWin.getBounds());
-    const sf = display ? display.scaleFactor : 1;
-    state.capture.rect = {
-      x1: rect.x1 + winX,
-      y1: rect.y1 + winY,
-      x2: rect.x2 + winX,
-      y2: rect.y2 + winY,
-      scaleFactor: sf,
-    };
-    saveState();
-    if (win) win.webContents.send('capture-rect-changed', state.capture.rect);
-  }
-  if (selectorWin) selectorWin.close();
-  if (pendingRestart) {
-    pendingRestart = false;
-    setTimeout(() => startCaptureLoop(), 400);
-  }
-});
+// The selector window is only used by the Alt+S area snip.
+ipcMain.on('selector-done', (_e, rect) => { handleSnipDone(rect || {}); });
 
 ipcMain.on('selector-cancel', () => {
-  if (snipMode) {
-    snipMode = false;
-    if (selectorWin) { try { selectorWin.close(); } catch {} selectorWin = null; }
-    if (snipPrevVisible && win) win.show();
-    return;
-  }
-  if (selectorWin) selectorWin.close();
-  if (pendingRestart) {
-    pendingRestart = false;
-    setTimeout(() => startCaptureLoop(), 400);
-  }
+  snipMode = false;
+  if (selectorWin) { try { selectorWin.close(); } catch {} selectorWin = null; }
+  if (snipPrevVisible && win) win.show();
 });
 
 const HOTKEY_HANDLERS = {
@@ -1797,10 +1244,8 @@ const HOTKEY_HANDLERS = {
   opacityDown: () => setOpacity((win?.getOpacity() ?? 1) - OPACITY_STEP),
   scrollUp: () => { if (win && !win.isDestroyed()) win.webContents.send('scroll-answer', -1); },
   scrollDown: () => { if (win && !win.isDestroyed()) win.webContents.send('scroll-answer', 1); },
-  resetCaptureArea: () => triggerResetCaptureArea(),
   toggleStealth: () => setStealth(!state.stealth),
   toggleRecording: () => { if (win) win.webContents.send('toggle-recording'); },
-  toggleMode: () => { if (win) win.webContents.send('toggle-mode'); },
   pushToTalk: () => cycleMicModeFromHotkey(),
   closeSticky: () => closeStickyWindow(),
   openSticky: () => openStickyWindow(),
@@ -2437,7 +1882,7 @@ ipcMain.handle('run-diagnostics', async () => {
     const micSt = (() => { try { return sp.getMediaAccessStatus('microphone'); } catch { return 'unknown'; } })();
     add('Microphone permission', micSt === 'granted', micSt, 'System Settings → Privacy & Security → Microphone → enable RemoteDevJobAce.');
     const scrSt = (() => { try { return sp.getMediaAccessStatus('screen'); } catch { return 'unknown'; } })();
-    add('Screen & System Audio Recording permission (call audio, OCR)', scrSt === 'granted', scrSt, 'System Settings → Privacy & Security → Screen & System Audio Recording → enable RemoteDevJobAce, then Quit & reopen the app. If it is already enabled but still shows denied, remove the app from that list with − and add it again.');
+    add('Screen & System Audio Recording permission (call audio, screen capture)', scrSt === 'granted', scrSt, 'System Settings → Privacy & Security → Screen & System Audio Recording → enable RemoteDevJobAce, then Quit & reopen the app. If it is already enabled but still shows denied, remove the app from that list with − and add it again.');
     const helper = macSystemAudioHelperPath();
     add('System-audio helper present', fs.existsSync(helper), fs.existsSync(helper) ? helper : 'not in this build', 'This build has no system-audio helper; use a build from GitHub Actions (macOS runner).');
     add('Accessibility permission (typing / paste into other apps)', macAccessibilityOk(false), macAccessibilityOk(false) ? 'granted' : 'not granted', MAC_ACCESSIBILITY_HINT + ' Then Quit & reopen the app. If it is already enabled but still shows not granted, remove the app from that list with − and add it again.');
@@ -2445,16 +1890,9 @@ ipcMain.handle('run-diagnostics', async () => {
     add('macOS 13 or newer (system audio)', osOk, 'Darwin ' + require('os').release(), 'Update macOS to 13 (Ventura) or newer for system-audio capture.');
   }
   const has = (cmd) => { try { require('child_process').execFileSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { stdio: 'ignore' }); return true; } catch { return false; } };
-  if (mac) {
-    add('OCR helper (Apple Vision)', fs.existsSync(macOcrHelperPath()), fs.existsSync(macOcrHelperPath()) ? 'built in' : 'not in this build', 'Use a build from GitHub Actions (macOS runner).');
-  } else if (process.platform === 'linux') {
-    const tess = has('tesseract');
-    add('tesseract (OCR mode)', tess, tess ? 'installed' : 'not installed', 'Click "Install missing tools" below.');
+  if (process.platform === 'linux') {
     const typing = has('xdotool') || has('wtype') || has('ydotool');
     add('Typing tool (Write-to-IDE / paste): xdotool, wtype or ydotool', typing, typing ? 'installed' : 'none installed', 'Click "Install missing tools" below.');
-  } else {
-    const tess = has('tesseract') || fs.existsSync(CAPTURE_EXE);
-    add('OCR engine', tess, tess ? 'available' : 'not installed', 'Only needed for OCR mode; install tesseract (UB-Mannheim build) and add it to PATH.');
   }
   add('License', !!license.checkStoredLicense(app.getPath('userData')).ok, 'valid', 'Ask your administrator for a new key.');
   return { platform: process.platform, macRestartHint: mac, checks, canInstallTools: process.platform === 'linux' && (has('apt-get') || has('dnf') || has('pacman')) && has('pkexec') };
@@ -2467,9 +1905,9 @@ ipcMain.handle('install-linux-tools', () => new Promise((resolve) => {
   if (process.platform !== 'linux') return resolve({ ok: false, error: 'Linux only' });
   const has = (cmd) => { try { require('child_process').execFileSync('which', [cmd], { stdio: 'ignore' }); return true; } catch { return false; } };
   let cmd;
-  if (has('apt-get')) cmd = 'apt-get update && apt-get install -y tesseract-ocr xdotool wtype';
-  else if (has('dnf')) cmd = 'dnf install -y tesseract xdotool wtype';
-  else if (has('pacman')) cmd = 'pacman -Sy --noconfirm tesseract tesseract-data-eng xdotool wtype';
+  if (has('apt-get')) cmd = 'apt-get update && apt-get install -y xdotool wtype';
+  else if (has('dnf')) cmd = 'dnf install -y xdotool wtype';
+  else if (has('pacman')) cmd = 'pacman -Sy --noconfirm xdotool wtype';
   else return resolve({ ok: false, error: 'No supported package manager found (apt, dnf or pacman).' });
   const p = spawn('pkexec', ['sh', '-c', cmd]);
   let err = '';
@@ -2479,7 +1917,7 @@ ipcMain.handle('install-linux-tools', () => new Promise((resolve) => {
 }));
 app.on('will-quit', () => stopMacSystemAudio());
 
-// macOS: screenshots, area snips and OCR all read the screen through
+// macOS: screenshots and area snips read the screen through
 // desktopCapturer, which needs the "Screen & System Audio Recording"
 // permission. Without it macOS returns a blank/wallpaper-only image and no
 // error, so warn the user explicitly (the OS shows its prompt on first use;
@@ -2563,14 +2001,6 @@ ipcMain.handle('get-cursor-screen-source-id', async () => {
   const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] });
   // Return only serializable fields — skip NativeImage thumbnails.
   return sources.map((s) => ({ id: s.id, name: s.name, display_id: s.display_id }));
-});
-
-ipcMain.handle('get-mode', () => state.mode);
-ipcMain.handle('set-mode', (_e, mode) => {
-  if (mode === 'voice' || mode === 'caption') {
-    state.mode = mode;
-    saveState();
-  }
 });
 
 ipcMain.handle('get-transcription-config', () => ({ ...state.transcription }));
@@ -3756,7 +3186,7 @@ const QUESTION_POLICY = `QUESTIONS BACK — the default is NO question at the en
 
 function meetingStanceBlock() {
   const { hiringType } = getMeetingConfig();
-  const kb = `${whoAmILine()} This is a 1:1 hiring call. Transcript lines are tagged with who spoke: Interviewer, or the speaker's own name when the meeting captions show it. Every tag that is not your name is the other side. The setup profile name is you. Your knowledge base is whatever was uploaded (CV and/or JD and/or support). Missing files are fine. You are the candidate, not a helper who follows their lead.`;
+  const kb = `${whoAmILine()} This is a 1:1 hiring call. Transcript lines are tagged with who spoke: Interviewer, or the speaker's own name when the app can read it off the meeting screen. Every tag that is not your name is the other side. The setup profile name is you. Your knowledge base is whatever was uploaded (CV and/or JD and/or support). Missing files are fine. You are the candidate, not a helper who follows their lead.`;
   const typeHint = STAGE_GUIDANCE[hiringType] || '';
   return `MEETING STANCE — HIRING INTERVIEW (${hiringType}): ${kb}\n${typeHint}\n${ANSWER_SHAPE}\n${QUESTION_POLICY} If they state an opinion, do not auto-agree. Never invent experience. One spoken turn only.`;
 }
@@ -4283,15 +3713,6 @@ function showModelMenu(anchor) {
 }
 ipcMain.handle('show-model-menu', (_e, anchor) => showModelMenu(anchor));
 
-ipcMain.handle('get-capture-config', () => ({ ...state.capture }));
-ipcMain.handle('set-capture-config', (_e, cfg) => {
-  state.capture = { ...state.capture, ...(cfg || {}) };
-  saveState();
-});
-ipcMain.handle('select-capture-area', () => openAreaSelector());
-ipcMain.handle('start-capture-loop', () => startCaptureLoop());
-ipcMain.handle('stop-capture-loop', () => stopCaptureLoop());
-ipcMain.handle('is-capturing', () => !!captureLoop);
 
 ipcMain.handle('get-hotkeys', () => ({
   current: { ...state.hotkeys },

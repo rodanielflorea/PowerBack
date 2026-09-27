@@ -38,10 +38,22 @@ async function listServers() {
 
 // POST one file. `token`/`folderId` are set for every file after the first so
 // they join the folder gofile created for us.
+// A Blob for the file. openAsBlob streams from disk, so a 1 GB recording never
+// sits in memory — but on Windows it has failed with "Unable to open file as
+// blob" (seen in a user's log; the file was fine and uploaded next time). For a
+// small file, fall back to reading it whole; a big one gets a second try.
+async function fileBlob(file) {
+  try { return await fs.openAsBlob(file); } catch (e) {
+    const size = (await fs.promises.stat(file)).size;
+    if (size <= 64 * 1024 * 1024) return new Blob([await fs.promises.readFile(file)]);
+    await new Promise((r) => setTimeout(r, 500));
+    return fs.openAsBlob(file);
+  }
+}
+
 async function uploadOne(server, file, { token, folderId } = {}) {
   const form = new FormData();
-  // openAsBlob streams from disk — a 1 GB recording never sits in memory.
-  form.append('file', await fs.openAsBlob(file), path.basename(file));
+  form.append('file', await fileBlob(file), path.basename(file));
   if (folderId) form.append('folderId', folderId);
   const headers = token ? { Authorization: 'Bearer ' + token } : undefined;
   const t = withTimeout(UPLOAD_TIMEOUT_MS);
