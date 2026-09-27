@@ -23,6 +23,8 @@
       "main.js",
       "llm-providers.js",
       "gofile.js",
+      "speaker-detect.js",
+      "speaker-tracker.js",
       "defaults/**/*",
       "preload*.js",
       "renderer/**/*",

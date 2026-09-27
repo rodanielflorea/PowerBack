@@ -15,6 +15,8 @@ const {
 const { createKeyInjector, pasteKeystroke } = require('./platform-input');
 const license = require('./license');
 const { uploadFolder } = require('./gofile');
+const { detectActiveTile } = require('./speaker-detect');
+const { createSpeakerTracker } = require('./speaker-tracker');
 let autoUpdater = null;
 try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
 let officeParser = null;
@@ -2052,16 +2054,134 @@ function scheduleDeepgramReconnect() {
   }, delay);
 }
 
-function defaultTranscriptWho() {
-  return 'Interviewer';
+// ── Speaker names from the meeting screen ───────────────────────────────────
+// While transcription runs, every display is read twice a second. Meet, Teams
+// and Zoom frame the active speaker's tile in colour; speaker-detect finds that
+// tile, and the answer model reads the name printed in its corner once per
+// tile position. Each transcript line is then named after whoever was framed
+// while it was spoken. "Interviewer" is the fallback when nobody is framed.
+const SPEAKER_WATCH_MS = 500;
+const speakerTracker = createSpeakerTracker({ readName: readTileName, isSelf: isOwnName });
+let speakerWatchTimer = null;
+let speakerWatchBusy = false;
+let speakerWatchFirst = true;
+let speakerWatchTimeouts = 0;
+
+function isOwnName(name) {
+  const n = String(name || '').trim().toLowerCase();
+  const me = String((activeProfile && activeProfile.name) || (state.profile && state.profile.name) || '').trim().toLowerCase();
+  return /^you\b/.test(n) || /\(you\)/.test(n) || (!!me && (n === me || n.startsWith(me + ' ')));
 }
 
-function parseTranscriptAlternative(alt) {
+async function readTileName(png) {
+  const provider = getAnswerProvider();
+  const apiKey = getAnswerApiKey(provider.id);
+  if (!apiKey) return null;
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), 8000);
+  try {
+    const name = await completeChat({
+      provider, apiKey, model: getAnswerModel(provider.id), maxTokens: 20, signal: ac.signal,
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: 'This is the name label from a video-call participant tile. Reply with the name exactly as written and nothing else. If no name is visible, reply NONE.' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,' + png.toString('base64') } },
+      ] }],
+    });
+    appendLogLine('[speakers] tile label read as: ' + JSON.stringify(name));
+    return name;
+  } finally { clearTimeout(t); }
+}
+
+async function speakerWatchTick() {
+  if (speakerWatchBusy) return;
+  speakerWatchBusy = true;
+  try {
+    const displays = screen.getAllDisplays();
+    const maxW = Math.max(...displays.map((d) => Math.round(d.bounds.width * (d.scaleFactor || 1))));
+    const maxH = Math.max(...displays.map((d) => Math.round(d.bounds.height * (d.scaleFactor || 1))));
+    // A capture that never returns (a permission picker left open) must not
+    // stall the watcher silently.
+    const sources = await Promise.race([
+      desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: maxW, height: maxH } }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('screen read timed out after 5 s')), 5000)),
+    ]);
+    speakerWatchTimeouts = 0;
+    let best = null;
+    for (const src of sources) {
+      const img = src.thumbnail;
+      const { width, height } = img.getSize();
+      if (!width || !height) continue;
+      const det = detectActiveTile({ width, height, data: img.toBitmap(), channels: 4, bgr: true });
+      if (det && (!best || det.tile.w * det.tile.h > best.det.tile.w * best.det.tile.h)) best = { det, img, id: src.display_id };
+    }
+    const t = Date.now();
+    if (speakerWatchFirst) {
+      speakerWatchFirst = false;
+      const sizes = sources.map((x) => { const z = x.thumbnail.getSize(); return z.width + 'x' + z.height; }).join(', ');
+      appendLogLine(`[speakers] first screen read: ${sources.length} display(s) ${sizes}; highlight: ${best ? best.det.platform : 'none'}`);
+    }
+    if (!best) { speakerTracker.observe(t, null); return; }
+    // Displays share one detection key space, so prefix the platform with the display.
+    const det = { ...best.det, platform: best.det.platform + '@' + best.id };
+    const l = best.det.label;
+    speakerTracker.observe(t, det, () => best.img.crop({ x: l.x, y: l.y, width: l.w, height: l.h }).toPNG());
+  } catch (e) {
+    appendLogLine('[speakers] ' + e.message);
+    if (/timed out/.test(e.message) && ++speakerWatchTimeouts >= 3) {
+      appendLogLine('[speakers] screen capture is not answering; speaker names are off until transcription restarts');
+      stopSpeakerWatch();
+    }
+  } finally {
+    speakerWatchBusy = false;
+  }
+}
+
+function startSpeakerWatch() {
+  if (speakerWatchTimer) return;
+  macScreenPermissionWarn();
+  speakerTracker.reset();
+  speakerWatchFirst = true;
+  speakerWatchTimeouts = 0;
+  speakerWatchTimer = setInterval(speakerWatchTick, SPEAKER_WATCH_MS);
+  speakerWatchTick();
+}
+
+function stopSpeakerWatch() {
+  if (speakerWatchTimer) clearInterval(speakerWatchTimer);
+  speakerWatchTimer = null;
+}
+
+// Deepgram timestamps count from the start of each connection.
+let deepgramT0 = 0;
+
+// window: [t0, t1] wall-clock ms the words were spoken, when known. voice:
+// Deepgram's diarized speaker id, the fallback when nobody's tile is framed.
+// Only finals teach the voice-to-name map; interims would count twice.
+// The platforms move their frame about 1 s after the voice changes (measured
+// on the sample recordings with scripts/test-speaker-names.js --lags), so the
+// frame that belongs to an utterance is the one 1 s later.
+const SCREEN_LAG_MS = 1000;
+function transcriptWho(window, isFinal, voice) {
+  const w = window && [window[0] + SCREEN_LAG_MS, window[1] + SCREEN_LAG_MS];
+  const named = !w ? null
+    : isFinal ? speakerTracker.whoSpoke(w[0], w[1], voice)
+    : speakerTracker.nameAt(w[0], w[1]);
+  return named || (!isFinal && speakerTracker.lastName()) || 'Interviewer';
+}
+
+// The speaker id most of the words carry.
+function dominantVoice(words) {
+  const n = new Map();
+  for (const w of words || []) if (Number.isInteger(w.speaker)) n.set(w.speaker, (n.get(w.speaker) || 0) + 1);
+  return n.size ? [...n.entries()].sort((a, b) => b[1] - a[1])[0][0] : undefined;
+}
+
+function parseTranscriptAlternative(alt, window, isFinal) {
   const transcript = String((alt && alt.transcript) || '').trim();
   const words = (alt && alt.words) || [];
   const text = transcript || words.map((w) => w.punctuated_word || w.word || '').join(' ').replace(/\s+/g, ' ').trim();
   if (!text) return { text: '', labeled: '', speaker: 0, turns: [] };
-  const who = defaultTranscriptWho();
+  const who = transcriptWho(window, isFinal, dominantVoice(words));
   return { text, labeled: who + ': ' + text, speaker: 0, turns: [{ speaker: 0, who, text }] };
 }
 
@@ -2074,6 +2194,7 @@ function startDeepgramWs(apiKey, language) {
     // VAD + utterance-end events for smoother, more natural finalization.
     vad_events: 'true', endpointing: '150', no_delay: 'true', utterance_end_ms: '1500',
     punctuate: 'true',
+    diarize: 'true',
   });
   params.set('model', 'nova-2');
   params.set('language', (language && language !== 'auto') ? language : 'en-US');
@@ -2084,6 +2205,7 @@ function startDeepgramWs(apiKey, language) {
   let handshakeFailed = false;
   deepgramWs.on('open', () => {
     appendLogLine('[deepgram] connected');
+    deepgramT0 = Date.now();
     deepgramReconnectAttempts = 0;
     // Periodic KeepAlive so Deepgram doesn't idle-close the socket during brief
     // silences or throttle gaps (it drops connections after ~10s of no audio).
@@ -2103,7 +2225,9 @@ function startDeepgramWs(apiKey, language) {
         return;
       }
       if (msg.type !== 'Results') return;
-      const parsed = parseTranscriptAlternative(msg.channel?.alternatives?.[0]);
+      const window = Number.isFinite(msg.start) && Number.isFinite(msg.duration)
+        ? [deepgramT0 + msg.start * 1000, deepgramT0 + (msg.start + msg.duration) * 1000] : null;
+      const parsed = parseTranscriptAlternative(msg.channel?.alternatives?.[0], window, !!msg.is_final);
       if (!parsed.text) return;
       if (msg.is_final) sessionLog.push({ ts: Date.now(), kind: 'voice', text: parsed.labeled || parsed.text });
       if (win && !win.isDestroyed()) {
@@ -2237,7 +2361,7 @@ function startXaiWs(apiKey, language) {
         const parsed = parseTranscriptAlternative({
           transcript: msg.text || msg.transcript,
           words: msg.words || (msg.channel && msg.channel.alternatives && msg.channel.alternatives[0] && msg.channel.alternatives[0].words),
-        });
+        }, [Date.now() - 4000, Date.now()], isFinal);
         if (parsed.text) {
           if (isFinal) sessionLog.push({ ts: Date.now(), kind: 'voice', text: parsed.labeled || parsed.text });
           if (win && !win.isDestroyed()) {
@@ -2285,6 +2409,7 @@ function startXaiWs(apiKey, language) {
 
 ipcMain.handle('start-xai-stream', (_e, { apiKey, language }) => {
   xaiActive = true;
+  startSpeakerWatch();
   xaiAuth = { apiKey, language };
   xaiReconnectAttempts = 0;
   clearXaiTimers();
@@ -2292,6 +2417,7 @@ ipcMain.handle('start-xai-stream', (_e, { apiKey, language }) => {
 });
 ipcMain.handle('stop-xai-stream', () => {
   xaiActive = false;
+  stopSpeakerWatch();
   clearXaiTimers();
   if (xaiWs) {
     try { xaiWs.send(JSON.stringify({ type: 'audio.done' })); } catch {}
@@ -2303,6 +2429,7 @@ ipcMain.handle('stop-xai-stream', () => {
 
 ipcMain.handle('start-deepgram-stream', (_e, { apiKey, language }) => {
   deepgramActive = true;
+  startSpeakerWatch();
   deepgramAuth = { apiKey, language };
   deepgramReconnectAttempts = 0;
   clearDeepgramTimers();
@@ -2310,6 +2437,7 @@ ipcMain.handle('start-deepgram-stream', (_e, { apiKey, language }) => {
 });
 ipcMain.handle('stop-deepgram-stream', () => {
   deepgramActive = false;        // prevents the close handler from reconnecting
+  stopSpeakerWatch();
   clearDeepgramTimers();
   if (deepgramWs) {
     try { deepgramWs.send(JSON.stringify({ type: 'CloseStream' })); } catch {}
