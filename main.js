@@ -2157,10 +2157,15 @@ let deepgramT0 = 0;
 // window: [t0, t1] wall-clock ms the words were spoken, when known. voice:
 // Deepgram's diarized speaker id, the fallback when nobody's tile is framed.
 // Only finals teach the voice-to-name map; interims would count twice.
+// The platforms move their frame about 1 s after the voice changes (measured
+// on the sample recordings with scripts/test-speaker-names.js --lags), so the
+// frame that belongs to an utterance is the one 1 s later.
+const SCREEN_LAG_MS = 1000;
 function transcriptWho(window, isFinal, voice) {
-  const named = !window ? null
-    : isFinal ? speakerTracker.whoSpoke(window[0], window[1], voice)
-    : speakerTracker.nameAt(window[0], window[1]);
+  const w = window && [window[0] + SCREEN_LAG_MS, window[1] + SCREEN_LAG_MS];
+  const named = !w ? null
+    : isFinal ? speakerTracker.whoSpoke(w[0], w[1], voice)
+    : speakerTracker.nameAt(w[0], w[1]);
   return named || (!isFinal && speakerTracker.lastName()) || 'Interviewer';
 }
 

@@ -2,6 +2,8 @@
 // own speaker-detect and speaker-tracker.
 //
 //   node scripts/test-speaker-names.js <video> [--from 0] [--seconds 300] [--fps 2] [--out dir]
+//     [--lag 1000]              delay between speech and the platform's frame
+//     [--lags 0,500,1000]       compare delays against Deepgram's voice split
 //
 // Env:
 //   FFMPEG            ffmpeg binary (required)
@@ -89,8 +91,25 @@ async function main() {
   const { frames, hits, timeline } = await scanFrames(tracker);
   console.log(`${path.basename(video)}  ${frames} frames at ${FPS} fps, highlight found in ${hits} (${(100 * hits / frames).toFixed(0)}%)\n`);
   if (process.env.DEEPGRAM_KEY) {
-    for (const u of await transcribe()) {
-      const who = tracker.whoSpoke(u.start * 1000, u.end * 1000, u.speaker) || 'Interviewer';
+    const utterances = await transcribe();
+    fs.writeFileSync(path.join(OUT, 'utterances.json'), JSON.stringify(utterances));
+    // How well the framed names agree with Deepgram's own voice split, for a
+    // range of assumed delays between speech and the platform's frame. Each
+    // voice's name is the one it gets most often; agreement is weighted by
+    // duration. Diarization makes its own mistakes, so this ranks delays
+    // rather than scoring accuracy.
+    for (const lag of (opt('lags', '') || '').split(',').filter(Boolean).map(Number)) {
+      const rows = utterances.map((u) => ({ v: u.speaker, d: u.end - u.start, n: tracker.nameAt(u.start * 1000 + lag, u.end * 1000 + lag) }));
+      const byVoice = new Map();
+      for (const r of rows) if (r.n) { const m = byVoice.get(r.v) || new Map(); m.set(r.n, (m.get(r.n) || 0) + r.d); byVoice.set(r.v, m); }
+      const top = new Map([...byVoice].map(([v, m]) => [v, [...m].sort((a, b) => b[1] - a[1])[0][0]]));
+      let agree = 0, total = 0;
+      for (const r of rows) if (r.n) { total += r.d; if (top.get(r.v) === r.n) agree += r.d; }
+      console.log(`lag ${String(lag).padStart(5)} ms: named ${rows.filter((r) => r.n).length}/${rows.length}, agrees with voice split ${(100 * agree / total).toFixed(1)}%`);
+    }
+    const lag = Number(opt('lag', 1000)); // the app's SCREEN_LAG_MS
+    for (const u of utterances) {
+      const who = tracker.whoSpoke(u.start * 1000 + lag, u.end * 1000 + lag, u.speaker) || 'Interviewer';
       console.log(`[${fmt(FROM * 1000 + u.start * 1000)}] (dg speaker ${u.speaker}) ${who}: ${u.transcript}`);
     }
     return;
