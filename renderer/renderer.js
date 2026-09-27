@@ -2108,16 +2108,26 @@ function applyMeetLine(who, text, speakerId, isFinal) {
     lastMeetEl = el;
   } else {
     const lines = bubbleLines(el);
-    const last = lines[lines.length - 1];
+    let last = lines[lines.length - 1];
+    if (last && last.who !== who) {
+      // Someone else starts. The previous line's live tail is dropped, not
+      // committed: an interim is contained in the final that follows it, so
+      // committing it here would show the words twice. An interim can also be
+      // named before the screen read settles and its final named differently;
+      // a line left with no words goes, and its predecessor may be this speaker.
+      if (last.live) { last.live = ""; syncLine(last); }
+      if (!last.text.trim()) {
+        last.rowEl.remove();
+        last.turn.text = "";
+        lines.pop();
+        last = lines[lines.length - 1];
+      }
+    }
     if (last && last.who === who) {
       if (isFinal) { last.text = joinSpeech(last.text, text); last.live = ""; }
       else last.live = text;
       syncLine(last);
     } else {
-      // Someone else starts. The previous line's live tail is dropped, not
-      // committed: an interim is contained in the final that follows it, so
-      // committing it here would show the words twice.
-      if (last && last.live) { last.live = ""; syncLine(last); }
       appendLine(el, who, isFinal ? text : "", isFinal ? "" : text);
       speakerChanged = !!last;
     }
@@ -2140,7 +2150,8 @@ function streamSegment(text, isFinal, speakerId, turns) {
     : speakerLineBlock(text).split("\n").filter(Boolean).map((ln) => ({ text: ln.replace(/^Interviewer:\s*/i, "") }));
   if (!rows.length) return;
   const body = rows.map((r) => String(r.text || "").trim()).filter(Boolean).join(" ");
-  if (body) applyMeetLine("Interviewer", body, 0, isFinal);
+  // Main names the line after whoever the meeting screen framed as speaking.
+  if (body) applyMeetLine(rows[0].who || "Interviewer", body, 0, isFinal);
 }
 
 // Coalesce the stream of interim hypotheses to a steady ~12fps so the input
@@ -2181,7 +2192,7 @@ window.api.onTranscriptLive((payload) => {
     pendingInterim = null;
     streamSegment(pack.display, true, pack.speaker, pack.turns);
     clearInterimPreview();
-    if (payload && payload.text) pushScript("Interviewer", payload.text);
+    if (payload && payload.text) pushScript((payload.turns && payload.turns[0] && payload.turns[0].who) || "Interviewer", payload.text);
     log(display.replace(/\n/g, " · "));
   } else {
     pendingInterim = pack;
