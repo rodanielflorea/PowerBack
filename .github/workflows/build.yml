@@ -5,6 +5,9 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# Installers go to the public ace-releases repo, where installed copies look
+# for updates. Needs the RELEASES_TOKEN secret: a token with Contents
+# read/write on rodanielflorea/ace-releases.
 # electron-builder publishes the installers to a GitHub release on tag
 # builds; the default GITHUB_TOKEN is read-only, so grant release write.
 permissions:
@@ -28,7 +31,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci
+      - run: npm install --no-audit --no-fund
       - run: npm run icon
 
       # Built-in provider keys: the committed defaults/api-keys.json is empty on
@@ -46,7 +49,7 @@ jobs:
         if: matrix.os != 'macos-latest'
         run: npx electron-builder ${{ matrix.args }} --publish always
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       # macOS: universal (x86_64 + arm64) .dmg + .zip.
@@ -83,7 +86,7 @@ jobs:
           HARDENED=false; [ -n "$CSC_LINK" ] && HARDENED=true
           npx electron-builder --mac -c.mac.hardenedRuntime=$HARDENED --publish always
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}

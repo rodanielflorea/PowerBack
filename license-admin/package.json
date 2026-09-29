@@ -1,7 +1,7 @@
 {
   "name": "ace-license-admin",
   "version": "1.0.0",
-  "description": "License generator for RemoteDevJobAce (admin only — never distribute)",
+  "description": "License generator for Ace (admin only — never distribute)",
   "main": "main.js",
   "scripts": {
     "start": "cd .. && npx electron license-admin",
