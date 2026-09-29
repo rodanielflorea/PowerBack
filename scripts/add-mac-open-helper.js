@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Adds OPEN.command + MAC-README.txt next to RemoteDevJobAce.app inside
+// Adds OPEN.command + MAC-README.txt next to Ace.app inside
 // macOS zip artifacts so testers can bypass Gatekeeper without Terminal.
 const { spawnSync } = require('child_process');
 const fs = require('fs');
@@ -60,7 +60,7 @@ print('patched', zip_path)
 
 function isMacZip(p) {
   const n = path.basename(p);
-  return /\.zip$/i.test(n) && /RemoteDevJobAce/i.test(n);
+  return /\.zip$/i.test(n) && /^Ace-/i.test(n);
 }
 
 async function run(artifactPaths) {

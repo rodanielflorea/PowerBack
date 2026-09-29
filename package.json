@@ -1,6 +1,6 @@
 {
-  "name": "RemoteDevJobAce",
-  "version": "2.3.0",
+  "name": "ace",
+  "version": "2.4.0",
   "description": "Answer Coaching Engine",
   "main": "main.js",
   "scripts": {
@@ -18,7 +18,7 @@
   },
   "build": {
     "appId": "com.stealthsupport.app",
-    "productName": "RemoteDevJobAce",
+    "productName": "Ace",
     "files": [
       "main.js",
       "llm-providers.js",
@@ -44,7 +44,8 @@
       {
         "provider": "github",
         "owner": "rodanielflorea",
-        "repo": "PowerBack"
+        "repo": "ace-releases",
+        "releaseType": "release"
       }
     ],
     "win": {
@@ -108,10 +109,10 @@
       "type": "distribution",
       "minimumSystemVersion": "12.0",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "RemoteDevJobAce listens to your interview call to transcribe it.",
-        "NSAppleEventsUsageDescription": "RemoteDevJobAce types answers and pastes text into other apps for you.",
-        "NSScreenCaptureUsageDescription": "RemoteDevJobAce captures the screen for screenshots, area snips and the recording.",
-        "NSAudioCaptureUsageDescription": "RemoteDevJobAce captures the audio of your interview call to transcribe it."
+        "NSMicrophoneUsageDescription": "Ace listens to your interview call to transcribe it.",
+        "NSAppleEventsUsageDescription": "Ace types answers and pastes text into other apps for you.",
+        "NSScreenCaptureUsageDescription": "Ace captures the screen for screenshots, area snips and the recording.",
+        "NSAudioCaptureUsageDescription": "Ace captures the audio of your interview call to transcribe it."
       },
       "hardenedRuntime": false,
       "entitlements": "build/entitlements.mac.plist",
@@ -151,7 +152,7 @@
       "oneClick": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "RemoteDevJobAce",
+      "shortcutName": "Ace",
       "runAfterFinish": true
     },
     "afterSign": "scripts/mac-adhoc-sign.js",

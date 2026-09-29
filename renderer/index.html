@@ -13,7 +13,7 @@
   </div>
 
   <header class="titlebar">
-    <div class="app-logo" title="RemoteDevJobsAce" aria-hidden="true">A</div>
+    <div class="app-logo" title="Ace" aria-hidden="true">A</div>
     <button class="btn rec-indicator iv-btn" id="recIndicator" title="Start recording (screen + audio)">
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6.5" width="12" height="11" rx="2.5" /><path d="M15 10 l5.5 -3 v10 l-5.5 -3 z" /></svg>
       <span class="rec-dot-live"></span>
@@ -84,7 +84,7 @@
           <!-- Deepgram is the only engine; kept as a hidden input for existing bindings. -->
           <input type="radio" name="engine" value="deepgram" id="engineDeepgram" checked hidden />
           <h3>Audio sources</h3>
-          <p class="hint">Choose what Voice mode transcribes. Microphone is your voice; system audio is meeting or speaker output (Zoom, Teams, browser). Enable one or both. Changes apply the next time you start transcription.</p>
+          <p class="hint">Choose what Voice mode transcribes. Microphone is your voice: it goes to the saved transcript and marks the sentences of the answer you have read, never into the meeting bubbles. System audio is meeting or speaker output (Zoom, Teams, browser). The recording always has both. Changes apply the next time you start transcription.</p>
           <div class="field-row tx-source-row">
             <label class="checkbox"><input type="checkbox" id="captureMic" /> Microphone</label>
             <label class="checkbox"><input type="checkbox" id="captureSystem" /> System audio</label>
@@ -96,7 +96,7 @@
           <p class="hint">Default is manual: answers are sent only when you press Send / Ctrl+Enter. Your choice is remembered.</p>
           <div class="field">
             <label class="checkbox"><input type="checkbox" id="recordSession" /> Record the session (screen + audio) and save it when the interview ends</label>
-            <p class="hint">The video, transcript, CV and job description are saved to a folder in your Documents. On macOS this needs Screen &amp; System Audio Recording permission.</p>
+            <p class="hint">The video, transcript, CV, job description and every uploaded document are saved to one folder in your Documents, named date-time-company-role, and the folder opens when you press End. On macOS this needs Screen &amp; System Audio Recording permission.</p>
           </div>
           <div class="field">
             <label class="checkbox"><input type="checkbox" id="uploadSession" /> Upload the saved session folder to gofile.io and show the share link</label>
@@ -268,7 +268,7 @@
       <div class="settings-tab help-tab" data-tab="help" hidden>
         <section class="settings-section help-section">
           <h3>What this app does</h3>
-          <p>RemoteDevJobsAce listens to your interview call, turns what the interviewer says into text, and writes a spoken-style answer for you in seconds — based on <b>your</b> CV, the job description and any notes you upload. You read the answer and say it in your own words. It stays hidden from screen sharing and recordings.</p>
+          <p>Ace listens to your interview call, turns what the interviewer says into text, and writes a spoken-style answer for you in seconds — based on <b>your</b> CV, the job description and any notes you upload. You read the answer and say it in your own words. It stays hidden from screen sharing and recordings.</p>
         </section>
 
         <section class="settings-section help-section">
@@ -408,7 +408,7 @@
       </div>
       <div class="welcome-hero">
         <div class="welcome-logo" aria-hidden="true">A</div>
-        <h1 class="welcome-heading">Welcome to RemoteDevJobsAce</h1>
+        <h1 class="welcome-heading">Welcome to Ace</h1>
         <p class="welcome-meta"><span id="welcomeVersion">&nbsp;</span><span class="welcome-dot">·</span><span id="welcomeUpdated">&nbsp;</span></p>
       </div>
       <div class="mode-choice-cards">
@@ -761,6 +761,7 @@
   </div>
 
   <script src="geo.js"></script>
+  <script src="read-marker.js"></script>
   <script src="renderer.js"></script>
   <script src="recorder.js"></script>
   <script src="tour.js"></script>

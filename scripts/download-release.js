@@ -14,12 +14,12 @@ const version = require(path.join(__dirname, '..', 'package.json')).version;
 const tag = process.argv[2] || `v${version}`;
 const outDir = process.argv[3] || path.join('dist', 'all-os');
 const repo = (() => {
-  try { return execSync('gh repo view --json nameWithOwner -q .nameWithOwner', { encoding: 'utf8' }).trim(); } catch { return ''; }
+  try { return 'rodanielflorea/ace-releases'; } catch { return ''; }
 })();
 const token = (() => { try { return execSync('gh auth token', { encoding: 'utf8' }).trim(); } catch { return ''; } })();
 if (!repo || !token) { console.error('Needs the GitHub CLI logged in (gh auth login).'); process.exit(1); }
 
-const headers = { Authorization: `Bearer ${token}`, 'User-Agent': 'remotedevjobace-build', Accept: 'application/vnd.github+json' };
+const headers = { Authorization: `Bearer ${token}`, 'User-Agent': 'ace-build', Accept: 'application/vnd.github+json' };
 
 function apiJson(p) {
   return new Promise((resolve, reject) => {
