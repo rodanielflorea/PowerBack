@@ -6,6 +6,57 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
+
+// ── One instance at a time ───────────────────────────────────────────────────
+// Asked for before anything else in this file runs, so that a second start
+// touches nothing: no settings, no licence file, no recording, no hotkeys. The
+// lock belongs to the data folder, not to the file that was started: a renamed
+// copy, a copy in another folder, the portable exe and a development run are
+// all the same app. A test that needs an instance of its own starts with
+// --user-data-dir=<folder>.
+const BY_GUARDIAN = process.argv.includes('--by-guardian');
+const DEV_RUN = !app.isPackaged;
+if (!app.requestSingleInstanceLock({ guardian: BY_GUARDIAN, dev: DEV_RUN })) {
+  console.log('Ace is already running: this start was handed over to it.' +
+    (DEV_RUN ? ' For an instance of its own: npx electron . --user-data-dir=<empty folder>' : ''));
+  const dataDir = app.getPath('userData');
+  const read = (name) => { try { return fs.readFileSync(path.join(dataDir, name), 'utf8').trim(); } catch { return ''; } };
+  // The portable launcher deletes its unpacked files as soon as the app it
+  // started ends, and every start of the same portable file unpacks into the
+  // same folder. If the running copy uses those files, leaving now would pull
+  // them from under it, so this one waits, without a window, until the
+  // running copy has ended. (The guardian has no launcher behind it.)
+  const sharesFiles = process.platform === 'win32' && !!process.env.PORTABLE_EXECUTABLE_FILE && !BY_GUARDIAN &&
+    read('app.path').toLowerCase() === process.execPath.toLowerCase();
+  if (sharesFiles) {
+    setInterval(() => {
+      const pid = parseInt(read('app.pid'), 10) || 0;
+      let alive = false;
+      try { process.kill(pid, 0); alive = pid > 0; } catch (e) { alive = e.code === 'EPERM'; }
+      // the lock file is gone as soon as the copy that holds the lock has ended;
+      // no number in app.pid (read in the middle of a rewrite) says nothing
+      if ((pid > 0 && !alive) || !fs.existsSync(path.join(dataDir, 'lockfile'))) app.exit(0);
+    }, 2000);
+  } else {
+    // exit, not quit: quit would run the handlers that tell the running copy's
+    // guardian to stand down, and 'ready' would still fire afterwards.
+    app.exit(0);
+  }
+  return; // nothing below belongs to a second start
+}
+// The guardian starts the app when the process named in app.pid is gone. The
+// file is claimed now, so it does not start a copy while this one is still
+// starting or is waiting at the licence window. app.path says which file this
+// copy runs from, for a second start of the portable exe (above).
+function claimAppPid() {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
+  try {
+    fs.writeFileSync(path.join(app.getPath('userData'), 'app.pid'), String(process.pid));
+    fs.writeFileSync(path.join(app.getPath('userData'), 'app.path'), process.execPath);
+  } catch {}
+}
+claimAppPid();
+
 const WebSocket = require('ws');
 const {
   PROVIDERS, getProvider, providerList,
@@ -441,6 +492,9 @@ function createWindow() {
     stopSpeakerWatch();
     win = null;
     if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.close(); } catch {} }
+    // A window left behind would keep the app, and with it the one-instance
+    // lock, alive without a main window: no start would bring Ace back.
+    closeInfoWindow();
   });
 }
 
@@ -1398,17 +1452,26 @@ function stopSignalingServer() {
 function ensureFirewallRule(port, force) {
   if (process.platform !== 'win32') return;
   const exePath = process.execPath;
-  // Skip if already configured for this exe + port (unless forced via the button)
+  // Skip if already configured for this port (unless forced). The port rule
+  // lets the signalling connection in and does not name the exe, so a new
+  // install folder or exe name is no reason to ask for administrator rights
+  // at the start of a session. After an update that moved or renamed the exe,
+  // the rule that names the exe therefore stays on the old file until the
+  // port changes or a rewrite is forced.
   const tag = `${exePath}|${port}`;
-  if (!force && state.network.firewallConfiguredFor === tag) return;
+  const donePort = String(state.network.firewallConfiguredFor || '').split('|').pop();
+  if (!force && donePort === String(port)) return;
   // Write the netsh commands into a temp .ps1, then run it elevated — avoids nested quoting issues.
-  const ps1 = path.join(os.tmpdir(), `stealth-fw-${Date.now()}.ps1`);
+  const ps1 = path.join(os.tmpdir(), `ace-fw-${Date.now()}.ps1`);
   const script = [
     `$ErrorActionPreference='SilentlyContinue'`,
+    // the rules of versions up to 2.4.1, under the name the app had then
     `netsh advfirewall firewall delete rule name="Stealth Support" | Out-Null`,
     `netsh advfirewall firewall delete rule name="Stealth Support Port" | Out-Null`,
-    `netsh advfirewall firewall add rule name="Stealth Support" dir=in action=allow program="${exePath}" enable=yes profile=any | Out-Null`,
-    `netsh advfirewall firewall add rule name="Stealth Support Port" dir=in action=allow protocol=TCP localport=${port} enable=yes profile=any | Out-Null`,
+    `netsh advfirewall firewall delete rule name="Ace" | Out-Null`,
+    `netsh advfirewall firewall delete rule name="Ace Port" | Out-Null`,
+    `netsh advfirewall firewall add rule name="Ace" dir=in action=allow program="${exePath}" enable=yes profile=any | Out-Null`,
+    `netsh advfirewall firewall add rule name="Ace Port" dir=in action=allow protocol=TCP localport=${port} enable=yes profile=any | Out-Null`,
   ].join('\r\n');
   try {
     fs.writeFileSync(ps1, script, 'utf8');
@@ -1640,13 +1703,24 @@ function registerHotkeys() {
   if (win) win.webContents.send('hotkeys-changed', { current: { ...state.hotkeys }, failures: { ...hotkeyFailures } });
 }
 
-// ── Automatic updates ────────────────────────────────────────────────────────
+// ── Updates ──────────────────────────────────────────────────────────────────
 // The installed app (the -setup.exe on Windows, the AppImage on Linux, the
-// signed app on macOS) looks for a newer release when it starts and every few
-// hours after, downloads it in the background and installs it the next time
-// the app is closed; "Restart to install" in Settings does it at once. The
-// portable .exe has no installation to update and is left alone.
+// signed app on macOS) looks for a newer release as soon as its window is up,
+// and the user is asked. "Update" downloads the release and shows how far it
+// is, then the app closes, the installer shows its own progress and starts the
+// app again. "Later" changes nothing in this run and the question comes back
+// at the next start. Nothing is downloaded or installed without that answer.
+// The portable .exe has no installation to update and is left alone.
 const UPDATE_CHECK_MS = 3 * 60 * 60 * 1000;
+let updateReady = false;      // an update is downloaded and waits to be installed
+let updateOffer = null;       // { version, current, platform }: asked, not answered yet
+let updateVersion = '';       // the version that is being downloaded or installed
+let updateDeclined = false;   // "Later" in this run
+let updateBusy = false;       // downloading or about to install
+let updateCancel = null;      // stops a running download
+let updateInstallTimer = null; // between the end of the download and the start of the installer
+let updateAsked = false;      // the running check was started by hand: ask even after "Later"
+let updateQuiet = false;      // the running check is the 3-hour one: never opens the question
 function canAutoUpdate() {
   return !!autoUpdater && app.isPackaged && !process.env.PORTABLE_EXECUTABLE_FILE;
 }
@@ -1654,30 +1728,170 @@ function updaterStatus(s) {
   appendLogLine('[update] ' + s.state + (s.version ? ' v' + s.version : '') + (s.message ? ': ' + s.message : ''));
   if (win && !win.isDestroyed()) win.webContents.send('updater-status', s);
 }
+// A session runs from "Start" to "End": the signalling server is up for that
+// time, also while listening is paused or not used. A recording counts too.
+function inSession() { return deepgramActive || xaiActive || micDgActive || !!wsServer || recStreams.size > 0; }
+// What a window that has just loaded needs to know: the open question, or
+// that a download is on its way.
+function sendUpdateState() {
+  if (!win || win.isDestroyed() || win.webContents.isLoading()) return;
+  if (updateOffer) win.webContents.send('update-offer', updateOffer);
+  else if (updateBusy) win.webContents.send('updater-status', { state: updateReady ? 'downloaded' : 'resumed', version: updateVersion, busy: true });
+}
 function setupAutoUpdater() {
   if (!autoUpdater) return;
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.logger = null;
+  // same network rule as the app's own requests: no search for a proxy first
+  try { autoUpdater.netSession.setProxy({ mode: 'direct' }).catch(() => {}); } catch {}
   autoUpdater.on('checking-for-update', () => updaterStatus({ state: 'checking' }));
-  autoUpdater.on('update-available', (info) => updaterStatus({ state: 'available', version: info?.version }));
-  autoUpdater.on('update-not-available', () => updaterStatus({ state: 'up-to-date' }));
-  autoUpdater.on('download-progress', (p) => {
-    if (win && !win.isDestroyed()) win.webContents.send('updater-status', { state: 'downloading', percent: Math.round(p.percent || 0) });
+  autoUpdater.on('update-available', (info) => {
+    updaterStatus({ state: 'available', version: info?.version });
+    const byHand = updateAsked, quiet = updateQuiet;
+    updateAsked = false;
+    updateQuiet = false;
+    if (updateBusy || updateOffer) return;
+    // Asked at the start and when the user looks for an update himself: never
+    // in the middle of an interview, and once per run.
+    if (!byHand && (quiet || updateDeclined || inSession())) return;
+    updateOffer = { version: String(info?.version || ''), current: app.getVersion(), platform: process.platform };
+    sendUpdateState();
   });
-  autoUpdater.on('update-downloaded', (info) => updaterStatus({ state: 'downloaded', version: info?.version }));
-  autoUpdater.on('error', (err) => updaterStatus({ state: 'error', message: String(err?.message || err).split('\n')[0].slice(0, 300) }));
+  autoUpdater.on('update-not-available', () => { updateAsked = false; updateQuiet = false; updaterStatus({ state: 'up-to-date' }); });
+  autoUpdater.on('download-progress', (p) => {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('updater-status', {
+        state: 'downloading', percent: Math.round(p.percent || 0),
+        transferred: p.transferred || 0, total: p.total || 0,
+      });
+    }
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    updateReady = true;
+    updaterStatus({ state: 'downloaded', version: info?.version, busy: updateBusy });
+    if (!updateBusy) return;
+    // The window says "installing" for a moment, then the installer takes
+    // over with a progress window of its own and starts the app again.
+    updateInstallTimer = setTimeout(() => {
+      updateInstallTimer = null;
+      if (installDownloadedUpdate(false)) return;
+      updateBusy = false;
+      updaterStatus({ state: 'error', message: 'the installer could not be started' });
+    }, 1500);
+  });
+  autoUpdater.on('error', (err, text) => {
+    updateAsked = false;
+    updateQuiet = false;
+    const message = String(err?.message || err).split('\n')[0].slice(0, 300);
+    // a check that failed says nothing about a download that is running
+    if (updateBusy && String(text || '').startsWith('Cannot check for updates')) {
+      appendLogLine('[update] check failed during the download: ' + message);
+      return;
+    }
+    // The file is complete and checked once 'update-downloaded' has come. What
+    // fails after that (the copy of the block map for the next update) does
+    // not stop the install that is about to start.
+    if (updateInstallTimer) {
+      appendLogLine('[update] error after the download: ' + message);
+      return;
+    }
+    updateBusy = false;
+    updaterStatus({ state: 'error', message });
+  });
   if (!canAutoUpdate()) return;
-  const check = () => { autoUpdater.checkForUpdates().catch(() => {}); };
-  setTimeout(check, 8000);   // after the window is up and the licence is checked
-  setInterval(check, UPDATE_CHECK_MS);
+  // No answer from the server (the network is still coming up): tried again
+  // soon, not in three hours.
+  let retries = 0, retryTimer = null;
+  const check = (fresh, quiet) => {
+    if (fresh) retries = 0;
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    if (updateBusy) return;
+    // said for every attempt: an attempt that fails takes it back
+    if (quiet) updateQuiet = true;
+    autoUpdater.checkForUpdates().then(() => { retries = 0; }).catch(() => {
+      if (retries >= 5) return;
+      retryTimer = setTimeout(() => { retryTimer = null; check(false, quiet); }, 60 * 1000 * ++retries);
+    });
+  };
+  // First thing once the window can show the question.
+  if (win && !win.isDestroyed()) {
+    if (win.webContents.isLoading()) win.webContents.once('did-finish-load', () => setTimeout(() => check(true), 1000));
+    else setTimeout(() => check(true), 1000);
+    // a window that was loaded again has lost what it showed
+    win.webContents.on('did-finish-load', () => setTimeout(sendUpdateState, 300));
+  }
+  // What the timer finds is told in Settings and asked at the next start.
+  setInterval(() => { if (!updateBusy) check(true, true); }, UPDATE_CHECK_MS);
 }
+
+// Closes the app and runs the installer of the downloaded update, which starts
+// the app again. silent: without the installer's own progress window. Returns
+// false when the installer was not started; the app then simply keeps running.
+function installDownloadedUpdate(silent) {
+  if (!autoUpdater || !updateReady) return false;
+  // Linux: the new AppImage is started before this copy has quit, and would
+  // be turned away as a second start.
+  if (process.platform === 'linux') app.releaseSingleInstanceLock();
+  let started = false;
+  try {
+    autoUpdater.quitAndInstall(!!silent, true);
+    // It says "could not" by not quitting, never by throwing. macOS hands
+    // over to the system's updater and cannot tell.
+    started = process.platform === 'darwin' || autoUpdater.quitAndInstallCalled === true;
+  } catch {}
+  if (started) {
+    // A deliberate restart: the watchdog must not bring the old version back.
+    signalCleanQuit();
+    return true;
+  }
+  updateReady = false;
+  if (process.platform === 'linux') app.requestSingleInstanceLock({ guardian: false, dev: DEV_RUN });
+  return false;
+}
+
+ipcMain.handle('update-answer', (_e, accept) => {
+  if (!autoUpdater || !updateOffer) return false;
+  const offer = updateOffer;
+  updateOffer = null;
+  if (!accept) { updateDeclined = true; appendLogLine('[update] v' + offer.version + ' put off until the next start'); return true; }
+  updateBusy = true;
+  updateReady = false;   // a file from an earlier download says nothing about this one
+  updateVersion = offer.version;
+  appendLogLine('[update] v' + offer.version + ' accepted');
+  try {
+    // from the updater itself: its helper module is packed inside it
+    const { CancellationToken } = require('electron-updater');
+    updateCancel = new CancellationToken();
+    // A failure arrives through the 'error' event as well; a download that
+    // was cancelled is not one.
+    autoUpdater.downloadUpdate(updateCancel).catch(() => {});
+  } catch (e) {
+    updateBusy = false;
+    updateCancel = null;
+    updaterStatus({ state: 'error', message: String(e?.message || e).split('\n')[0].slice(0, 300) });
+  }
+  return true;
+});
+ipcMain.handle('update-cancel', () => {
+  if (!updateBusy) return false;
+  if (updateReady && !updateInstallTimer) return false;   // the installer has been started
+  if (updateInstallTimer) { clearTimeout(updateInstallTimer); updateInstallTimer = null; }
+  try { if (updateCancel) updateCancel.cancel(); } catch {}
+  updateCancel = null;
+  updateBusy = false;
+  updateDeclined = true;
+  appendLogLine('[update] download stopped; asked again at the next start');
+  return true;
+});
 
 ipcMain.handle('check-for-updates', async () => {
   if (!autoUpdater) return { ok: false, message: 'electron-updater not installed' };
   if (process.env.PORTABLE_EXECUTABLE_FILE) return { ok: false, message: 'this is the portable copy; install Ace with the setup file to get automatic updates' };
   if (!app.isPackaged) return { ok: false, message: 'updates apply to the installed app, not a development run' };
+  if (updateBusy) return { ok: false, message: 'an update is being installed' };
   try {
+    updateAsked = true;
     const r = await autoUpdater.checkForUpdates();
     return { ok: true, version: r?.updateInfo?.version };
   } catch (e) {
@@ -1685,11 +1899,7 @@ ipcMain.handle('check-for-updates', async () => {
   }
 });
 
-ipcMain.handle('install-update-now', () => {
-  if (!autoUpdater) return false;
-  // A deliberate restart: the watchdog must not bring the old version back.
-  try { signalCleanQuit(); autoUpdater.quitAndInstall(true, true); return true; } catch { return false; }
-});
+ipcMain.handle('install-update-now', () => installDownloadedUpdate(false));
 
 ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('get-app-info', () => {
@@ -1868,6 +2078,44 @@ function openLicenseWindow(reason) {
   });
 }
 
+// A second start ends up here, in the app that is already running. It shows
+// what a normal start would have shown: the licence window while the app waits
+// for a key, otherwise the main window, also when it was hidden or minimized.
+// Starting the app again is how people look for a window they cannot find:
+// it has no button in the taskbar.
+function showRunningApp() {
+  if (licenseWin && !licenseWin.isDestroyed()) {
+    if (licenseWin.isMinimized()) licenseWin.restore();
+    licenseWin.show();
+    licenseWin.focus();
+    return;
+  }
+  if (!win || win.isDestroyed()) return; // still starting: the window shows itself
+  if (win.isMinimized()) win.restore();
+  // showMain() puts the window back where it was hidden last: right for a
+  // hidden window only
+  if (isMainShown()) { try { win.focus(); } catch {} } else showMain();
+  raiseFloat();
+}
+app.on('second-instance', (_e, _argv, _cwd, data) => {
+  if (data && data.guardian) {
+    // The guardian took this app for gone, so app.pid is wrong: put it right,
+    // or it tries again every few seconds. Nobody asked for the window, so a
+    // window that was hidden on purpose stays hidden.
+    claimAppPid();
+    appendLogLine('[instance] a start by the guardian was turned away');
+    return;
+  }
+  if (data && data.dev && app.isPackaged) {
+    // A development run on the same machine: nobody asked for this window,
+    // and it may be hidden because a meeting is running.
+    appendLogLine('[instance] a development run was turned away');
+    return;
+  }
+  appendLogLine('[instance] a second start was turned away; the running app is shown');
+  showRunningApp();
+});
+
 app.whenReady().then(() => {
   const check = license.checkStoredLicense(app.getPath('userData'));
   if (check.ok) startApp();
@@ -1931,7 +2179,15 @@ const MAC_ACCESSIBILITY_HINT = 'macOS needs the Accessibility permission for thi
 
 // ── Diagnostics: one place that checks every requirement on this machine ──
 // macOS applies Accessibility / Screen Recording grants only after a relaunch.
-ipcMain.handle('relaunch-app', () => { app.relaunch(); app.exit(0); });
+ipcMain.handle('relaunch-app', () => {
+  // A deliberate restart. exit() skips the quit handlers, so the guardian is
+  // told here, or it starts a copy of its own next to the one relaunch() starts.
+  signalCleanQuit();
+  app.releaseSingleInstanceLock();
+  // Without the guardian's mark: the new copy is a start the user asked for.
+  app.relaunch({ args: process.argv.slice(1).filter((a) => a !== '--by-guardian') });
+  app.exit(0);
+});
 
 ipcMain.handle('run-diagnostics', async () => {
   const sp = require('electron').systemPreferences;

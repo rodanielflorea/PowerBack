@@ -27,13 +27,14 @@ Thumbs.db
 
 # Build output
 dist/
-build/
+build/*
 out/
 !build/icon-source.png
 !build/entitlements.mac.plist
 !build/entitlements.mac.inherit.plist
 !build/mac-open.command
 !build/MAC-README.txt
+!build/installer.nsh
 mac-audio/build/*
 !mac-audio/build/.gitkeep
 

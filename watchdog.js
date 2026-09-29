@@ -46,9 +46,22 @@ const timer = setInterval(() => {
   try { fs.writeFileSync(guardianPidFile, String(process.pid)); } catch {}
   if (relaunchGrace > 0) { relaunchGrace--; return; }
   if (!alive(readPid(appPidFile))) {
+    // Moved or uninstalled: nothing is left to guard. The app starts a new
+    // guardian, for the place it runs from now, when it finds none.
+    if (!fs.existsSync(appExe)) {
+      clearInterval(timer);
+      try { fs.unlinkSync(guardianPidFile); } catch {}
+      process.exit(0);
+    }
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
-    try { spawn(appExe, [], { detached: true, stdio: 'ignore', env }).unref(); } catch {}
+    // Marked: if the app turns out to be running after all, this start is
+    // turned away without bringing up a window that was hidden on purpose.
+    try {
+      const child = spawn(appExe, ['--by-guardian'], { detached: true, stdio: 'ignore', env });
+      child.on('error', () => {}); // an exe that is gone must not end the guardian
+      child.unref();
+    } catch {}
     relaunchGrace = 4; // ~4s for the new app to come up and rewrite app.pid
   }
 }, 1000);

@@ -2097,6 +2097,36 @@ textarea.meet-editbox {
 .modal-btn-secondary:hover { background: var(--surface); }
 .modal-btn-danger { background: var(--rec-on); color: #fff; border: 1px solid var(--rec-on); }
 .modal-btn-danger:hover { filter: brightness(1.1); }
+.modal-btn-primary {
+  -webkit-app-region: no-drag;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  font-weight: 600;
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid var(--accent);
+  transition: background var(--t) var(--ease), filter var(--t) var(--ease);
+}
+.modal-btn-primary:hover { background: var(--accent-hover); }
+.modal-btn-primary:disabled { opacity: .45; }
+.modal-btn-primary:disabled:hover { background: var(--accent); }
+.modal-icon--info { background: var(--accent-dim); color: var(--accent); }
+
+/* Update question: how far the download is */
+.update-progress-bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.update-progress-fill { height: 100%; width: 0; border-radius: 3px; background: var(--accent); transition: width .3s var(--ease); }
+/* installing: the length is not known */
+.update-progress-fill.is-unknown { width: 40%; animation: updateSlide 1.2s ease-in-out infinite; }
+@keyframes updateSlide { from { margin-left: -40%; } to { margin-left: 100%; } }
+.update-progress-text { margin-top: 6px; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Above every other layer of the page, below the header: hide, quit and
+   click-through stay within reach while the question is shown. */
+#updateModal { top: var(--header-h); z-index: 70; }
+/* fits a low window; long words wrap */
+#updateModal .modal-card { display: flex; flex-direction: column; max-height: 100%; }
+#updateModal .modal-header, #updateModal .modal-actions { flex-shrink: 0; }
+#updateModal .modal-body { overflow-y: auto; min-height: 0; overflow-wrap: anywhere; }
 
 /* ── 16. TOASTS ────────────────────────────────────────────── */
 .toast-container {
