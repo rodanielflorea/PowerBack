@@ -1397,6 +1397,7 @@ let updateVersion = "";
 let updatePlatform = "";
 let updateInstallWatch = null;
 let updateLastPercent = 0;
+let updateLastTotal = 0;
 let updateCancelled = false;   // "Cancel" was pressed: what still arrives from that download is not shown
 
 const megabytes = (n) => (n / 1048576).toFixed(n < 10485760 ? 1 : 0) + " MB";
@@ -1435,6 +1436,7 @@ function setUpdateStage(stage, info) {
     updateProgressFill.style.width = "0%";
     updateProgressText.textContent = "Starting…";
     updateLastPercent = 0;
+    updateLastTotal = 0;
   } else if (stage === "install") {
     updateModalTitle.textContent = "Installing the update";
     updateModalLead.textContent = `Ace ${updateVersion} is downloaded. Ace closes now; ` +
@@ -1518,8 +1520,10 @@ if (window.api && window.api.onUpdaterStatus) {
     } else if (s.state === "downloading" && updateStage === "download") {
       // Only the changed parts are fetched first; if that fails, the whole
       // file is, and the count starts again.
-      if (s.percent < updateLastPercent - 5) updateModalLead.textContent = `Downloading Ace ${updateVersion} as a complete file…`;
+      if (s.percent < updateLastPercent || (updateLastTotal && s.total && s.total !== updateLastTotal))
+        updateModalLead.textContent = `Downloading Ace ${updateVersion} as a complete file…`;
       updateLastPercent = s.percent;
+      if (s.total) updateLastTotal = s.total;
       updateProgressFill.style.width = s.percent + "%";
       updateProgressText.textContent = s.total
         ? `${s.percent}%  ·  ${megabytes(s.transferred)} of ${megabytes(s.total)}`

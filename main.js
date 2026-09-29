@@ -2091,10 +2091,11 @@ function showRunningApp() {
     return;
   }
   if (!win || win.isDestroyed()) return; // still starting: the window shows itself
-  if (win.isMinimized()) win.restore();
   // showMain() puts the window back where it was hidden last: right for a
   // hidden window only
-  if (isMainShown()) { try { win.focus(); } catch {} } else showMain();
+  const hidden = !win.isVisible();
+  if (win.isMinimized()) win.restore();
+  if (hidden) showMain(); else { try { win.focus(); } catch {} }
   raiseFloat();
 }
 app.on('second-instance', (_e, _argv, _cwd, data) => {
