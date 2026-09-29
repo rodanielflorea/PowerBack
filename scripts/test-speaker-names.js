@@ -16,7 +16,7 @@ const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
-const { detectActiveTile } = require('../speaker-detect');
+const { detectActiveTile, labelSignature, signatureDistance } = require('../speaker-detect');
 const { createSpeakerTracker } = require('../speaker-tracker');
 const { completeChat } = require('../llm-providers');
 
@@ -31,9 +31,9 @@ fs.mkdirSync(OUT, { recursive: true });
 async function readName(png, key) {
   if (process.env.VISION_KEY) {
     return completeChat({
-      provider: process.env.VISION_PROVIDER, apiKey: process.env.VISION_KEY, model: process.env.VISION_MODEL, maxTokens: 20,
+      provider: process.env.VISION_PROVIDER, apiKey: process.env.VISION_KEY, model: process.env.VISION_MODEL, maxTokens: 60,
       messages: [{ role: 'user', content: [
-        { type: 'text', text: 'This is the name label from a video-call participant tile. Reply with the name exactly as written and nothing else. If no name is visible, reply NONE.' },
+        { type: 'text', text: 'This is the name label from a video-call participant tile, enlarged. Reply with the whole name exactly as written and nothing else. If the label ends in "..." keep the dots. If no name is visible, reply NONE.' },
         { type: 'image_url', image_url: { url: 'data:image/png;base64,' + png.toString('base64') } },
       ] }],
     });
@@ -62,11 +62,14 @@ async function scanFrames(tracker) {
       const frame = buf.subarray(0, frameBytes);
       buf = buf.subarray(frameBytes);
       const t = (n++ / FPS) * 1000;
-      const det = detectActiveTile({ width: W, height: H, data: frame, channels: 3, bgr: false });
+      const img = { width: W, height: H, data: frame, channels: 3, bgr: false };
+      const det = detectActiveTile(img);
       if (det) hits++;
+      // Enlarged three times, as the app's screen watcher sends it.
       const crop = det && await sharp(Buffer.from(frame), { raw: { width: W, height: H, channels: 3 } })
-        .extract({ left: det.label.x, top: det.label.y, width: det.label.w, height: det.label.h }).png().toBuffer();
-      tracker.observe(t, det, crop);
+        .extract({ left: det.label.x, top: det.label.y, width: det.label.w, height: det.label.h })
+        .resize({ width: det.label.w * 3 }).png().toBuffer();
+      tracker.observe(t, det, crop, det && labelSignature(img, det.label));
       timeline.push(t);
     }
   }
@@ -87,7 +90,7 @@ async function transcribe() {
 const fmt = (ms) => { const s = Math.round(ms / 1000); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
 
 async function main() {
-  const tracker = createSpeakerTracker({ readName, keepMs: Infinity });
+  const tracker = createSpeakerTracker({ readName, keepMs: Infinity, signatureDistance });
   const { frames, hits, timeline } = await scanFrames(tracker);
   console.log(`${path.basename(video)}  ${frames} frames at ${FPS} fps, highlight found in ${hits} (${(100 * hits / frames).toFixed(0)}%)\n`);
   if (process.env.DEEPGRAM_KEY) {
@@ -109,7 +112,7 @@ async function main() {
     }
     const lag = Number(opt('lag', 1000)); // the app's SCREEN_LAG_MS
     for (const u of utterances) {
-      const who = tracker.whoSpoke(u.start * 1000 + lag, u.end * 1000 + lag, u.speaker) || 'Interviewer';
+      const who = tracker.nameAt(u.start * 1000 + lag, u.end * 1000 + lag) || 'Interviewer';
       console.log(`[${fmt(FROM * 1000 + u.start * 1000)}] (dg speaker ${u.speaker}) ${who}: ${u.transcript}`);
     }
     return;

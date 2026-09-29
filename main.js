@@ -15,7 +15,7 @@ const {
 const { createKeyInjector, pasteKeystroke } = require('./platform-input');
 const license = require('./license');
 const { uploadFolder } = require('./gofile');
-const { detectActiveTile } = require('./speaker-detect');
+const { signatureDistance } = require('./speaker-detect');
 const { createSpeakerTracker } = require('./speaker-tracker');
 let autoUpdater = null;
 try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
@@ -45,6 +45,29 @@ const LINUX_X11_SESSION = process.platform === 'linux' &&
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+
+// The app was called RemoteDevJobAce up to 2.3; its data folder followed the
+// name. On the first start as Ace, bring the settings, licence, sessions and
+// uploaded documents over, so nobody has to set the app up again.
+(function adoptOldUserData() {
+  try {
+    const dir = app.getPath('userData');
+    const old = path.join(path.dirname(dir), 'RemoteDevJobAce');
+    const done = path.join(dir, 'adopted-RemoteDevJobAce');
+    if (old === dir || fs.existsSync(done) || !fs.existsSync(path.join(old, 'state.json'))) return;
+    fs.mkdirSync(dir, { recursive: true });
+    // A folder of this name may be left from an unrelated older app: what it
+    // holds is set aside, not overwritten.
+    const aside = path.join(dir, 'before-2.4');
+    for (const name of ['state.json', 'sessions.json', 'license.json', '.updaterId', 'materials']) {
+      const from = path.join(old, name), to = path.join(dir, name);
+      if (!fs.existsSync(from)) continue;
+      if (fs.existsSync(to)) { fs.mkdirSync(aside, { recursive: true }); fs.renameSync(to, path.join(aside, name)); }
+      fs.cpSync(from, to, { recursive: true });
+    }
+    fs.writeFileSync(done, new Date().toISOString());
+  } catch {}
+})();
 
 const STATE_FILE = path.join(app.getPath('userData'), 'state.json');
 const LOG_FILE = path.join(app.getPath('userData'), 'activity.log');
@@ -229,6 +252,13 @@ function loadState() {
     state.transcription.captureMic = process.platform !== 'win32';
     state.audioDefaultsV3 = true;
   }
+  // V4: microphone on everywhere. The user's own voice has its own transcript
+  // stream: it goes to the recording, the saved transcript and the reading
+  // marker in the answer, never into the meeting bubbles.
+  if (!state.audioDefaultsV4) {
+    state.transcription.captureMic = true;
+    state.audioDefaultsV4 = true;
+  }
   applyBuiltinKeys();
   seedAvoidPhrasesIfNeeded();
   migrateProfilesIfNeeded();
@@ -408,6 +438,7 @@ function createWindow() {
   win.on('restore', () => { applyStickyState(); sendFloatState(); });
   win.on('closed', () => {
     if (floatWin && !floatWin.isDestroyed()) { try { floatWin.close(); } catch {} }
+    stopSpeakerWatch();
     win = null;
     if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.close(); } catch {} }
   });
@@ -1609,35 +1640,43 @@ function registerHotkeys() {
   if (win) win.webContents.send('hotkeys-changed', { current: { ...state.hotkeys }, failures: { ...hotkeyFailures } });
 }
 
+// ── Automatic updates ────────────────────────────────────────────────────────
+// The installed app (the -setup.exe on Windows, the AppImage on Linux, the
+// signed app on macOS) looks for a newer release when it starts and every few
+// hours after, downloads it in the background and installs it the next time
+// the app is closed; "Restart to install" in Settings does it at once. The
+// portable .exe has no installation to update and is left alone.
+const UPDATE_CHECK_MS = 3 * 60 * 60 * 1000;
+function canAutoUpdate() {
+  return !!autoUpdater && app.isPackaged && !process.env.PORTABLE_EXECUTABLE_FILE;
+}
+function updaterStatus(s) {
+  appendLogLine('[update] ' + s.state + (s.version ? ' v' + s.version : '') + (s.message ? ': ' + s.message : ''));
+  if (win && !win.isDestroyed()) win.webContents.send('updater-status', s);
+}
 function setupAutoUpdater() {
   if (!autoUpdater) return;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.on('checking-for-update', () => {
-    if (win) win.webContents.send('updater-status', { state: 'checking' });
-  });
-  autoUpdater.on('update-available', (info) => {
-    if (win) win.webContents.send('updater-status', { state: 'available', version: info?.version });
-  });
-  autoUpdater.on('update-not-available', () => {
-    if (win) win.webContents.send('updater-status', { state: 'up-to-date' });
-  });
+  autoUpdater.logger = null;
+  autoUpdater.on('checking-for-update', () => updaterStatus({ state: 'checking' }));
+  autoUpdater.on('update-available', (info) => updaterStatus({ state: 'available', version: info?.version }));
+  autoUpdater.on('update-not-available', () => updaterStatus({ state: 'up-to-date' }));
   autoUpdater.on('download-progress', (p) => {
-    if (win) win.webContents.send('updater-status', { state: 'downloading', percent: Math.round(p.percent || 0) });
+    if (win && !win.isDestroyed()) win.webContents.send('updater-status', { state: 'downloading', percent: Math.round(p.percent || 0) });
   });
-  autoUpdater.on('update-downloaded', (info) => {
-    if (win) win.webContents.send('updater-status', { state: 'downloaded', version: info?.version });
-  });
-  autoUpdater.on('error', (err) => {
-    if (win) win.webContents.send('updater-status', { state: 'error', message: err?.message || String(err) });
-  });
-  if (app.isPackaged) {
-    autoUpdater.checkForUpdatesAndNotify().catch(() => {});
-  }
+  autoUpdater.on('update-downloaded', (info) => updaterStatus({ state: 'downloaded', version: info?.version }));
+  autoUpdater.on('error', (err) => updaterStatus({ state: 'error', message: String(err?.message || err).split('\n')[0].slice(0, 300) }));
+  if (!canAutoUpdate()) return;
+  const check = () => { autoUpdater.checkForUpdates().catch(() => {}); };
+  setTimeout(check, 8000);   // after the window is up and the licence is checked
+  setInterval(check, UPDATE_CHECK_MS);
 }
 
 ipcMain.handle('check-for-updates', async () => {
   if (!autoUpdater) return { ok: false, message: 'electron-updater not installed' };
+  if (process.env.PORTABLE_EXECUTABLE_FILE) return { ok: false, message: 'this is the portable copy; install Ace with the setup file to get automatic updates' };
+  if (!app.isPackaged) return { ok: false, message: 'updates apply to the installed app, not a development run' };
   try {
     const r = await autoUpdater.checkForUpdates();
     return { ok: true, version: r?.updateInfo?.version };
@@ -1648,7 +1687,8 @@ ipcMain.handle('check-for-updates', async () => {
 
 ipcMain.handle('install-update-now', () => {
   if (!autoUpdater) return false;
-  try { autoUpdater.quitAndInstall(); return true; } catch { return false; }
+  // A deliberate restart: the watchdog must not bring the old version back.
+  try { signalCleanQuit(); autoUpdater.quitAndInstall(true, true); return true; } catch { return false; }
 });
 
 ipcMain.handle('get-app-version', () => app.getVersion());
@@ -1747,8 +1787,30 @@ function signalCleanQuit() {
 }
 app.on('before-quit', signalCleanQuit);
 
+let appIsQuitting = false;
+app.on('before-quit', () => {
+  appIsQuitting = true;
+  try { stopSpeakerWatch(); } catch {}
+  try { deepgramActive = false; xaiActive = false; micDgActive = false; clearDeepgramTimers(); clearXaiTimers(); } catch {}
+  for (const ws of [deepgramWs, xaiWs, micDgWs]) { try { if (ws) { ws.removeAllListeners(); ws.on('error', () => {}); ws.terminate(); } } catch {} }
+  for (const r of recStreams.values()) { try { r.stream.end(); } catch {} }
+});
+// An error in a timer or socket callback used to surface as Electron's
+// "A JavaScript error occurred in the main process" box, most often while the
+// app was closing. It is written to the log; the box is kept for errors that
+// happen while the app is in use.
+process.on('uncaughtException', (e) => {
+  const text = (e && (e.stack || e.message)) || String(e);
+  try { fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] [error] uncaught: ${text}\n`); } catch {}
+  if (!appIsQuitting) { try { dialog.showErrorBox('Ace', text); } catch {} }
+});
+process.on('unhandledRejection', (e) => {
+  try { fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] [error] unhandled rejection: ${(e && (e.stack || e.message)) || String(e)}\n`); } catch {}
+});
+
 function startApp() {
   startWatchdog();
+  recoverRecordings();
   // Keep the license's last-seen time moving while the app runs (10 min).
   setInterval(() => { try { license.touchStoredLicense(app.getPath('userData')); } catch {} }, 10 * 60 * 1000);
   // macOS: ask for the microphone up front so the system prompt appears once,
@@ -1865,7 +1927,7 @@ function macAccessibilityOk(prompt) {
   if (process.platform !== 'darwin') return true;
   try { return require('electron').systemPreferences.isTrustedAccessibilityClient(!!prompt); } catch { return true; }
 }
-const MAC_ACCESSIBILITY_HINT = 'macOS needs the Accessibility permission for this: System Settings → Privacy & Security → Accessibility → enable RemoteDevJobAce, then try again.';
+const MAC_ACCESSIBILITY_HINT = 'macOS needs the Accessibility permission for this: System Settings → Privacy & Security → Accessibility → enable Ace, then try again.';
 
 // ── Diagnostics: one place that checks every requirement on this machine ──
 // macOS applies Accessibility / Screen Recording grants only after a relaunch.
@@ -1882,9 +1944,9 @@ ipcMain.handle('run-diagnostics', async () => {
   add(`${ap.label} key (answers)`, !!getAnswerApiKey(ap.id), getAnswerApiKey(ap.id) ? 'built in' : 'missing', 'Rebuild with the API_KEYS_JSON secret filled in, or pick a provider that has a key.');
   if (mac) {
     const micSt = (() => { try { return sp.getMediaAccessStatus('microphone'); } catch { return 'unknown'; } })();
-    add('Microphone permission', micSt === 'granted', micSt, 'System Settings → Privacy & Security → Microphone → enable RemoteDevJobAce.');
+    add('Microphone permission', micSt === 'granted', micSt, 'System Settings → Privacy & Security → Microphone → enable Ace.');
     const scrSt = (() => { try { return sp.getMediaAccessStatus('screen'); } catch { return 'unknown'; } })();
-    add('Screen & System Audio Recording permission (call audio, screen capture)', scrSt === 'granted', scrSt, 'System Settings → Privacy & Security → Screen & System Audio Recording → enable RemoteDevJobAce, then Quit & reopen the app. If it is already enabled but still shows denied, remove the app from that list with − and add it again.');
+    add('Screen & System Audio Recording permission (call audio, screen capture)', scrSt === 'granted', scrSt, 'System Settings → Privacy & Security → Screen & System Audio Recording → enable Ace, then Quit & reopen the app. If it is already enabled but still shows denied, remove the app from that list with − and add it again.');
     const helper = macSystemAudioHelperPath();
     add('System-audio helper present', fs.existsSync(helper), fs.existsSync(helper) ? helper : 'not in this build', 'This build has no system-audio helper; use a build from GitHub Actions (macOS runner).');
     add('Accessibility permission (typing / paste into other apps)', macAccessibilityOk(false), macAccessibilityOk(false) ? 'granted' : 'not granted', MAC_ACCESSIBILITY_HINT + ' Then Quit & reopen the app. If it is already enabled but still shows not granted, remove the app from that list with − and add it again.');
@@ -1930,7 +1992,7 @@ function macScreenPermissionWarn() {
   try { st = require('electron').systemPreferences.getMediaAccessStatus('screen'); } catch {}
   if (st === 'granted') return true;
   if (win && !win.isDestroyed()) win.webContents.send('capture-error',
-    'Screen capture needs the Screen & System Audio Recording permission: System Settings → Privacy & Security → Screen & System Audio Recording → enable RemoteDevJobAce, then Quit & reopen the app (Settings → Check).');
+    'Screen capture needs the Screen & System Audio Recording permission: System Settings → Privacy & Security → Screen & System Audio Recording → enable Ace, then Quit & reopen the app (Settings → Check).');
   return false;
 }
 
@@ -2055,125 +2117,154 @@ function scheduleDeepgramReconnect() {
 }
 
 // ── Speaker names from the meeting screen ───────────────────────────────────
-// While transcription runs, every display is read twice a second. Meet, Teams
-// and Zoom frame the active speaker's tile in colour; speaker-detect finds that
-// tile, and the answer model reads the name printed in its corner once per
-// tile position. Each transcript line is then named after whoever was framed
-// while it was spoken. "Interviewer" is the fallback when nobody is framed.
-const SPEAKER_WATCH_MS = 500;
-const speakerTracker = createSpeakerTracker({ readName: readTileName, isSelf: isOwnName });
-let speakerWatchTimer = null;
-let speakerWatchBusy = false;
-let speakerWatchFirst = true;
-let speakerWatchTimeouts = 0;
+// While transcription runs, a hidden window (renderer/speaker-watch.js) holds
+// every display as a low-rate capture stream and reads it twice a second. Meet,
+// Teams and Zoom frame the active speaker's tile in colour; speaker-detect finds
+// that tile, and the answer model reads the name printed in its corner. Each
+// transcript line is then named after whoever was framed while it was spoken.
+// When nobody is framed, the speaker title of the live captions is read
+// instead. Names come from the screen only; voices are not remembered.
+// "Interviewer" is the fallback.
+const speakerTracker = createSpeakerTracker({ readName: readTileName, isSelf: isOwnName, signatureDistance });
+let watchWin = null;
+let lastSpeechAt = 0;            // last transcript event from the meeting audio
+let lastFramedAt = 0;            // last screen read with a framed tile
+let captionTimer = null;
+let captionRead = null;          // the caption read in flight, if any
+let captionLast = { hash: '', name: null };
+const grabs = new Map();         // id -> resolve
+let grabSeq = 0;
+const CAPTION_EVERY_MS = 2500;
+
+// Letters that differ between two names, for a profile name typed slightly off.
+function editDistance(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+  }
+  return d[a.length][b.length];
+}
 
 function isOwnName(name) {
   const n = String(name || '').trim().toLowerCase();
   const me = String((activeProfile && activeProfile.name) || (state.profile && state.profile.name) || '').trim().toLowerCase();
-  return /^you\b/.test(n) || /\(you\)/.test(n) || (!!me && (n === me || n.startsWith(me + ' ')));
+  if (/^you\b/.test(n) || /\(you\)/.test(n)) return true;
+  if (!me) return false;
+  return n === me || n.startsWith(me + ' ') || (me.length >= 6 && editDistance(n, me) <= 2);
 }
 
-async function readTileName(png) {
+async function readScreenText(prompt, mime, bytes, maxTokens) {
   const provider = getAnswerProvider();
   const apiKey = getAnswerApiKey(provider.id);
   if (!apiKey) return null;
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), 8000);
   try {
-    const name = await completeChat({
-      provider, apiKey, model: getAnswerModel(provider.id), maxTokens: 20, signal: ac.signal,
+    return await completeChat({
+      provider, apiKey, model: getAnswerModel(provider.id), maxTokens, signal: ac.signal,
       messages: [{ role: 'user', content: [
-        { type: 'text', text: 'This is the name label from a video-call participant tile. Reply with the name exactly as written and nothing else. If no name is visible, reply NONE.' },
-        { type: 'image_url', image_url: { url: 'data:image/png;base64,' + png.toString('base64') } },
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: 'data:' + mime + ';base64,' + Buffer.from(bytes).toString('base64') } },
       ] }],
     });
-    appendLogLine('[speakers] tile label read as: ' + JSON.stringify(name));
-    return name;
   } finally { clearTimeout(t); }
 }
 
-async function speakerWatchTick() {
-  if (speakerWatchBusy) return;
-  speakerWatchBusy = true;
-  try {
-    const displays = screen.getAllDisplays();
-    const maxW = Math.max(...displays.map((d) => Math.round(d.bounds.width * (d.scaleFactor || 1))));
-    const maxH = Math.max(...displays.map((d) => Math.round(d.bounds.height * (d.scaleFactor || 1))));
-    // A capture that never returns (a permission picker left open) must not
-    // stall the watcher silently.
-    const sources = await Promise.race([
-      desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: maxW, height: maxH } }),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('screen read timed out after 5 s')), 5000)),
-    ]);
-    speakerWatchTimeouts = 0;
-    let best = null;
-    for (const src of sources) {
-      const img = src.thumbnail;
-      const { width, height } = img.getSize();
-      if (!width || !height) continue;
-      const det = detectActiveTile({ width, height, data: img.toBitmap(), channels: 4, bgr: true });
-      if (det && (!best || det.tile.w * det.tile.h > best.det.tile.w * best.det.tile.h)) best = { det, img, id: src.display_id };
-    }
-    const t = Date.now();
-    if (speakerWatchFirst) {
-      speakerWatchFirst = false;
-      const sizes = sources.map((x) => { const z = x.thumbnail.getSize(); return z.width + 'x' + z.height; }).join(', ');
-      appendLogLine(`[speakers] first screen read: ${sources.length} display(s) ${sizes}; highlight: ${best ? best.det.platform : 'none'}`);
-    }
-    if (!best) { speakerTracker.observe(t, null); return; }
-    // Displays share one detection key space, so prefix the platform with the display.
-    const det = { ...best.det, platform: best.det.platform + '@' + best.id };
-    const l = best.det.label;
-    speakerTracker.observe(t, det, () => best.img.crop({ x: l.x, y: l.y, width: l.w, height: l.h }).toPNG());
-  } catch (e) {
-    appendLogLine('[speakers] ' + e.message);
-    if (/timed out/.test(e.message) && ++speakerWatchTimeouts >= 3) {
-      appendLogLine('[speakers] screen capture is not answering; speaker names are off until transcription restarts');
-      stopSpeakerWatch();
-    }
-  } finally {
-    speakerWatchBusy = false;
-  }
+async function readTileName(png) {
+  const name = await readScreenText('This is the name label from a video-call participant tile, enlarged. Reply with the whole name exactly as written and nothing else. If the label ends in "..." keep the dots. If no name is visible, reply NONE.', 'image/png', png, 60);
+  appendLogLine('[speakers] tile label read as: ' + JSON.stringify(name));
+  return name;
 }
 
+function grabCaptionArea() {
+  return new Promise((resolve) => {
+    if (!watchWin || watchWin.isDestroyed()) return resolve(null);
+    const id = ++grabSeq;
+    const timer = setTimeout(() => { grabs.delete(id); resolve(null); }, 3000);
+    grabs.set(id, (jpeg) => { clearTimeout(timer); resolve(jpeg); });
+    try { watchWin.webContents.send('speaker-watch-grab', { id }); } catch { clearTimeout(timer); grabs.delete(id); resolve(null); }
+  });
+}
+
+// Runs only while someone is talking and no tile is framed (a full-screen
+// share, tiles covered), so a meeting with visible tiles costs no caption reads.
+function captionTick() {
+  if (captionRead || !watchWin) return;
+  const now = Date.now();
+  if (now - lastSpeechAt > 4000 || now - lastFramedAt < 2000) return;
+  captionRead = (async () => {
+    const jpeg = await grabCaptionArea();
+    if (!jpeg) return;
+    const hash = require('crypto').createHash('sha1').update(jpeg).digest('hex');
+    let name = captionLast.name;
+    if (hash !== captionLast.hash) {
+      name = await readScreenText('This is the lower half of a screen during a video call. If live captions (subtitles) that show who is speaking are visible, reply with only the name shown for the most recent caption, the lowest one. If there are no captions with a speaker name, reply NONE.', 'image/jpeg', jpeg, 60);
+      captionLast = { hash, name };
+      appendLogLine('[speakers] caption title read as: ' + JSON.stringify(name));
+    }
+    speakerTracker.observeCaption(now, name);
+  })().catch((e) => appendLogLine('[speakers] caption read failed: ' + ((e && e.message) || e)))
+    .finally(() => { captionRead = null; });
+}
+
+ipcMain.handle('speaker-watch-sources', async () => {
+  // No thumbnails: only the ids are needed, the window opens the streams.
+  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+  return sources.map((x, i) => ({ id: x.id, displayId: x.display_id || String(i) }));
+});
+ipcMain.on('speaker-watch-observe', (e, obs) => {
+  if (!watchWin || watchWin.isDestroyed() || e.sender !== watchWin.webContents || !obs) return;
+  if (obs.det) lastFramedAt = obs.t;
+  speakerTracker.observe(obs.t, obs.det || null, obs.label ? Buffer.from(obs.label) : null, obs.sig || null);
+});
+ipcMain.on('speaker-watch-log', (_e, line) => appendLogLine('[speakers] ' + line));
+ipcMain.on('speaker-watch-grabbed', (_e, r) => {
+  const done = r && grabs.get(r.id);
+  if (done) { grabs.delete(r.id); done(r.jpeg ? Buffer.from(r.jpeg) : null); }
+});
+
 function startSpeakerWatch() {
-  if (speakerWatchTimer) return;
-  macScreenPermissionWarn();
+  if (watchWin && !watchWin.isDestroyed()) return;
+  if (!macScreenPermissionWarn()) return;
   speakerTracker.reset();
-  speakerWatchFirst = true;
-  speakerWatchTimeouts = 0;
-  speakerWatchTimer = setInterval(speakerWatchTick, SPEAKER_WATCH_MS);
-  speakerWatchTick();
+  captionLast = { hash: '', name: null };
+  watchWin = new BrowserWindow({
+    width: 320, height: 200, show: false, skipTaskbar: true, focusable: false,
+    webPreferences: { preload: path.join(__dirname, 'preload-watch.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
+  });
+  const w = watchWin;
+  w.webContents.on('render-process-gone', (_e, d) => {
+    appendLogLine('[speakers] screen watcher stopped (' + ((d && d.reason) || 'gone') + '); speaker names are off until transcription restarts');
+    stopSpeakerWatch();
+  });
+  w.on('closed', () => { if (watchWin === w) watchWin = null; });
+  w.loadFile(path.join(__dirname, 'renderer', 'speaker-watch.html'));
+  captionTimer = setInterval(captionTick, CAPTION_EVERY_MS);
 }
 
 function stopSpeakerWatch() {
-  if (speakerWatchTimer) clearInterval(speakerWatchTimer);
-  speakerWatchTimer = null;
+  if (captionTimer) { clearInterval(captionTimer); captionTimer = null; }
+  for (const done of grabs.values()) done(null);
+  grabs.clear();
+  const w = watchWin;
+  watchWin = null;
+  if (w && !w.isDestroyed()) { try { w.destroy(); } catch {} }
 }
 
 // Deepgram timestamps count from the start of each connection.
 let deepgramT0 = 0;
 
-// window: [t0, t1] wall-clock ms the words were spoken, when known. voice:
-// Deepgram's diarized speaker id, the fallback when nobody's tile is framed.
-// Only finals teach the voice-to-name map; interims would count twice.
+// window: [t0, t1] wall-clock ms the words were spoken, when known.
 // The platforms move their frame about 1 s after the voice changes (measured
 // on the sample recordings with scripts/test-speaker-names.js --lags), so the
 // frame that belongs to an utterance is the one 1 s later.
 const SCREEN_LAG_MS = 1000;
-function transcriptWho(window, isFinal, voice) {
+function transcriptWho(window, isFinal) {
   const w = window && [window[0] + SCREEN_LAG_MS, window[1] + SCREEN_LAG_MS];
-  const named = !w ? null
-    : isFinal ? speakerTracker.whoSpoke(w[0], w[1], voice)
-    : speakerTracker.nameAt(w[0], w[1]);
+  const named = w ? speakerTracker.nameAt(w[0], w[1]) : null;
   return named || (!isFinal && speakerTracker.lastName()) || 'Interviewer';
-}
-
-// The speaker id most of the words carry.
-function dominantVoice(words) {
-  const n = new Map();
-  for (const w of words || []) if (Number.isInteger(w.speaker)) n.set(w.speaker, (n.get(w.speaker) || 0) + 1);
-  return n.size ? [...n.entries()].sort((a, b) => b[1] - a[1])[0][0] : undefined;
 }
 
 function parseTranscriptAlternative(alt, window, isFinal) {
@@ -2181,9 +2272,19 @@ function parseTranscriptAlternative(alt, window, isFinal) {
   const words = (alt && alt.words) || [];
   const text = transcript || words.map((w) => w.punctuated_word || w.word || '').join(' ').replace(/\s+/g, ' ').trim();
   if (!text) return { text: '', labeled: '', speaker: 0, turns: [] };
-  const who = transcriptWho(window, isFinal, dominantVoice(words));
+  lastSpeechAt = Date.now();
+  const who = transcriptWho(window, isFinal);
   return { text, labeled: who + ': ' + text, speaker: 0, turns: [{ speaker: 0, who, text }] };
 }
+
+// A final line spoken while nobody was framed waits briefly for the caption
+// read that is under way, so it gets the caption's name instead of the fallback.
+async function settleSpeakerName(window, isFinal) {
+  if (!isFinal || !window || !captionRead) return;
+  if (speakerTracker.nameAt(window[0] + SCREEN_LAG_MS, window[1] + SCREEN_LAG_MS)) return;
+  await Promise.race([captionRead, new Promise((r) => setTimeout(r, 2000))]);
+}
+let transcriptQueue = Promise.resolve();   // keeps lines in order across that wait
 
 function startDeepgramWs(apiKey, language) {
   if (deepgramWs) return;
@@ -2194,7 +2295,6 @@ function startDeepgramWs(apiKey, language) {
     // VAD + utterance-end events for smoother, more natural finalization.
     vad_events: 'true', endpointing: '150', no_delay: 'true', utterance_end_ms: '1500',
     punctuate: 'true',
-    diarize: 'true',
   });
   params.set('model', 'nova-2');
   params.set('language', (language && language !== 'auto') ? language : 'en-US');
@@ -2221,24 +2321,29 @@ function startDeepgramWs(apiKey, language) {
       const msg = JSON.parse(raw.toString());
       if (msg.type === 'UtteranceEnd') {
         // Speech-gap boundary — tells the renderer to flush any pending interim.
-        if (win && !win.isDestroyed()) win.webContents.send('transcript-utterance-end');
+        transcriptQueue = transcriptQueue.then(() => {
+          if (win && !win.isDestroyed()) win.webContents.send('transcript-utterance-end');
+        }).catch(() => {});
         return;
       }
       if (msg.type !== 'Results') return;
       const window = Number.isFinite(msg.start) && Number.isFinite(msg.duration)
         ? [deepgramT0 + msg.start * 1000, deepgramT0 + (msg.start + msg.duration) * 1000] : null;
-      const parsed = parseTranscriptAlternative(msg.channel?.alternatives?.[0], window, !!msg.is_final);
-      if (!parsed.text) return;
-      if (msg.is_final) sessionLog.push({ ts: Date.now(), kind: 'voice', text: parsed.labeled || parsed.text });
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('transcript-live', {
-          text: parsed.text,
-          labeled: parsed.labeled,
-          speaker: parsed.speaker,
-          turns: parsed.turns || [],
-          isFinal: !!msg.is_final,
-        });
-      }
+      lastSpeechAt = Date.now();
+      transcriptQueue = transcriptQueue.then(() => settleSpeakerName(window, !!msg.is_final)).then(() => {
+        const parsed = parseTranscriptAlternative(msg.channel?.alternatives?.[0], window, !!msg.is_final);
+        if (!parsed.text) return;
+        if (msg.is_final) sessionLog.push({ ts: Date.now(), kind: 'voice', text: parsed.labeled || parsed.text });
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('transcript-live', {
+            text: parsed.text,
+            labeled: parsed.labeled,
+            speaker: parsed.speaker,
+            turns: parsed.turns || [],
+            isFinal: !!msg.is_final,
+          });
+        }
+      }).catch(() => {});
     } catch {}
   });
   // A rejected WS handshake (bad key, bad params, no credits) comes through here
@@ -2361,7 +2466,7 @@ function startXaiWs(apiKey, language) {
         const parsed = parseTranscriptAlternative({
           transcript: msg.text || msg.transcript,
           words: msg.words || (msg.channel && msg.channel.alternatives && msg.channel.alternatives[0] && msg.channel.alternatives[0].words),
-        }, [Date.now() - 4000, Date.now()], isFinal);
+        }, [Date.now() - 4000 - SCREEN_LAG_MS, Date.now() - SCREEN_LAG_MS], isFinal);
         if (parsed.text) {
           if (isFinal) sessionLog.push({ ts: Date.now(), kind: 'voice', text: parsed.labeled || parsed.text });
           if (win && !win.isDestroyed()) {
@@ -2460,7 +2565,8 @@ function startMicDeepgramWs(apiKey, language) {
   if (micDgWs) return;
   const params = new URLSearchParams({
     encoding: 'linear16', sample_rate: '16000', channels: '1',
-    smart_format: 'true', interim_results: 'false',
+    // Interims too: the reading marker follows the words as they are spoken.
+    smart_format: 'true', interim_results: 'true',
     endpointing: '250', utterance_end_ms: '1500', punctuate: 'true',
   });
   params.set('model', 'nova-2');
@@ -2473,10 +2579,10 @@ function startMicDeepgramWs(apiKey, language) {
   micDgWs.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
-      if (msg.type !== 'Results' || !msg.is_final) return;
+      if (msg.type !== 'Results') return;
       const alt = msg.channel && msg.channel.alternatives && msg.channel.alternatives[0];
       const text = String((alt && alt.transcript) || '').trim();
-      if (text && win && !win.isDestroyed()) win.webContents.send('transcript-mic', { text });
+      if (text && win && !win.isDestroyed()) win.webContents.send('transcript-mic', { text, isFinal: !!msg.is_final });
     } catch {}
   });
   micDgWs.on('close', () => {
@@ -2516,7 +2622,7 @@ ipcMain.on('mic-audio-chunk', (_e, buf) => { if (micDgWs && micDgWs.readyState =
 ipcMain.on('session-log-add', (_e, entry) => { sessionLog.push(entry); });
 ipcMain.handle('clear-session-log', () => { sessionLog = []; });
 // Where each finished interview's folder goes.
-function sessionsRootDir() { return path.join(app.getPath('documents'), 'RemoteDevJobAce Sessions'); }
+function sessionsRootDir() { return path.join(app.getPath('documents'), 'Ace Sessions'); }
 function sanitizeName(s) { return String(s || '').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim(); }
 function uniqueDir(base) {
   let dir = base, i = 2;
@@ -2528,19 +2634,99 @@ function uniqueDir(base) {
 // Create the session folder and write the transcript + the CV/JD used. Returns
 // the folder path; the recording is written into it afterwards (save-recording).
 // Base name for the session's folder and every file inside it:
-//   "ProfileName-Role-Company-YYYY-MM-DD-HHMM"  (fields that are set, joined by '-')
-function sessionBaseName(profileName, role, company) {
+//   "YYYY-MM-DD-HHMM-Company-Role"  (date and time first, then the fields that are set)
+function sessionStamp() {
   const d = new Date();
   const p2 = (n) => String(n).padStart(2, '0');
-  const stamp = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}`;
-  const parts = [profileName, role, company].map((x) => sanitizeName(x)).filter(Boolean);
-  parts.push(stamp);
-  return sanitizeName(parts.join('-')) || ('Interview-' + stamp);
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}`;
+}
+function sessionBaseName(company, role) {
+  const parts = [sessionStamp()].concat([company, role].map((x) => sanitizeName(x)).filter(Boolean));
+  return sanitizeName(parts.join('-'));
 }
 
-ipcMain.handle('save-session-bundle', async (_e, { profileName, role, company, transcript } = {}) => {
+// ── Session recording ────────────────────────────────────────────────────────
+// The renderer records in 2 s pieces and each piece is written to disk as it
+// arrives, so stopping is instant however long the meeting was and a crash
+// leaves the video so far. Recordings wait in a staging folder until End moves
+// them into the session's folder, next to the transcript and the documents.
+const recStreams = new Map();      // id -> { file, stream }
+let pendingRecordings = [];        // finished files waiting for End
+let recSeq = 0;
+function recStagingDir() { return path.join(sessionsRootDir(), 'Recording in progress'); }
+
+ipcMain.handle('rec-begin', () => {
   try {
-    const base = sessionBaseName(profileName, role, company);
+    const dir = recStagingDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const id = String(++recSeq);
+    const file = path.join(dir, `recording-${sessionStamp()}-${Date.now().toString(36)}.webm`);
+    const stream = fs.createWriteStream(file);
+    stream.on('error', (e) => appendLogLine('[recording] write failed: ' + e.message));
+    recStreams.set(id, { file, stream });
+    return { ok: true, id };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.on('rec-chunk', (_e, id, buf) => {
+  const r = recStreams.get(String(id));
+  if (r && buf) { try { r.stream.write(Buffer.from(buf)); } catch {} }
+});
+function finishRecording(id) {
+  const r = recStreams.get(String(id));
+  if (!r) return Promise.resolve(null);
+  recStreams.delete(String(id));
+  return new Promise((resolve) => {
+    r.stream.end(() => {
+      let size = 0;
+      try { size = fs.statSync(r.file).size; } catch {}
+      if (!size) { try { fs.unlinkSync(r.file); } catch {} return resolve(null); }
+      pendingRecordings.push(r.file);
+      resolve(r.file);
+    });
+  });
+}
+ipcMain.handle('rec-end', async (_e, id) => {
+  const file = await finishRecording(id);
+  return file ? { ok: true, path: file } : { ok: false, error: 'nothing was recorded' };
+});
+
+async function moveFile(from, to) {
+  try { await fs.promises.rename(from, to); }
+  catch { await fs.promises.copyFile(from, to); await fs.promises.unlink(from).catch(() => {}); }
+}
+// Every finished recording goes into the session folder; several when the
+// recording was stopped and started again during the meeting.
+async function collectRecordings(folder, base) {
+  for (const id of [...recStreams.keys()]) await finishRecording(id);
+  const files = pendingRecordings;
+  pendingRecordings = [];
+  let n = 0;
+  for (const f of files) {
+    if (!fs.existsSync(f)) continue;
+    n++;
+    const name = base + '-recording' + (files.length > 1 ? '-' + n : '') + '.webm';
+    try { await moveFile(f, path.join(folder, name)); } catch (e) { appendLogLine('[recording] could not move ' + f + ': ' + e.message); }
+  }
+  try { await fs.promises.rmdir(recStagingDir()); } catch {}
+  return n;
+}
+// Recordings left behind by a quit or crash before End get their own folder.
+async function recoverRecordings() {
+  try {
+    const dir = recStagingDir();
+    const left = (await fs.promises.readdir(dir)).filter((f) => f.endsWith('.webm'));
+    if (left.length) {
+      const folder = uniqueDir(path.join(sessionsRootDir(), sessionStamp() + '-Unsaved recording'));
+      for (const f of left) await moveFile(path.join(dir, f), path.join(folder, f));
+      appendLogLine('[recording] recovered ' + left.length + ' recording(s) into ' + folder);
+    }
+    await fs.promises.rmdir(dir).catch(() => {});
+  } catch {}
+}
+
+ipcMain.handle('save-session-bundle', async (_e, { role, company, transcript } = {}) => {
+  try {
+    const base = sessionBaseName(company, role);
     const folder = uniqueDir(path.join(sessionsRootDir(), base));
     const ext = (name) => { const e = String(name || '').split('.').pop(); return e && e !== name ? '.' + e.toLowerCase() : ''; };
     const script = String(transcript || '').trim();
@@ -2562,20 +2748,12 @@ ipcMain.handle('save-session-bundle', async (_e, { profileName, role, company, t
     for (const it of (k.support || [])) await saveMaterial(it, 'Support', ++i);
     i = 0;
     for (const it of (k.meetings || [])) await saveMaterial(it, 'Meeting', ++i);
+    const recordings = await collectRecordings(folder, base);
     const s = currentSession && currentSession();
     if (s) { s.folder = folder; saveSessions(); }
-    return { ok: true, folder, base };
-  } catch (e) { return { ok: false, error: e.message }; }
-});
-
-// Write the recording video into the session folder, named with the base.
-ipcMain.handle('save-recording', async (_e, buf, folder, base) => {
-  try {
-    const dir = folder && fs.existsSync(folder) ? folder : uniqueDir(path.join(sessionsRootDir(), 'Interview-' + Date.now()));
-    const name = (base ? base + '-' : '') + 'recording.webm';
-    const file = path.join(dir, name);
-    await fs.promises.writeFile(file, Buffer.from(buf));
-    return { ok: true, path: file };
+    // Show the folder: the video, the transcript and the documents are all in it.
+    try { require('electron').shell.openPath(folder); } catch {}
+    return { ok: true, folder, base, recordings };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
@@ -4318,7 +4496,6 @@ ipcMain.on('signaling-out', (_e, msg) => sendSignaling(msg));
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
-  stopCaptureLoop();
   stopSignalingServer();
   disconnectSignalingClient();
 });

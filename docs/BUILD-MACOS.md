@@ -14,8 +14,8 @@ CI (`.github/workflows/build.yml`) builds on a real Mac runner:
 
 | File | What it is |
 |---|---|
-| `RemoteDevJobAce-<version>-mac.dmg` | Universal disk image (drag the app to Applications) |
-| `RemoteDevJobAce-<version>-mac.zip` | Same app as a zip (auto-update + unsigned fallback) |
+| `Ace-<version>-mac.dmg` | Universal disk image (drag the app to Applications) |
+| `Ace-<version>-mac.zip` | Same app as a zip (auto-update + unsigned fallback) |
 
 One DMG runs natively on Intel **and** M1 / M2 / M3 / M4. Do not send the old
 `-x64.dmg` / `-arm64.dmg` pair.
@@ -94,7 +94,7 @@ npm install
 npm run build:mac-zip
 ```
 
-Output: `dist/RemoteDevJobAce-<version>-mac.zip`. Not signed, not notarized.
+Output: `dist/Ace-<version>-mac.zip`. Not signed, not notarized.
 
 ---
 
@@ -102,15 +102,15 @@ Output: `dist/RemoteDevJobAce-<version>-mac.zip`. Not signed, not notarized.
 
 **Signed + notarized build:**
 
-1. Download `RemoteDevJobAce-*-mac.dmg`.
-2. Open it, drag **RemoteDevJobAce** onto **Applications**.
+1. Download `Ace-*-mac.dmg`.
+2. Open it, drag **Ace** onto **Applications**.
 3. Open it from Applications.
 
 **Unsigned / not notarized build** (until the secrets above are set):
 
 1. Prefer the `.zip`. Unzip and double-click **OPEN.command**.
 2. Or after dragging to Applications:
-   `xattr -cr /Applications/RemoteDevJobAce.app`
+   `xattr -cr /Applications/Ace.app`
    then right-click the app → **Open**.
 
 First launch is the license window (**Activate this computer**). Closing it

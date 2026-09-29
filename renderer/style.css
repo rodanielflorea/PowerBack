@@ -1106,6 +1106,11 @@ textarea.meet-editbox {
 /* Once streaming ends the element gets rendered HTML — disable pre-wrap */
 .answer-a:not(.streaming) { white-space: normal; }
 
+/* Reading marker: sentences already read aloud are dimmed, the next one is marked. */
+.read-s { transition: opacity .25s ease, background-color .25s ease; cursor: pointer; border-radius: 3px; }
+.read-done { opacity: 0.38; }
+.read-now { background: rgba(37, 99, 235, 0.14); box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.14); }
+
 /* Streaming child div — block container for streamed text, inherits pre-wrap from parent */
 .answer-stream { display: block; }
 

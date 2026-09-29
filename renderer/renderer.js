@@ -1247,19 +1247,20 @@ async function endSessionAndSave(company, position) {
   if (typeof persistMeetBubble === "function") await persistMeetBubble(lastMeetEl, true);
   let title = "";
   if (window.api.sessionFinalize) title = await window.api.sessionFinalize(company, position).catch(() => "");
+  // Close the recording first: the video goes into the session's folder with
+  // the transcript and the documents, and the folder opens when all is in it.
+  if (typeof window.stopRecording === "function") { try { await window.stopRecording(); } catch {} }
   // Auto-save everything into one folder in Documents (no save dialog).
-  const profileName = (typeof readProfileFields === "function" && readProfileFields().name) || "";
-  let folder = "", base = "";
+  let folder = "";
   try {
     const script = buildSessionScript();
     if (window.api.saveSessionBundle) {
-      const rb = await window.api.saveSessionBundle({ profileName, role: position, company, transcript: script });
-      if (rb && rb.ok) { folder = rb.folder; base = rb.base; }
+      const rb = await window.api.saveSessionBundle({ role: position, company, transcript: script });
+      if (rb && rb.ok) folder = rb.folder;
+      else log("Session could not be saved: " + ((rb && rb.error) || "unknown"), "err");
     }
   } catch {}
   window.__script = [];
-  // Finalize the recording into the same folder before tearing audio down.
-  if (typeof window.stopRecording === "function") { try { await window.stopRecording(folder, base); } catch {} }
   if (recState) await stopVoice().catch(() => {});
   await window.api.stopNetwork();
   teardownPeers();
@@ -1381,6 +1382,8 @@ if (window.api && window.api.onUpdaterStatus) {
     else if (s.state === "downloaded") {
       updaterStatusEl.textContent = `Update v${s.version} ready. Restart to install.`;
       if (updaterInstallBtn) updaterInstallBtn.hidden = false;
+      // Never restart by itself: an interview may be running.
+      if (typeof toast === "function") toast(`Ace ${s.version} is downloaded. It installs when you close the app, or now from Settings.`, "info");
     } else if (s.state === "error")
       updaterStatusEl.textContent = "Updater error: " + s.message;
   });
@@ -1587,7 +1590,7 @@ window.__recIndicator = (on) => {
 };
 if (recIndicatorEl) recIndicatorEl.addEventListener("click", async () => {
   if (typeof window.isRecording === "function" && window.isRecording()) {
-    if (typeof window.stopRecording === "function") await window.stopRecording("", "");
+    if (typeof window.stopRecording === "function") await window.stopRecording();
   } else if (typeof window.startRecording === "function") {
     window.startRecording(true); // manual: record even if auto-record is off in Settings
   }
@@ -2263,7 +2266,9 @@ function scheduleAutoAnswer() {
 if (window.api.onTranscriptMic) {
   window.api.onTranscriptMic((v) => {
     if (!v || !v.text) return;
-    pushScript(profileNameForScript(), v.text);
+    const isFinal = v.isFinal !== false;
+    if (isFinal) pushScript(profileNameForScript(), v.text);
+    if (window.ReadMarker) window.ReadMarker.heard(v.text, isFinal);
   });
 }
 window.api.onTranscriptLiveError((msg) => {
@@ -3058,6 +3063,7 @@ window.api.onAnswerDone((v) => {
       renderMermaidInElement(streamEl);
       if (streamEl.classList.contains('has-diagram')) currentAnswerEl.classList.add('has-diagram');
     }
+    if (answerMode === 'ANSWER' && window.ReadMarker) window.ReadMarker.attach(streamEl);
 
     // For CODE mode — add Copy + Write to IDE action bar
     if (answerMode === 'CODE') {
@@ -3530,8 +3536,10 @@ async function startVoice() {
         };
         const mic = await navigator.mediaDevices.getUserMedia(constraints);
         streams.push(mic);
-        ctx.createMediaStreamSource(mic).connect(micDest || dest);
-        log("Mic capture started" + (micDest ? " (own transcript stream)" : ""), "info");
+        // Only ever into its own stream: mixed into the meeting audio, the
+        // user's words would show up in the meeting bubbles.
+        if (micDest) ctx.createMediaStreamSource(mic).connect(micDest);
+        log(micDest ? "Mic capture started (own transcript stream)" : "Mic is recorded but not transcribed with this engine", "info");
       } catch (e) {
         log("Mic failed: " + e.message, "err");
       }
