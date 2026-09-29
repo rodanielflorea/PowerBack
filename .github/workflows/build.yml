@@ -34,7 +34,7 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npm run icon
 
-      # Built-in provider keys: the committed defaults/api-keys.json is empty on
+      # Built-in provider keys: defaults/api-keys.json is not in the repository on
       # purpose. Put the real JSON in the repository secret API_KEYS_JSON
       # (Settings → Secrets and variables → Actions) and CI writes it here.
       - name: Write built-in API keys from secret

@@ -37,4 +37,7 @@ out/
 mac-audio/build/*
 !mac-audio/build/.gitkeep
 
+
+# Real provider keys: never committed. Copy defaults/api-keys.example.json to
+# defaults/api-keys.json and fill it in; CI writes it from API_KEYS_JSON.
 defaults/api-keys.json
