@@ -1,6 +1,6 @@
 {
   "name": "ace",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "description": "Answer Coaching Engine",
   "main": "main.js",
   "scripts": {
@@ -54,7 +54,7 @@
         "nsis"
       ],
       "icon": "build/icon.ico",
-      "executableName": "DevAssistant"
+      "executableName": "Ace"
     },
     "portable": {
       "artifactName": "${productName}-${version}-portable.${ext}"
@@ -150,6 +150,8 @@
     "nsis": {
       "artifactName": "${productName}-${version}-setup.${ext}",
       "oneClick": true,
+      "guid": "9e66c056-626c-529e-98cc-8d2fc0aeb8d8",
+      "include": "build/installer.nsh",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Ace",

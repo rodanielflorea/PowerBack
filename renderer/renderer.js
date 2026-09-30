@@ -272,7 +272,11 @@ window.api.onClickThroughChanged((v) => updateClickThrough(v));
   const report = (v) => { if (over === v) return; over = v; window.api.clickThroughHover(v); };
   bar.addEventListener("mouseenter", () => report(true));
   bar.addEventListener("mouseleave", () => report(false));
-  document.addEventListener("mousemove", (e) => report(!!e.target.closest && !!e.target.closest(".titlebar")));
+  // the update question takes clicks as well, or it could not be answered
+  document.addEventListener("mousemove", (e) => report(!!e.target.closest && !!e.target.closest(".titlebar, #updateModal")));
+  // The app takes the report only while click-through is on: after a switch
+  // it is made again with the next move of the pointer.
+  window.api.onClickThroughChanged(() => { over = false; });
 })();
 
 hideBtn.addEventListener("click", () => window.api.hide());
@@ -314,6 +318,8 @@ function leaveInterviewUi() {
   endBtn.classList.remove("live");
   applyRoleClass("");
   if (answerMain) answerMain.hidden = true;
+  // an update question that had to wait for the tour or the interview
+  if (typeof showHeldUpdateOffer === "function") showHeldUpdateOffer();
 }
 
 // Wizard step 1: interview stage.
@@ -339,6 +345,8 @@ function showModeSelect() {
   endBtn.classList.remove("live");
   applyRoleClass("");
   if (answerMain) answerMain.hidden = true;
+  // an update question that had to wait for the tour or the interview
+  if (typeof showHeldUpdateOffer === "function") showHeldUpdateOffer();
 }
 
 // Wizard step 3: materials + salary, then Start.
@@ -1335,9 +1343,10 @@ if (updaterCheckBtn)
   });
 
 if (updaterInstallBtn)
-  updaterInstallBtn.addEventListener("click", () =>
-    window.api.installUpdateNow(),
-  );
+  updaterInstallBtn.addEventListener("click", async () => {
+    const ok = await window.api.installUpdateNow().catch(() => false);
+    if (!ok && updaterStatusEl) updaterStatusEl.textContent = "The installer could not be started.";
+  });
 
 
 // ---- Avoid-phrases UI ----
@@ -1368,24 +1377,179 @@ if (avoidPhrasesSaveBtn) {
 
 loadAvoidPhrases();
 
+// ── The update question ──────────────────────────────────────────────────────
+// A new version is offered, never installed unasked. "Update" downloads it and
+// shows how far it is; then the app closes, the installer shows its own
+// progress and starts the app again. "Later" closes the question for this run;
+// it comes back at the next start.
+const updateModal = document.getElementById("updateModal");
+const updateModalTitle = document.getElementById("updateModalTitle");
+const updateModalLead = document.getElementById("updateModalLead");
+const updateProgress = document.getElementById("updateProgress");
+const updateProgressFill = document.getElementById("updateProgressFill");
+const updateProgressText = document.getElementById("updateProgressText");
+const updateModalLater = document.getElementById("updateModalLater");
+const updateModalNow = document.getElementById("updateModalNow");
+// var, not let: showModeSelect() runs once further up, before these lines
+var updateStage = "";     // "", "offer", "download", "install", "error"
+var updateHeld = null;    // a question that came during the tour or an interview
+let updateVersion = "";
+let updatePlatform = "";
+let updateInstallWatch = null;
+let updateLastPercent = 0;
+let updateLastTotal = 0;
+let updateCancelled = false;   // "Cancel" was pressed: what still arrives from that download is not shown
+
+const megabytes = (n) => (n / 1048576).toFixed(n < 10485760 ? 1 : 0) + " MB";
+
+function setUpdateStage(stage, info) {
+  if (!updateModal) return;
+  const before = updateStage;
+  updateStage = stage;
+  updateModal.hidden = !stage;
+  if (updateInstallWatch) { clearTimeout(updateInstallWatch); updateInstallWatch = null; }
+  if (!stage) return;
+  updateProgress.hidden = stage === "offer" || stage === "error";
+  updateProgressFill.classList.toggle("is-unknown", stage === "install");
+  // "Update" keeps its place while the download runs. Taken out, "Cancel"
+  // would slide under the pointer, and the second click of a double click
+  // would stop the download that the first click started.
+  updateModalNow.hidden = stage !== "offer" && stage !== "download";
+  updateModalNow.disabled = stage !== "offer";
+  // The question can come up under a pointer that is in the middle of a
+  // double click (the last button of the tour is at the same place).
+  if (stage === "offer" && before !== "offer") {
+    updateModalNow.disabled = true;
+    setTimeout(() => { if (updateStage === "offer") updateModalNow.disabled = false; }, 700);
+  }
+  updateModalLater.hidden = stage === "install";
+  if (stage === "offer") {
+    updateModalTitle.textContent = "Update available";
+    updateModalLead.textContent =
+      `Ace ${updateVersion} is available. You have ${(info && info.current) || "an older version"}. ` +
+      "Update now? Ace downloads the new version, closes, installs it and starts again.";
+    updateModalLater.textContent = "Later";
+  } else if (stage === "download") {
+    updateModalTitle.textContent = "Updating Ace";
+    updateModalLead.textContent = `Downloading Ace ${updateVersion}…`;
+    updateModalLater.textContent = "Cancel";
+    updateProgressFill.style.width = "0%";
+    updateProgressText.textContent = "Starting…";
+    updateLastPercent = 0;
+    updateLastTotal = 0;
+  } else if (stage === "install") {
+    updateModalTitle.textContent = "Installing the update";
+    updateModalLead.textContent = `Ace ${updateVersion} is downloaded. Ace closes now; ` +
+      (updatePlatform === "win32" || !updatePlatform
+        ? "the installer shows its progress and starts Ace again."
+        : "it starts again in the new version.");
+    updateProgressFill.style.width = "";
+    updateProgressText.textContent = "";
+    // The app closes within seconds. If it does not, the window must not
+    // stay without a button.
+    updateInstallWatch = setTimeout(() => {
+      if (updateStage === "install") setUpdateStage("error", { message: "the app did not close for the installer", installing: true });
+    }, 90000);
+  } else if (stage === "error") {
+    updateModalTitle.textContent = "Update not installed";
+    updateModalLead.textContent =
+      (info && info.installing ? "The update could not be installed: " : "The update could not be downloaded: ") +
+      ((info && info.message) || "unknown error") +
+      ". Nothing was changed. It is offered again at the next start.";
+    updateModalLater.textContent = "Close";
+  }
+  // The safe answer has the focus: a stray Enter never starts an update.
+  if ((stage === "offer" || stage === "error") && before !== stage) { try { updateModalLater.focus(); } catch {} }
+}
+
+// The question waits while the tour or an interview has the window.
+function updateMustWait() {
+  const tourEl = document.getElementById("tour");
+  return (tourEl && !tourEl.hidden) || document.body.classList.contains("in-interview");
+}
+function showUpdateOffer(o) {
+  updateCancelled = false;
+  updateVersion = o.version;
+  updatePlatform = o.platform || "";
+  // like the tour: the question must be clickable
+  if (window.api.setClickThrough) { try { Promise.resolve(window.api.setClickThrough(false)).catch(() => {}); } catch {} }
+  setUpdateStage("offer", o);
+}
+// Called by showModeSelect(). The tour calls that function for its own steps,
+// so the test is repeated here.
+function showHeldUpdateOffer() {
+  if (!updateHeld || updateMustWait()) return;
+  const o = updateHeld;
+  updateHeld = null;
+  if (!updateStage) showUpdateOffer(o);
+}
+
+if (updateModalNow) updateModalNow.addEventListener("click", async () => {
+  if (updateStage !== "offer") return;
+  setUpdateStage("download");
+  const ok = await window.api.updateAnswer(true).catch(() => false);
+  if (!ok && updateStage === "download") setUpdateStage("error", { message: "the update is no longer on offer" });
+});
+if (updateModalLater) updateModalLater.addEventListener("click", () => {
+  const stage = updateStage;
+  setUpdateStage("");
+  if (stage === "offer") window.api.updateAnswer(false).catch(() => {});
+  else if (stage === "download") { updateCancelled = true; window.api.updateCancel().catch(() => {}); }
+});
+// The question is the top layer: Escape answers it and nothing below it.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !updateModal || updateModal.hidden) return;
+  e.stopPropagation();
+  if (updateStage === "offer" || updateStage === "error") updateModalLater.click();
+}, true);
+if (window.api && window.api.onUpdateOffer) {
+  window.api.onUpdateOffer((o) => {
+    if (!o || !o.version || updateStage === "download" || updateStage === "install") return;
+    if (updateMustWait()) { updateHeld = o; return; }
+    showUpdateOffer(o);
+  });
+}
+
 if (window.api && window.api.onUpdaterStatus) {
   window.api.onUpdaterStatus((s) => {
+    if (s.state === "resumed" && !updateStage) {
+      // the window was loaded again while the download was running
+      updateCancelled = false;
+      updateVersion = s.version || updateVersion;
+      setUpdateStage("download");
+    } else if (s.state === "downloading" && updateStage === "download") {
+      // Only the changed parts are fetched first; if that fails, the whole
+      // file is, and the count starts again.
+      if (s.percent < updateLastPercent || (updateLastTotal && s.total && s.total !== updateLastTotal))
+        updateModalLead.textContent = `Downloading Ace ${updateVersion} as a complete file…`;
+      updateLastPercent = s.percent;
+      if (s.total) updateLastTotal = s.total;
+      updateProgressFill.style.width = s.percent + "%";
+      updateProgressText.textContent = s.total
+        ? `${s.percent}%  ·  ${megabytes(s.transferred)} of ${megabytes(s.total)}`
+        : s.percent + "%";
+    } else if (s.state === "downloaded" && s.busy && (updateStage === "download" || (!updateStage && !updateCancelled))) {
+      updateVersion = s.version || updateVersion;
+      setUpdateStage("install");
+    } else if (s.state === "error" && (updateStage === "download" || updateStage === "install")) {
+      setUpdateStage("error", { message: s.message, installing: updateStage === "install" });
+    }
     if (!updaterStatusEl) return;
     if (s.state === "checking")
       updaterStatusEl.textContent = "Checking for updates…";
     else if (s.state === "available")
-      updaterStatusEl.textContent = `Update available: v${s.version}. Downloading…`;
+      updaterStatusEl.textContent = `Ace ${s.version} is available.`;
     else if (s.state === "up-to-date")
       updaterStatusEl.textContent = "Up to date.";
     else if (s.state === "downloading")
       updaterStatusEl.textContent = `Downloading update… ${s.percent}%`;
     else if (s.state === "downloaded") {
-      updaterStatusEl.textContent = `Update v${s.version} ready. Restart to install.`;
+      updaterStatusEl.textContent = `Ace ${s.version} is downloaded. "Restart & install" closes Ace and installs it.`;
       if (updaterInstallBtn) updaterInstallBtn.hidden = false;
-      // Never restart by itself: an interview may be running.
-      if (typeof toast === "function") toast(`Ace ${s.version} is downloaded. It installs when you close the app, or now from Settings.`, "info");
-    } else if (s.state === "error")
+    } else if (s.state === "error") {
       updaterStatusEl.textContent = "Updater error: " + s.message;
+      if (updaterInstallBtn) updaterInstallBtn.hidden = true;
+    }
   });
 }
 

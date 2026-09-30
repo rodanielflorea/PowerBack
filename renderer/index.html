@@ -602,6 +602,27 @@
     </div>
   </div>
 
+  <!-- A new version: asked at the start, never installed unasked. -->
+  <div class="modal-overlay" id="updateModal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="updateModalTitle">
+      <div class="modal-header">
+        <div class="modal-icon modal-icon--info">&#8593;</div>
+        <h3 class="modal-title" id="updateModalTitle">Update available</h3>
+      </div>
+      <div class="modal-body">
+        <p class="modal-lead" id="updateModalLead"></p>
+        <div class="update-progress" id="updateProgress" hidden>
+          <div class="update-progress-bar"><div class="update-progress-fill" id="updateProgressFill"></div></div>
+          <div class="update-progress-text" id="updateProgressText"></div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="modal-btn-secondary" id="updateModalLater">Later</button>
+        <button class="modal-btn-primary" id="updateModalNow">Update</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Share link for the session folder uploaded to gofile.io when the session ends. -->
   <div class="modal-overlay" id="uploadModal" hidden>
     <div class="modal-card">
@@ -686,7 +707,7 @@
   <div class="welcome-overlay" id="welcomeOverlay" hidden>
     <div class="welcome-card">
       <div class="welcome-icon">&#128075;</div>
-      <h2 class="welcome-title">Welcome to Stealth Support</h2>
+      <h2 class="welcome-title">Welcome to Ace</h2>
       <p class="welcome-subtitle">Quick orientation in 30 seconds</p>
       <ul class="welcome-list">
         <li><b>Two roles:</b> <b>Speaker</b> hosts on a port; <b>Supporter</b> dials in to help.</li>
