@@ -403,8 +403,26 @@ function saveState() {
   } catch {}
 }
 
+// The saved place of the main window, moved fully inside a display. The
+// monitor it was on may be gone, or the resolution or scaling may have
+// changed since, which would leave the window partly or wholly off-screen.
+// Uses the display the saved bounds overlap most (or the nearest one), and
+// shrinks the size first when it is bigger than that display's work area.
+function onScreenBounds(b) {
+  const width = Math.max(1, Math.round(Number(b.width) || 400));
+  const height = Math.max(1, Math.round(Number(b.height) || 700));
+  if (typeof b.x !== 'number' || typeof b.y !== 'number') return { width, height };
+  const work = screen.getDisplayMatching({ x: Math.round(b.x), y: Math.round(b.y), width, height }).workArea;
+  const w = Math.min(width, work.width);
+  const h = Math.min(height, work.height);
+  const x = Math.min(Math.max(Math.round(b.x), work.x), work.x + work.width - w);
+  const y = Math.min(Math.max(Math.round(b.y), work.y), work.y + work.height - h);
+  return { x, y, width: w, height: h };
+}
+
 function createWindow() {
   loadState();
+  const startBounds = onScreenBounds({ x: state.x, y: state.y, width: state.width, height: state.height });
 
   // Bypass OS proxy auto-detection (WPAD). On Windows "Automatically detect
   // settings" is on by default; with no WPAD server every request waits for that
@@ -426,10 +444,10 @@ function createWindow() {
   }, { useSystemPicker: false });
 
   win = new BrowserWindow({
-    x: state.x ?? undefined,
-    y: state.y ?? undefined,
-    width: state.width,
-    height: state.height,
+    x: startBounds.x,
+    y: startBounds.y,
+    width: startBounds.width,
+    height: startBounds.height,
     minWidth: 360,
     minHeight: 200,
     useContentSize: true,
