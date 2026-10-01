@@ -198,8 +198,8 @@ const DEFAULT_STATE = {
     },
   },
   meeting: {
-    kind: 'hiring',
-    hiringType: 'intro',     // intro | technical | ceo | hr
+    kind: 'hiring',             // hiring | team (follows from type)
+    type: 'recruiter_screen',   // a key of MEETING_TYPES
   },
   avoidPhrases: '',   // filled from defaults/avoid.txt on first run
   // Remembered personal profile, pre-filled into the New-session form.
@@ -276,7 +276,9 @@ function loadState() {
       network: { ...DEFAULT_STATE.network, ...(raw.network || {}) },
       answer: { ...DEFAULT_STATE.answer, ...(raw.answer || {}) },
       knowledge: { ...DEFAULT_STATE.knowledge, ...(raw.knowledge || {}) },
-      meeting: { ...DEFAULT_STATE.meeting, ...(raw.meeting || {}) },
+      meeting: (raw.meeting && (raw.meeting.type || raw.meeting.hiringType))
+        ? { type: normalizeMeetingType(raw.meeting.type || raw.meeting.hiringType) }
+        : { ...DEFAULT_STATE.meeting },
       hotkeys: { ...HOTKEY_DEFAULTS, ...(raw.hotkeys || {}) },
     };
   } catch {
@@ -2331,18 +2333,38 @@ ipcMain.handle('set-transcription-config', (_e, cfg) => {
   saveState();
 });
 
+// Meeting types, in two groups: hiring interviews (you are the candidate) and
+// team meetings (you are on the job). The type picks the answer rules below.
+const MEETING_TYPES = {
+  recruiter_screen:   { kind: 'hiring', label: 'Recruiter / HR screen' },
+  technical_interview:{ kind: 'hiring', label: 'Technical interview' },
+  live_coding:        { kind: 'hiring', label: 'Live coding / system design' },
+  leader_round:       { kind: 'hiring', label: 'CTO / CEO / founder round' },
+  standup:            { kind: 'team',   label: 'Engineering standup' },
+  one_on_one:         { kind: 'team',   label: '1:1 with manager' },
+  sprint_review:      { kind: 'team',   label: 'Sprint review + retro + preview' },
+  sprint_planning:    { kind: 'team',   label: 'Sprint planning' },
+  design_review:      { kind: 'team',   label: 'Design / technical review' },
+  stakeholder_update: { kind: 'team',   label: 'Wider team / stakeholder update' },
+};
+// Stage names saved by older versions.
+const LEGACY_MEETING_TYPES = { intro: 'recruiter_screen', hr: 'recruiter_screen', technical: 'technical_interview', ceo: 'leader_round' };
+function normalizeMeetingType(t) {
+  t = String(t || '');
+  if (MEETING_TYPES[t]) return t;
+  return LEGACY_MEETING_TYPES[t] || 'recruiter_screen';
+}
+
 function getMeetingConfig() {
   const m = state.meeting || {};
-  const hiringType = ['intro', 'technical', 'ceo', 'hr'].includes(m.hiringType) ? m.hiringType : 'intro';
-  return { kind: 'hiring', hiringType };
+  const type = normalizeMeetingType(m.type || m.hiringType);
+  return { kind: MEETING_TYPES[type].kind, type };
 }
 ipcMain.handle('get-meeting-config', () => getMeetingConfig());
 ipcMain.handle('set-meeting-config', (_e, cfg) => {
-  const next = { ...getMeetingConfig(), ...(cfg || {}) };
-  next.kind = 'hiring';
-  if (!['intro', 'technical', 'ceo', 'hr'].includes(next.hiringType)) next.hiringType = 'intro';
-  delete next.roster;
-  state.meeting = next;
+  cfg = cfg || {};
+  const type = normalizeMeetingType(cfg.type || cfg.hiringType || getMeetingConfig().type);
+  state.meeting = { kind: MEETING_TYPES[type].kind, type };
   saveState();
   schedulePromptCacheWarm();
   return getMeetingConfig();
@@ -3558,12 +3580,15 @@ function buildKnowledgeContext(mode) {
     profileParts.push(`Salary expectation: ${activeSalary.amount} ${activeSalary.currency} ${per} (state it plainly if asked; open to discussion)`);
   }
 
+  // In a team meeting the support notes and earlier meetings are the work
+  // context (tickets, PRs, numbers, owners), so they matter even when compact.
+  const team = getMeetingConfig().kind === 'team';
   const blocks = [
     { title: 'CANDIDATE PROFILE', text: profileParts.join('\n'), weight: 0 },
-    { title: 'CANDIDATE RESUME / CV', text: join(k.cv), weight: 3 },
-    { title: 'JOB DESCRIPTION', text: join(k.jd), weight: 2 },
-    { title: 'SUPPORT / KNOWLEDGE BASE', text: join(k.support), weight: 3 },
-    { title: 'PREVIOUS MEETING RECORDS', text: join(k.meetings), weight: compact ? 0 : 1 },
+    { title: team ? 'RESUME / CV' : 'CANDIDATE RESUME / CV', text: join(k.cv), weight: team ? 1 : 3 },
+    { title: 'JOB DESCRIPTION', text: join(k.jd), weight: team ? 1 : 2 },
+    { title: team ? 'WORK CONTEXT (tickets, PRs, numbers, blockers, owners)' : 'SUPPORT / KNOWLEDGE BASE', text: join(k.support), weight: 3 },
+    { title: 'PREVIOUS MEETING RECORDS', text: join(k.meetings), weight: team ? 2 : (compact ? 0 : 1) },
   ].filter((b) => b.text);
 
   const present = blocks
@@ -3578,7 +3603,7 @@ function buildKnowledgeContext(mode) {
   const weighted = blocks.filter((b) => b.weight > 0 && b.text);
   const weightSum = weighted.reduce((s, b) => s + b.weight, 0) || 1;
   const parts = [];
-  if (profileParts.length) parts.push('CANDIDATE PROFILE (this person is YOU):\n' + profileParts.join('\n'));
+  if (profileParts.length) parts.push((team ? 'YOUR PROFILE' : 'CANDIDATE PROFILE') + ' (this person is YOU):\n' + profileParts.join('\n'));
   for (const b of weighted) {
     const cap = Math.max(1200, Math.floor(totalCap * (b.weight / weightSum)));
     parts.push(`${b.title}:\n${clipText(b.text, cap)}`);
@@ -3737,21 +3762,103 @@ function whoAmILine() {
   return 'The setup profile name, when present, is you.';
 }
 
-// Per-stage guidance, chosen on the "Interview stage" step of the wizard.
-const STAGE_GUIDANCE = {
-  intro: `STAGE — INTRO / RECRUITER SCREENING. The other person is usually a recruiter, not an engineer. Be warm, friendly and easy to talk to. Use plain everyday words; avoid technical jargon and acronyms unless they use them first, and when a technology must be named add a few words on what it is for. Keep your story short: who you are, what you do now, what you are looking for and why this role fits. No lectures, no deep dives.`,
-  technical: `STAGE — TECHNICAL INTERVIEW. Show seniority through substance, never through buzzwords or self-praise: say what you actually did, which tools and techniques you used, which decisions you made and why, what went wrong and how you fixed it. Be accurate and concrete — real systems, real numbers, real tradeoffs from the knowledge base; if the knowledge base does not cover it, say what you do know and do not invent. Match the answer to the question: a short, simple question gets a short, simple answer (one or two sentences). A question about a project, a tricky part, an issue, a technical method, how you would handle a problem that comes up, or your past work gets a detailed, well-structured answer: context, what you did, how, and the result. If the question is ambiguous in a way that changes the answer, ask one short clarifying question instead of guessing; otherwise just answer.`,
-  hr: `STAGE — HR INTERVIEW. Show ownership, reliability and maturity: how you take responsibility, work with a team, handle feedback and disagreement, and communicate with stakeholders and clients. Show seniority quietly — examples over adjectives. Be clear and honest on logistics: availability, notice period, working hours, remote setup, and salary expectation (use the profile salary when given). Keep it human and concise.`,
-  ceo: `STAGE — CEO / LEADERSHIP CALL. Show ownership, leadership and product understanding: how your work moved the business, how you set priorities, how you handle ambiguity and risk, how you communicate with stakeholders and clients, and how you make the people around you better. Think like a partner, not an employee: tie answers to outcomes, users and money. Keep answers focused and confident rather than long. Only when they invite your questions, ask a sharp one about vision, priorities or how success is measured.`,
+// Per-type guidance, chosen on the "Meeting type" step of the wizard or the
+// drop-down during the call. Each block is the logic of that kind of meeting:
+// what usually happens in it and how each kind of turn is answered.
+const MEETING_GUIDANCE = {
+  // ── Hiring interviews ──
+  recruiter_screen: `TYPE: RECRUITER / HR SCREEN (also agency screens and intro calls). The usual flow: the recruiter introduces the company, asks you to introduce yourself, asks a few experience questions, then logistics (location, contract, availability, salary, remote), next steps, and "any questions for me?". The other person is usually not an engineer: plain everyday words, no jargon unless they use it first.
+- "Tell me about yourself": name, title, years of experience. Your stack by layer (frontend, backend, database, cloud and infra, CI/CD, testing). What you enjoy most. Your most recent role and one responsibility there (leading, mentoring, architecture). One line on why this role fits. Close with "That's my brief introduction." About 120 to 180 words.
+- Achievement question: one project, what you built, and the impact with a number (time saved, percent faster, cost cut). If they ask whether it was measured, be honest: say it's an estimate and how you noticed it.
+- "Why us?": three reasons, in this order: the mission, the technical challenge, and how it matches your past work.
+- Logistics: short and direct. Location, work type, availability, notice period. Salary: give the profile salary only if there is one, otherwise ask what their budget range is.
+- When they talk about the company: react briefly and positively, and mention one specific thing they said.
+- When they invite your questions: ask one or two of these: team structure and size, the daily or weekly routine, the next stages of the process, the length of the engagement (for contract roles).`,
+
+  technical_interview: `TYPE: TECHNICAL INTERVIEW (an engineer or hiring manager asks technical questions). The usual flow: a definition question, then "have you used it?", then a deeper follow-up, then a scenario change ("now cost doesn't matter", "now it's a scanned PDF"), then an incident or debugging scenario. Show seniority through substance, not buzzwords.
+- Concept question: a one-sentence definition, then how it differs from the related concept, then a real use case from your work. 3 to 6 sentences.
+- "Have you used X?": yes or no first, then where, what for, and one lesson learned (like "the real bottleneck was retrieval quality, not generation").
+- Scenario change: restate the new constraint in a few words, then say what you'd change and why. Name concrete tools, models and services.
+- Debugging or production incident: gather context first (logs, recent deploys, what changed), then isolate, then a quick fix or rollback, then a root-cause write-up, then a runbook or alert so it doesn't happen again.
+- Trade-offs: when you choose something, always mention cost, latency, accuracy or maintainability.
+- If you don't know something, say what you do know that's close and how you'd find out. Don't bluff.`,
+
+  live_coding: `TYPE: LIVE CODING / SYSTEM DESIGN ON A WHITEBOARD. The usual flow: the interviewer shares a task link, you may take a minute, then you walk through the diagram or code while they interrupt with "what does this module do?" or "are you using an external source?". The task is whatever they described in the transcript or what was typed in the box.
+- Before starting: repeat the task in one sentence, ask one or two clarifying questions (scale, inputs, constraints), then state your plan in 3 steps.
+- While working: narrate briefly, one step at a time ("First I'll add the orchestrator that takes the company name...").
+- When they ask "what does this do?": answer about that component only, in 2 or 3 sentences: its input, what it does, its output. Never postpone with "I'll explain later".
+- Design: data sources, then processing or agents, then storage, then output. Then reliability (retries, validation, rate limits) and cost.
+- Code: say the approach and the complexity, handle edge cases out loud, and suggest a test.
+- If they ask whether you're using outside help, answer plainly and briefly.`,
+
+  leader_round: `TYPE: CTO / CEO / FOUNDER ROUND. The usual flow: the leader talks a lot about the company, its structure and the product; then asks what your typical day looks like, how you work with product people, how you'd handle systems you don't know yet. They are checking ownership and communication. Think like a partner, not an employee.
+- While they talk about the company: short, specific reactions that show you understood ("So the team is flat and engineers talk to product directly. That's how I like to work.").
+- "Typical day" or "how did your team work": describe the rhythm (daily standup, Monday planning, Friday review and retro, Slack updates, the ticketing tool) and your role in it.
+- Ownership questions: show you take decisions end to end, talk directly to product and business people, and raise blockers early.
+- Business sense: tie technical choices to customers, cost or speed of delivery.
+- When they invite your questions: product direction, what success looks like in the first 3 months, team growth, and for startups funding or runway.`,
+
+  // ── Team meetings ──
+  standup: `TYPE: ENGINEERING STANDUP / DAILY STATUS UPDATE. The chair calls names in turn, each person gives an update, then short follow-ups.
+- Your update when called (about 80 to 180 words): open with "Okay. So for me..." or "Yes, so yesterday...". Then per ticket, most important first: ticket ID, what was done (merged, PR opened, deployed to dev, staging or main, dry run), the key number (rows processed, matched vs unmatched, cost), and any gap or bug you found and what you did about it. Then what you're waiting on: whose review or which decision, by name. Then which ticket you move to next. Close with "That's all for me."
+- "Are you blocked?": yes or no, what exactly, and what you'll work on in the meantime.
+- "Did you tell X what they need?": "Yes, I sent the runbook and they'll run it." or say when you will.
+- Asked to hand something to someone else: agree, and thank them for the pointer.
+- You need something from a teammate: name the ticket, what you need, and offer to send the exact steps.`,
+
+  one_on_one: `TYPE: 1:1 WITH YOUR MANAGER. Two people from the same team, usually looking at results on screen.
+- Greeting: warm and short ("I'm fine, thanks. Good afternoon.").
+- "Where does this number come from?": explain where the data comes from, the root cause (timing gap, failed scheduled run, missing field), and whether data is lost or safe.
+- Walking through results on screen: step by step, the input, the top candidate, the decision (auto-apply, create new, manual review), and why.
+- Bring one question or decision you need from them (priorities, how to handle a big review backlog, which option to take).
+- If you have no clear plan yet, say what you'll look into first.
+- Agree on next steps and confirm the follow-up ("Okay, I'll Slack you the steps before production.").
+- Asked for feedback on a process (like specs): an honest answer with a reason.`,
+
+  sprint_review: `TYPE: SPRINT REVIEW, THEN RETRO AND PREVIEW.
+- Your demo in the review (about 120 to 200 words): status in one line (which environment it runs in, test, staging or prod, and whether it works end to end). What it does as a pipeline: ingest, resolve, create or update, write to the DB. Walk through one or two concrete examples on screen ("Here the name and domain are a strong match, so it's auto-applied. Here two candidates match, so it goes to manual review."). The key numbers (auto-applied vs manual review, rows processed). What's left, and when it goes to production.
+- Retro: one thing that went well, giving credit by name, and one thing to improve with a concrete suggestion.
+- Preview: what you'll pick up next sprint.
+- When someone clarifies something: thank them and say how it changes your work.`,
+
+  sprint_planning: `TYPE: SPRINT PLANNING (plus the prod deploy plan).
+- Weekend round: one or two friendly sentences about your weekend, then pass it on (don't ask back). If you missed the question, ask what the round is about.
+- Your priorities (about 60 to 150 words): the primary task first, then the secondary one. For each, the order of steps (address PR comments, test locally against real data, request review, merge to development, staging, production dry run, import) and a realistic ETA ("by Wednesday").
+- Terminology questions ("do you mean the DB migration or the full job?"): say exactly which one, and where the code is right now (branch, PR, merged).
+- Commitments: say when you'll request review or push ("I'll request the review right after this meeting.").`,
+
+  design_review: `TYPE: DESIGN / TECHNICAL REVIEW (architecture sessions, algorithm reviews, adapter reviews). One topic debated in depth. This is a discussion, not a presentation: keep each turn under 100 words.
+- "Do you agree?": agree or disagree first, then the reason in 1 to 3 sentences (cost, consistency, keeping labeled data, fewer moving parts).
+- Proposals: describe them as components and configuration (for example a shared flow with a per-caller policy: allowed granularity, distance and ambiguity thresholds, and a fallback when nothing is safe).
+- Data and ML choices: favor approaches that keep labeled data for later model training. Mention defaults for missing values and how they get replaced later.
+- If you haven't tested with real or full data yet, say so plainly and say when you will.`,
+
+  stakeholder_update: `TYPE: WIDER TEAM / STAKEHOLDER UPDATE (weekly client update, product check-in). The audience includes non-engineers: less jargon than in the engineering standup, and no lists of ticket numbers.
+- Taking your turn: "Okay, I'll go next."
+- Your update (about 100 to 180 words): lead with the main problem or result of the week and its metric ("about 90 percent of rows were going to manual review, which isn't sustainable"). Then in plain words what you tried, what worked and what didn't. Then what's next and what you need from anyone.
+- Product check-in with the manager: show where to see the results on the platform, say whether a run was a dry run (no effect on the DB), give the headline numbers, and say when the PR will be ready for deploy.`,
 };
-const ANSWER_SHAPE = `LENGTH — fit the question. A simple or yes/no question gets one or two short sentences. A story, project, problem-solving or "tell me about" question gets a fuller answer with concrete facts, still spoken length (about 45–90 seconds). Never pad, and never cut substance the question deserves. Answer from the knowledge base first, then take a small position if it is natural.`;
-const QUESTION_POLICY = `QUESTIONS BACK — the default is NO question at the end of an answer: finish on the answer itself. Ask the interviewer something only when (a) their question is ambiguous or missing a detail you truly need to answer it well — then ask one short clarifying question, (b) they explicitly invite your questions, or (c) the knowledge base has no information and you must ask rather than invent. Never add a question just to seem engaged, and never end more than one answer in a row with a question.`;
+
+// Shared by every meeting type.
+const TURN_RULES = `TURN RULES:
+- Output only the words you say out loud. Never start with your own name or a speaker tag like "Name:"; the transcript tags are for reading, not for your answer.
+- Start with a short acknowledgement when it's natural ("Okay.", "Yeah, that makes sense.", "Good question.").
+- Use concrete details from the knowledge base: ticket IDs, PR numbers, row counts, percentages, costs, environments (local, dev, staging, prod), people's names. Never invent facts that contradict it. If a detail is missing, stay general rather than making up a number.
+- Match the length to the moment. Greeting, small talk or a confirmation: 1 or 2 sentences. A direct follow-up question: 2 to 4 sentences, the answer first, then one supporting detail. Your turn to give an update or answer an open question: the length and structure given for this meeting type.
+- If the question was unclear or the audio dropped, ask them to repeat in one short sentence.
+- End a full turn with a clear hand-off that fits the moment ("That's all from me.", "That's my brief introduction.").`;
+const QUESTION_POLICY = `QUESTIONS BACK — the default is NO question at the end of an answer: finish on the answer itself. Ask something only when (a) their question is ambiguous or missing a detail you truly need to answer it well — then ask one short clarifying question, (b) they explicitly invite your questions or the meeting rules above call for one, or (c) the knowledge base has no information and you must ask rather than invent. Never add a question just to seem engaged, and never end more than one answer in a row with a question.`;
 
 function meetingStanceBlock() {
-  const { hiringType } = getMeetingConfig();
-  const kb = `${whoAmILine()} This is a 1:1 hiring call. Transcript lines are tagged with who spoke: Interviewer, or the speaker's own name when the app can read it off the meeting screen. Every tag that is not your name is the other side. The setup profile name is you. Your knowledge base is whatever was uploaded (CV and/or JD and/or support). Missing files are fine. You are the candidate, not a helper who follows their lead.`;
-  const typeHint = STAGE_GUIDANCE[hiringType] || '';
-  return `MEETING STANCE — HIRING INTERVIEW (${hiringType}): ${kb}\n${typeHint}\n${ANSWER_SHAPE}\n${QUESTION_POLICY} If they state an opinion, do not auto-agree. Never invent experience. One spoken turn only.`;
+  const { kind, type } = getMeetingConfig();
+  const tags = `Transcript lines are tagged with who spoke: Interviewer, or the speaker's own name when the app can read it off the meeting screen. Every tag that is not your name is someone else. The setup profile name is you.`;
+  if (kind === 'team') {
+    const who = `${whoAmILine()} This is a meeting at your current job, with your team. ${tags} Several people may speak; the chair usually calls names in turn. Your knowledge base (CV, support notes, previous meeting records) is your work context: current tickets and their status, open PRs, recent numbers, blockers, who owns what. Missing files are fine; then stay general and never invent tickets or numbers.`;
+    const between = `Between your turns, reactions are tiny: "Morning.", "Thanks.", "Yeah, I can hear you clearly." When your name is called, give your turn in full.`;
+    return `MEETING STANCE — TEAM MEETING: ${who}\n${between}\n${MEETING_GUIDANCE[type]}\n${TURN_RULES}\n${QUESTION_POLICY} If someone states an opinion, do not auto-agree. One spoken turn only.`;
+  }
+  const who = `${whoAmILine()} This is a hiring call. ${tags} Your knowledge base is whatever was uploaded (CV and/or JD and/or support). Missing files are fine. You are the candidate, not a helper who follows their lead.`;
+  return `MEETING STANCE — HIRING INTERVIEW: ${who}\n${MEETING_GUIDANCE[type]}\n${TURN_RULES}\n${QUESTION_POLICY} If they state an opinion, do not auto-agree. Never invent experience. One spoken turn only.`;
 }
 
 function assembleStaticSystem(mode) {
@@ -3789,9 +3896,11 @@ function assembleStaticSystem(mode) {
 }
 
 function clipMeetingTranscript(mt) {
-  const lines = String(mt || '').split(/\n/).map((l) => l.trim()).filter(Boolean).slice(-4);
+  const team = getMeetingConfig().kind === 'team';
+  const lines = String(mt || '').split(/\n/).map((l) => l.trim()).filter(Boolean).slice(team ? -8 : -4);
+  const cap = team ? 1500 : 800;
   let s = lines.join('\n');
-  if (s.length > 800) s = s.slice(-800);
+  if (s.length > cap) s = s.slice(-cap);
   return s;
 }
 
@@ -3804,9 +3913,9 @@ function formatAnswerUserTurn(q, transcript, mode) {
     parts.push('Recent meeting transcript (last beats only; each line is Who: what they said):\n\n' + mt);
   }
   if (ask) {
-    parts.push('The candidate typed this question in the input box. Answer it from the knowledge base. Use the meeting transcript only if it helps.\n\n' + ask);
+    parts.push('You typed this question in the input box. Answer it from the knowledge base, following the rules for this meeting type. Use the meeting transcript only if it helps.\n\n' + ask);
   } else {
-    parts.push('The candidate did not type a question. See the last transcript lines: each is tagged with who said it. Respond as the candidate to what was said last: answer the question they asked, or react briefly and naturally to their statement. If several people spoke, address what they said together, the most recent first. Always respond; never stay silent and never answer with a placeholder.');
+    parts.push('Nothing was typed. See the last transcript lines: each is tagged with who said it. Respond as yourself to what was said last, following the rules for this meeting type (no speaker tag in front): answer the question they asked, or react briefly and naturally to their statement. If several people spoke, address what they said together, the most recent first. Always respond; never stay silent and never answer with a placeholder.');
   }
   return parts.join('\n\n');
 }
@@ -3844,6 +3953,41 @@ function spokenSanitize(text, mode) {
     s = s.replace(/[ \t]{2,}/g, ' ');
   }
   return s;
+}
+
+// Spoken answers sometimes copy the transcript's "Who:" tag and begin with
+// "Daniel: ...". Holds back the first few characters of the stream until it is
+// clear whether they are such a tag (the profile name, or a generic one) and
+// drops it. flush() hands back whatever is still held when the stream ends.
+function makeSpeakerTagStripper(mode) {
+  if (mode && mode !== 'ANSWER') return { push: (t) => t, flush: () => '' };
+  const name = String((activeProfile && activeProfile.name) || '').trim();
+  const tags = new Set(['candidate', 'me', 'you', 'answer', 'response']);
+  if (name) { tags.add(name.toLowerCase()); tags.add(name.split(/\s+/)[0].toLowerCase()); }
+  let head = '';
+  let done = false;
+  let trimNext = false; // the tag came off: drop the space that followed it
+  return {
+    push(piece) {
+      if (trimNext) { piece = piece.replace(/^\s+/, ''); if (piece) trimNext = false; }
+      if (done) return piece;
+      head += piece;
+      const m = head.match(/^\s*([A-Za-z][A-Za-z '\-]{0,40}):[ \t]*/);
+      if (m) {
+        done = true;
+        const out = tags.has(m[1].trim().toLowerCase()) ? head.slice(m[0].length) : head;
+        trimNext = !out && out !== head;
+        head = '';
+        return out;
+      }
+      // Still possibly a tag: letters/spaces only so far, and short.
+      if (/^\s*[A-Za-z][A-Za-z '\-]{0,40}$/.test(head) || /^\s*$/.test(head)) return '';
+      done = true;
+      const out = head; head = '';
+      return out;
+    },
+    flush() { done = true; const out = head; head = ''; return out; },
+  };
 }
 
 async function generateAnswer(question, images, forcedMode, transcript) {
@@ -3884,6 +4028,7 @@ async function generateAnswer(question, images, forcedMode, transcript) {
   let full = '';
   const t0 = Date.now();
   let firstToken = true;
+  const tagStrip = makeSpeakerTagStripper(mode);
   try {
     await streamChat({
       provider,
@@ -3894,7 +4039,7 @@ async function generateAnswer(question, images, forcedMode, transcript) {
       convId: answerConvId(),
       maxTokens: maxTokensForMode(mode),
       onDelta: (delta) => {
-        const piece = spokenSanitize(delta, mode);
+        const piece = tagStrip.push(spokenSanitize(delta, mode));
         if (!piece) return;
         if (firstToken) {
           firstToken = false;
@@ -3905,6 +4050,11 @@ async function generateAnswer(question, images, forcedMode, transcript) {
         if (win && !win.isDestroyed()) win.webContents.send('answer-chunk', piece);
       },
     });
+    const rest = tagStrip.flush();
+    if (rest) {
+      full += rest;
+      if (win && !win.isDestroyed()) win.webContents.send('answer-chunk', rest);
+    }
   } catch (e) {
     clearTimeout(watchdog);
     if (e.name === 'AbortError' && ac._timedOut && win && !win.isDestroyed()) {
@@ -4044,6 +4194,7 @@ async function startSpeculative(question, forcedMode, transcript) {
   // when the user actually commits (or the text matches on submit).
 
   let speculativeBuffer = '';
+  const tagStrip = makeSpeakerTagStripper(specMode);
   try {
     await streamChat({
       provider,
@@ -4054,7 +4205,7 @@ async function startSpeculative(question, forcedMode, transcript) {
       convId: answerConvId(),
       maxTokens: maxTokensForMode(specMode),
       onDelta: (delta) => {
-        const piece = spokenSanitize(delta, specMode);
+        const piece = tagStrip.push(spokenSanitize(delta, specMode));
         if (!piece) return;
         speculativeBuffer += piece;
         ac._buffer = speculativeBuffer;
@@ -4063,6 +4214,12 @@ async function startSpeculative(question, forcedMode, transcript) {
         }
       },
     });
+    const rest = tagStrip.flush();
+    if (rest) {
+      speculativeBuffer += rest;
+      ac._buffer = speculativeBuffer;
+      if (speculativeCommitted && ac._flushed && win && !win.isDestroyed()) win.webContents.send('answer-chunk', rest);
+    }
   } catch (e) {
     if (e.name === 'AbortError') {
       if (speculativeCommitted && win && !win.isDestroyed()) {

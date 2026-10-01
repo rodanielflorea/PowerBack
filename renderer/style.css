@@ -1552,6 +1552,7 @@ textarea.meet-editbox {
 .mode-choice-card:active { transform: translateY(0); box-shadow: var(--shadow-sm); }
 .mode-choice-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .mode-choice-icon {
+  color: var(--accent);
   flex-shrink: 0;
   width: 46px; height: 46px;
   display: flex; align-items: center; justify-content: center;
@@ -1595,7 +1596,57 @@ textarea.meet-editbox {
 .link-btn:hover { text-decoration: underline; }
 
 /* ── Wizard: stage cards, nav, profile labels, salary ───────── */
-.stage-cards { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 14px; }
+.stage-cards { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 8px; }
+/* Meeting groups: an accordion, one group open at a time (details[name]). */
+.stage-group { margin-top: 12px; }
+.stage-group-head {
+  -webkit-app-region: no-drag;
+  list-style: none; cursor: pointer; user-select: none;
+  display: flex; align-items: center; gap: 8px;
+  padding: 11px 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--bg); box-shadow: var(--shadow-sm);
+  transition: border-color var(--t) var(--ease), background var(--t) var(--ease);
+}
+.stage-group-head::-webkit-details-marker { display: none; }
+.stage-group-head:hover { border-color: rgba(37,99,235,.45); }
+.stage-group-head::after {
+  content: ""; width: 7px; height: 7px; margin-left: 4px;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg) translateY(-2px); transition: transform var(--t) var(--ease);
+}
+.stage-group[open] > .stage-group-head { border-color: var(--accent); background: var(--accent-dim); }
+.stage-group[open] > .stage-group-head::after { transform: rotate(225deg) translateY(-2px); }
+.stage-group-icon { flex-shrink: 0; display: flex; font-size: 20px; color: var(--muted); }
+.stage-group[open] > .stage-group-head .stage-group-icon { color: var(--accent); }
+
+/* Line icons (inline SVG, sized by font-size, colored by color). */
+.ico {
+  width: 1em; height: 1em; flex-shrink: 0;
+  fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.stage-icon .ico, .mode-choice-icon .ico { width: 22px; height: 22px; }
+.stage-card:has(input:checked) .stage-icon { background: var(--accent); border-color: var(--accent); color: #fff; }
+.meta-ico { display: inline-flex; align-items: center; gap: 4px; }
+.meta-ico .ico { font-size: 13px; }
+.answer-script-header .ico { font-size: 14px; vertical-align: -2px; margin-right: 6px; }
+.welcome-icon .ico { font-size: 36px; color: var(--accent); }
+.modal-icon .ico { font-size: 15px; }
+.profile-mini-btn .ico, .history-del .ico, .session-card-del .ico { font-size: 14px; vertical-align: -2px; }
+.stage-group-text { flex: 1; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.stage-group-label { font-size: 14px; font-weight: 650; color: var(--text); }
+.stage-group-sub { font-size: 12px; color: var(--muted); }
+.stage-group-count {
+  font-size: 11px; font-weight: 650; color: var(--muted);
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface); border: 1px solid var(--border);
+}
+/* Scrolled up under the title bar: no drag/no-drag area of its own (see
+   renderer.js, keepTitlebarDraggable). */
+.under-titlebar { -webkit-app-region: initial !important; }
+.stage-group > .stage-cards { margin-top: 10px; }
 .stage-card {
   -webkit-app-region: no-drag;
   display: flex; align-items: center; gap: 12px;
@@ -1608,6 +1659,7 @@ textarea.meet-editbox {
 .stage-card:hover { border-color: rgba(37,99,235,.45); box-shadow: var(--shadow); transform: translateY(-1px); }
 .stage-card:has(input:checked) { border-color: var(--accent); background: var(--accent-dim); box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
 .stage-icon {
+  color: var(--accent);
   flex-shrink: 0; width: 42px; height: 42px; border-radius: 13px;
   display: flex; align-items: center; justify-content: center; font-size: 21px;
   background: linear-gradient(135deg, rgba(37,99,235,.14), rgba(37,99,235,.05));
@@ -2579,6 +2631,10 @@ textarea.meet-editbox {
 }
 .csel-opt:hover { background: var(--surface); }
 .csel-opt.selected { background: var(--accent); color: #fff; }
+.csel-group {
+  padding: 7px 11px 3px; font-size: 10.5px; font-weight: 650; letter-spacing: .4px;
+  text-transform: uppercase; color: var(--muted); user-select: none;
+}
 .csel.csel-compact .csel-btn { height: 22px; padding-top: 2px; padding-bottom: 2px; font-size: 12px; }
 .field .csel { display: block; }
 .field .csel .csel-btn { display: block; }

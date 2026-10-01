@@ -122,7 +122,16 @@ function makeCustomSelect(sel, compact) {
     const cur = Array.from(sel.options).find((o) => o.value === sel.value);
     btn.textContent = cur ? cur.textContent : "";
     itemsBox.innerHTML = "";
+    let group = null;
     for (const o of Array.from(sel.options)) {
+      const og = o.parentElement && o.parentElement.tagName === "OPTGROUP" ? o.parentElement : null;
+      if (og && og !== group) {
+        const head = document.createElement("div");
+        head.className = "csel-group";
+        head.textContent = og.label;
+        itemsBox.appendChild(head);
+      }
+      group = og;
       const item = document.createElement("div");
       item.className = "csel-opt" + (o.value === sel.value ? " selected" : "");
       item.textContent = o.textContent;
@@ -191,7 +200,7 @@ function makeCustomSelect(sel, compact) {
 // Apply to every <select> in the document after DOM is ready.
 // compact=true for the small presetbar selects.
 (function applyCustomSelects() {
-  const compactIds = new Set(["answerModelHeader", "answerProviderSelect", "hiringTypeSelect"]);
+  const compactIds = new Set(["answerModelHeader", "answerProviderSelect", "meetingTypeSelect"]);
   document.querySelectorAll("select").forEach((sel) => {
     makeCustomSelect(sel, compactIds.has(sel.id));
     if (sel.id === "answerProviderSelect" && sel.parentElement) {
@@ -557,10 +566,7 @@ const profileBackBtn = document.getElementById("profileBackBtn");
 const profileNextBtn = document.getElementById("profileNextBtn");
 if (stageBackBtn) stageBackBtn.addEventListener("click", () => showModeSelect());
 if (stageNextBtn) stageNextBtn.addEventListener("click", async () => {
-  const htEl = document.querySelector('input[name="setupHiringType"]:checked');
-  const hiringType = (htEl && htEl.value) || "intro";
-  if (window.api.setMeetingConfig) await window.api.setMeetingConfig({ kind: "hiring", hiringType });
-  if (typeof applyMeetingConfigUi === "function") applyMeetingConfigUi({ kind: "hiring", hiringType });
+  await saveWizardMeetingType();
   showProfile();
 });
 if (profileBackBtn) profileBackBtn.addEventListener("click", () => showStage());
@@ -611,8 +617,8 @@ function renderHistory() {
     b.innerHTML =
       `<span class="history-title">${head || '<span class="history-untitled">Untitled interview</span>'}</span>` +
       `<span class="history-meta">` +
-        (p.name ? `<span>👤 ${esc(p.name)}</span>` : "") +
-        (p.timezone ? `<span>🕒 ${esc(p.timezone)}</span>` : "") +
+        (p.name ? `<span class="meta-ico"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>${esc(p.name)}</span>` : "") +
+        (p.timezone ? `<span class="meta-ico"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>${esc(p.timezone)}</span>` : "") +
         (when ? `<span>${esc(when)}</span>` : "") +
         `<span>${s.turnCount || 0} turns</span>` +
       `</span>`;
@@ -621,7 +627,7 @@ function renderHistory() {
     del.type = "button";
     del.className = "history-del";
     del.title = "Delete this session";
-    del.textContent = "🗑";
+    del.innerHTML = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="m6 7 1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>';
     del.addEventListener("click", async (e) => {
       e.stopPropagation();
       if (!window.confirm(`Delete "${(s.company || "") + (s.position ? " · " + s.position : "") || s.name || "this session"}"? This also removes its saved folder.`)) return;
@@ -742,10 +748,7 @@ if (setupRoleSupporterV) setupRoleSupporterV.addEventListener("change", syncSetu
 syncSetupRoleV();
 
 if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
-  const htEl = document.querySelector('input[name="setupHiringType"]:checked');
-  const hiringType = (htEl && htEl.value) || "intro";
-  if (window.api.setMeetingConfig) await window.api.setMeetingConfig({ kind: "hiring", hiringType });
-  if (typeof applyMeetingConfigUi === "function") applyMeetingConfigUi({ kind: "hiring", hiringType });
+  await saveWizardMeetingType();
   const sup = false; // supporter mode is not offered in this build
   const chosenRole = "speaker";
   const patch = { role: chosenRole };
@@ -867,7 +870,7 @@ function renderContinueList(filter) {
     info.addEventListener("click", () => selectContinueSession(s.id));
     const del = document.createElement("button");
     del.className = "session-card-del";
-    del.textContent = "🗑";
+    del.innerHTML = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="m6 7 1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>';
     del.title = "Erase this session";
     del.addEventListener("click", async (e) => {
       e.stopPropagation();
@@ -1664,18 +1667,20 @@ async function refreshTranscriptionUI() {
 
 function applyMeetingConfigUi(cfg) {
   cfg = cfg || {};
-  const hiringType = ["intro", "technical", "ceo", "hr"].includes(cfg.hiringType) ? cfg.hiringType : "intro";
-  document.querySelectorAll('input[name="hiringType"]').forEach((el) => {
-    el.checked = el.value === hiringType;
-  });
-  const typeSel = document.getElementById("hiringTypeSelect");
+  const typeSel = document.getElementById("meetingTypeSelect");
+  const known = typeSel ? Array.from(typeSel.options).map((o) => o.value) : [];
+  const type = known.includes(cfg.type) ? cfg.type : "recruiter_screen";
   if (typeSel) {
-    typeSel.value = hiringType;
+    typeSel.value = type;
     if (typeof typeSel._cselRefresh === "function") typeSel._cselRefresh();
   }
-  document.querySelectorAll('input[name="setupHiringType"]').forEach((el) => {
-    el.checked = el.value === hiringType;
+  document.querySelectorAll('input[name="setupMeetingType"]').forEach((el) => {
+    el.checked = el.value === type;
   });
+  // Wizard accordion: open the group that holds the chosen type.
+  const card = document.querySelector('input[name="setupMeetingType"]:checked');
+  const group = card && card.closest("details.stage-group");
+  if (group) group.open = true;
 }
 
 async function refreshMeetingUI() {
@@ -1688,14 +1693,15 @@ async function persistMeeting(patch) {
   applyMeetingConfigUi(await window.api.setMeetingConfig(patch));
 }
 
-document.querySelectorAll('input[name="hiringType"]').forEach((el) => {
-  el.addEventListener("change", () => {
-    if (el.checked) persistMeeting({ hiringType: el.value });
-  });
-});
-const hiringTypeSelect = document.getElementById("hiringTypeSelect");
-if (hiringTypeSelect) {
-  hiringTypeSelect.addEventListener("change", () => persistMeeting({ hiringType: hiringTypeSelect.value }));
+// The type picked on the wizard's first step.
+async function saveWizardMeetingType() {
+  const el = document.querySelector('input[name="setupMeetingType"]:checked');
+  await persistMeeting({ type: (el && el.value) || "recruiter_screen" });
+}
+
+const meetingTypeSelect = document.getElementById("meetingTypeSelect");
+if (meetingTypeSelect) {
+  meetingTypeSelect.addEventListener("change", () => persistMeeting({ type: meetingTypeSelect.value }));
 }
 refreshMeetingUI();
 
@@ -3387,7 +3393,7 @@ function appendScriptToAnswer(el, script) {
 
   const header = document.createElement('div');
   header.className = 'answer-script-header';
-  header.textContent = '📋 Presenter Script';
+  header.innerHTML = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="M9 10h6"/><path d="M9 14h6"/><path d="M9 18h3"/></svg>Presenter Script';
   wrapper.appendChild(header);
 
   const lines = script.split('\n');
@@ -5477,3 +5483,27 @@ async function refreshMicPillTooltip() {
 }
 setTimeout(() => refreshMicPillTooltip().catch(() => {}), 500);
 window.api.onHotkeysChanged(() => refreshMicPillTooltip().catch(() => {}));
+
+// Chromium works out the window's drag areas from the page layout without
+// clipping them to scroll boxes. A clickable (no-drag) element scrolled up
+// under the title bar still claims its spot there, so the header stops moving
+// the window. Elements whose top is above the title bar's bottom edge get
+// `under-titlebar`, which clears their drag setting while they are up there.
+(function keepTitlebarDraggable() {
+  const bar = document.querySelector(".titlebar");
+  if (!bar) return;
+  let pending = null;
+  function update(box) {
+    pending = null;
+    const edge = bar.getBoundingClientRect().bottom;
+    for (const el of box.querySelectorAll("*")) {
+      el.classList.toggle("under-titlebar", el.getBoundingClientRect().top < edge);
+    }
+  }
+  document.addEventListener("scroll", (e) => {
+    const box = e.target;
+    if (!(box instanceof Element) || box === bar || bar.contains(box)) return;
+    if (pending) cancelAnimationFrame(pending);
+    pending = requestAnimationFrame(() => update(box));
+  }, true);
+})();
