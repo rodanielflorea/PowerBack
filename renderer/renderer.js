@@ -575,6 +575,20 @@ if (profileNextBtn) profileNextBtn.addEventListener("click", () => {
   if (nameEl && !nameEl.value.trim()) { nameEl.focus(); nameEl.classList.add("input-error"); setTimeout(() => nameEl.classList.remove("input-error"), 1200); return; }
   showSetup();
 });
+// Next / Start buttons: a ripple spreads from where the button was pressed.
+document.querySelectorAll(".wizard-next").forEach((b) => {
+  b.addEventListener("pointerdown", (e) => {
+    const r = b.getBoundingClientRect();
+    const size = Math.max(r.width, r.height) * 2.2;
+    const dot = document.createElement("span");
+    dot.className = "wizard-ripple";
+    dot.style.width = dot.style.height = size + "px";
+    dot.style.left = (e.clientX - r.left - size / 2) + "px";
+    dot.style.top = (e.clientY - r.top - size / 2) + "px";
+    b.appendChild(dot);
+    dot.addEventListener("animationend", () => dot.remove());
+  });
+});
 for (const id of ["stageSettingsBtn", "profileSettingsBtn"]) {
   const b = document.getElementById(id);
   if (b) b.addEventListener("click", () => openSettings());
@@ -589,7 +603,7 @@ let _historyItems = [];
 
 function setResumeMode(id) {
   resumeSessionId = id || null;
-  if (setupStartBtnV) setupStartBtnV.textContent = resumeSessionId ? "Resume interview" : "Start interview";
+  if (setupStartBtnV) setupStartBtnV.firstElementChild.textContent = resumeSessionId ? "Resume" : "Start";
   const title = setupOverlay && setupOverlay.querySelector(".setup-title");
   if (title) title.textContent = resumeSessionId ? "Materials · resume" : "Materials";
 }
