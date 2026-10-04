@@ -1269,6 +1269,11 @@ async function captureRectPng(rect) {
   return tmp;
 }
 
+// Area snip in progress, and whether the main window was showing before it
+// (it hides while the area is picked so it is not in the shot).
+let snipMode = false;
+let snipPrevVisible = true;
+
 function openSnipSelector() {
   if (selectorWin || snipMode) return;
   if (!win) return;
