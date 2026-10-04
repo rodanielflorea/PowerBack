@@ -284,7 +284,7 @@
           <h3>Starting an interview (3 steps)</h3>
           <p>On the welcome screen click <b>Interview mode</b>.</p>
           <ol class="help-steps">
-            <li><b>Meeting type</b> — pick what kind of meeting it is. <i>Hiring interviews</i>: Recruiter / HR screen, Technical interview, Live coding / system design, CTO / CEO / founder round. <i>Team meetings</i>: Engineering standup, 1:1 with manager, Sprint review + retro + preview, Sprint planning, Design / technical review, Wider team / stakeholder update. Each type has its own answer logic (for example a standup update goes ticket by ticket and ends with "That's all for me."). For team meetings, put your current tickets, PRs, numbers and blockers in <i>Support material</i>.</li>
+            <li><b>Meeting type</b> — pick what kind of meeting it is. <i>Hiring interviews</i>: Recruiter / HR screen, Technical interview, Live coding / system design, CTO / CEO / founder round, AI interview (a bot asks and scores). <i>Team meetings</i>: Engineering standup, 1:1 with manager, Sprint review + retro + preview, Sprint planning, Design / technical review, Wider team / stakeholder update. Each type has its own answer logic (for example a standup update goes ticket by ticket and ends with "That's all for me."). For team meetings, put your current tickets, PRs, numbers and blockers in <i>Support material</i>.</li>
             <li><b>Your profile</b> — your name, country, city and timezone. Pick a city and the timezone fills in by itself. Click <b>＋</b> to save the profile so next time you just pick it from the list.</li>
             <li><b>Materials</b> — drag in your <b>CV</b> and the <b>job description</b> (PDF, Word or text). Add any extra notes as <i>Support material</i>, and earlier interview notes as <i>Previous meeting records</i>. Optionally enter your <b>salary expectation</b> (amount, currency, per month / year / hour) so the app can answer that question the way you want.</li>
           </ol>
@@ -443,7 +443,7 @@
       </div>
       <p class="setup-intro">What kind of call is it? Your answers are written to fit it. Not sure? Think of who is on the call.</p>
       <details class="stage-group" name="meetingGroup" data-kind="hiring">
-        <summary class="stage-group-head"><span class="stage-group-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M3 13h18"/></svg></span><span class="stage-group-text"><span class="stage-group-label">Hiring interviews</span><span class="stage-group-sub">You are applying for a job</span></span><span class="stage-group-count">4</span></summary>
+        <summary class="stage-group-head"><span class="stage-group-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M3 13h18"/></svg></span><span class="stage-group-text"><span class="stage-group-label">Hiring interviews</span><span class="stage-group-sub">You are applying for a job</span></span><span class="stage-group-count">5</span></summary>
       <div class="stage-cards">
         <label class="stage-card">
           <input type="radio" name="setupMeetingType" value="recruiter_screen" checked hidden />
@@ -464,6 +464,11 @@
           <input type="radio" name="setupMeetingType" value="leader_round" hidden />
           <span class="stage-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg></span>
           <span class="stage-text"><span class="stage-name">CTO / CEO / founder round</span><span class="stage-desc">A talk with the boss of the company about how you work, take ownership and help the business.</span></span>
+        </label>
+        <label class="stage-card">
+          <input type="radio" name="setupMeetingType" value="ai_interview" hidden />
+          <span class="stage-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="8" width="16" height="12" rx="2.5"/><path d="M12 8V4"/><circle cx="12" cy="3.5" r="0.5"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/><path d="M2 13v3"/><path d="M22 13v3"/></svg></span>
+          <span class="stage-text"><span class="stage-name">AI interview</span><span class="stage-desc">An AI bot asks the questions and scores you. Short, clear answers with the job's keywords.</span></span>
         </label>
       </div>
       </details>
@@ -689,6 +694,7 @@
           <option value="technical_interview">Technical</option>
           <option value="live_coding">Live coding / design</option>
           <option value="leader_round">CTO / CEO / founder</option>
+          <option value="ai_interview">AI interview</option>
         </optgroup>
         <optgroup label="Team meetings">
           <option value="standup">Standup</option>
