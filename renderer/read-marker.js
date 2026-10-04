@@ -10,10 +10,11 @@
 // The matching is pure (words in, position out) so it can be tested in Node.
 (function (root) {
   const LOOKAHEAD = 3;      // groups ahead of the marker that may be matched (a skipped phrase)
-  const COVER = 0.75;       // share of a group's words that must be heard: people paraphrase a little
-  const TAIL = 1;           // one of a group's last TAIL words must be heard: the voice got to its end
-  const MIN_WORDS = 3;      // shorter pieces join a neighbour
-  const MAX_WORDS = 9;      // longer groups are cut in two
+  const COVER = 0.6;        // share of a group's words that must be heard: people paraphrase, recognition slips
+  const MOVED_ON = 0.5;     // share heard before starting the next group also finishes this one
+  const SKIP = 5;           // words of a group that may be skipped between two heard ones
+  const MIN_WORDS = 5;      // shorter pieces join a neighbour
+  const MAX_WORDS = 14;     // longer groups are cut in two
   const KEEP_WORDS = 80;    // heard words kept while waiting for a match
 
   function words(text) {
@@ -39,7 +40,7 @@
   }
 
   // Words that usually open a new phrase when said aloud.
-  const OPENERS = /^\s+(?:and|but|so|because|which|who|where|when|while|if|then|since|although|though|or|instead|without|after|before|until|unless|plus|like)\b/i;
+  const OPENERS = /^\s+(?:and|but|so|because|which|while|since|although|though|instead|unless|whereas)\b/i;
 
   // Splits prose into sense groups, keeping every character (spaces included)
   // like splitSentences. A group ends at a sentence end, after , ; : or a dash,
@@ -74,29 +75,77 @@
     return out;
   }
 
-  // Cuts a group longer than MAX_WORDS at the space nearest its middle, again
-  // and again until every piece fits.
+  // Where a long group breaks naturally: after , ; : or a dash, or before a
+  // linking word or preposition.
+  const BREAK_BEFORE = /^(?:and|but|so|because|which|while|since|although|though|instead|unless|whereas|with|without|for|to|in|on|at|by|from|into|after|before|until|when|where|who|that|if|then|or)\b/i;
+
+  // Cuts a group longer than MAX_WORDS in two, again and again until every
+  // piece fits. Prefers a natural break that leaves both halves at least
+  // MIN_WORDS long, the one nearest the middle; otherwise the space nearest
+  // the middle.
   function halve(g) {
     const n = words(g).length;
     if (n <= MAX_WORDS) return [g];
     const spaces = [];
     const re = /\s+(?=\S)/g;
     let m;
-    while ((m = re.exec(g))) spaces.push(m.index + m[0].length);
+    while ((m = re.exec(g))) spaces.push({ at: m.index + m[0].length, natural: /[,;:—–]["')\]]*$/.test(g.slice(0, m.index)) || BREAK_BEFORE.test(g.slice(m.index + m[0].length)) });
     if (!spaces.length) return [g];
     const mid = g.length / 2;
-    const at = spaces.reduce((a, b) => (Math.abs(b - mid) < Math.abs(a - mid) ? b : a));
+    const nearest = (list) => list.reduce((a, b) => (Math.abs(b.at - mid) < Math.abs(a.at - mid) ? b : a));
+    const good = spaces.filter((s) => s.natural && words(g.slice(0, s.at)).length >= MIN_WORDS && words(g.slice(s.at)).length >= MIN_WORDS);
+    const at = (good.length ? nearest(good) : nearest(spaces)).at;
     return halve(g.slice(0, at)).concat(halve(g.slice(at)));
   }
 
+  // Numbers come back from speech recognition in any form ("2549", "twenty
+  // five forty nine", "25 49"), so they are neither required nor matched.
+  const NUMBER_WORDS = new Set(('zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen ' +
+    'sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety hundred thousand million ' +
+    'billion percent point oh').split(' '));
+  function isNumberish(w) { return /^\d/.test(w) || NUMBER_WORDS.has(w); }
+
+  // A rough stem, so "updated", "updates" and "updating" meet.
+  function stem(w) { return w.length > 4 ? w.replace(/(?:ing|ed|es|s)$/, '') : w; }
+
+  // At most `max` single-letter edits apart (a slip in the recognition).
+  function near(a, b, max) {
+    if (Math.abs(a.length - b.length) > max) return false;
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      const row = [i];
+      let best = i;
+      for (let j = 1; j <= b.length; j++) {
+        row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        best = Math.min(best, row[j]);
+      }
+      if (best > max) return false;
+      prev = row;
+    }
+    return prev[b.length] <= max;
+  }
+
+  function same(a, b) {
+    if (a === b) return true;
+    const x = stem(a), y = stem(b);
+    if (x === y) return true;
+    const len = Math.min(x.length, y.length);
+    return len >= 4 && near(x, y, len >= 8 ? 2 : 1);
+  }
+
+  // The words of a group that are matched (numbers left out).
+  function key(group) { return group.filter((w) => !isNumberish(w)); }
+
   // How much of `group` (array of words) was heard, in order, in `heard`.
   // Returns { n: words matched, end: index in heard after the last match,
-  // reached: index in group after the last matched word }.
+  // reached: index in group after the last matched word }. Numbers in `heard`
+  // are passed over.
   function cover(group, heard) {
     let j = 0, n = 0, end = 0;
     for (let i = 0; i < heard.length && j < group.length; i++) {
-      for (let k = j; k < Math.min(group.length, j + 4); k++) {
-        if (group[k] === heard[i]) { n++; j = k + 1; end = i + 1; break; }
+      if (isNumberish(heard[i])) continue;
+      for (let k = j; k < Math.min(group.length, j + SKIP); k++) {
+        if (same(group[k], heard[i])) { n++; j = k + 1; end = i + 1; break; }
       }
     }
     return { n, end, reached: j };
@@ -104,30 +153,44 @@
 
   function needed(len) { return len <= 2 ? len : Math.max(2, Math.ceil(len * COVER)); }
 
-  // Read: enough of its words, and the voice got to its end.
+  // Read: enough of its words, and the voice got to its end (the last word,
+  // or one of the last two in a group of 10 words or more).
   function isRead(len, c) {
-    return c.n >= needed(len) && c.reached >= len - Math.min(TAIL, len) + 1;
+    const tail = len >= 10 ? 2 : 1;
+    return c.n >= needed(len) && c.reached >= len - tail + 1;
+  }
+
+  // The voice has started the next group: two of its first three words heard.
+  function started(next, heard) {
+    return !!next && next.length > 0 && cover(next.slice(0, 3), heard).n >= Math.min(2, next.length);
   }
 
   // groups: arrays of words; pos: first unread group; heard: words since the
   // last match. Returns { pos, used } — the new position and how many heard
-  // words it consumed — or null when nothing new was read.
+  // words it consumed — or null when nothing new was read. A group also counts
+  // as read when half of it was heard and the voice has moved on into the
+  // next one (its last words were swallowed or misheard).
   function advance(groups, pos, heard) {
+    const keys = groups.map(key);
     let best = null, from = 0;
     for (;;) {
       let hit = null;
       for (let i = pos; i < Math.min(groups.length, pos + LOOKAHEAD); i++) {
-        const g = groups[i];
+        const g = keys[i];
         if (!g.length) continue;
         const c = cover(g, heard.slice(from));
         if (isRead(g.length, c)) { hit = { pos: i + 1, used: from + c.end }; break; }
+        if (c.n >= Math.ceil(g.length * MOVED_ON) && started(keys[i + 1], heard.slice(from + c.end))) {
+          hit = { pos: i + 1, used: from + c.end };
+          break;
+        }
       }
       if (!hit) return best;
       best = hit; pos = hit.pos; from = hit.used;
     }
   }
 
-  const api = { words, splitSentences, splitGroups, cover, advance };
+  const api = { words, splitSentences, splitGroups, cover, advance, same };
   if (typeof module !== 'undefined' && module.exports) { module.exports = api; return; }
 
   // ── DOM side ───────────────────────────────────────────────────────────────
