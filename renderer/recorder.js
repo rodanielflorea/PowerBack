@@ -47,6 +47,16 @@
   async function addSystemAudio(cfg) {
     if (cfg.captureSystem === false) return;
     if (IS_MAC) {
+      // macOS 12 and older: transcription found a loopback device (BlackHole).
+      if (window.__macLoopbackStream) {
+        try {
+          const src = ctx.createMediaStreamSource(window.__macLoopbackStream);
+          src.connect(mixDest);
+          sysTap = tap(src);
+          log("recording system audio: loopback device");
+        } catch (e) { log("recording system audio (loopback device) failed: " + e.message, "err"); }
+        return;
+      }
       // The transcription pipeline already runs the helper; tap its PCM feed.
       try {
         await ctx.audioWorklet.addModule("pcm-feed-worklet.js");
@@ -140,21 +150,28 @@
     active = true;
     tracks = [];
     try {
-      const videoTrack = await getScreenVideoTrack();
+      // No screen (permission missing): still keep the meeting's audio.
+      let videoTrack = null;
+      try { videoTrack = await getScreenVideoTrack(); }
+      catch (e) {
+        log("recording the screen unavailable (" + e.message + "); recording audio only", "err");
+        try { if (window.__recToast) window.__recToast("The screen can't be recorded (allow Ace under Screen Recording in System Settings, then reopen it). Recording audio only."); } catch {}
+      }
       ctx = new AudioContext();
       mixDest = ctx.createMediaStreamDestination();
       await addSystemAudio(cfg);
       await addMicAudio(cfg);
       startLevelMatch();
       const audioTrack = mixDest.stream.getAudioTracks()[0];
-      const streamTracks = [videoTrack];
+      const streamTracks = videoTrack ? [videoTrack] : [];
       if (audioTrack) streamTracks.push(audioTrack);
+      if (!streamTracks.length) throw new Error("nothing to record");
       const begun = await window.api.recBegin();
       if (!begun || !begun.ok) throw new Error((begun && begun.error) || "the recording file could not be created");
       recId = begun.id;
       const id = recId;
       writes = Promise.resolve();
-      rec = new MediaRecorder(new MediaStream(streamTracks), { mimeType: pickMime() });
+      rec = new MediaRecorder(new MediaStream(streamTracks), { mimeType: videoTrack ? pickMime() : "audio/webm" });
       rec.ondataavailable = (e) => {
         if (!e.data || !e.data.size) return;
         // In order, one after another: the pieces only make a file in sequence.

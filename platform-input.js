@@ -141,7 +141,10 @@ function createMacInjector() {
     },
     char(ch) { return write(`tell application "System Events" to keystroke "${esc(ch)}"`); },
     special(name) {
-      if (name === 'SHIFT_END') return write('tell application "System Events" to key code 119 using shift down');
+      // Line start / select to line end are ⌘← and ⌘⇧→ on a Mac: Home and End
+      // only scroll in browser editors (CoderPad, LeetCode…) and TextEdit.
+      if (name === 'HOME') return write('tell application "System Events" to key code 123 using command down');
+      if (name === 'SHIFT_END') return write('tell application "System Events" to key code 124 using {command down, shift down}');
       return write(`tell application "System Events" to key code ${MAC_CODES[name]}`);
     },
     dispose() {

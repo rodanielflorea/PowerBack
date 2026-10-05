@@ -1,6 +1,6 @@
 {
   "name": "ace",
-  "version": "2.5.1",
+  "version": "2.6.0",
   "description": "Answer Coaching Engine",
   "main": "main.js",
   "scripts": {
@@ -10,11 +10,12 @@
     "build": "npm run icon && electron-builder --win --publish never",
     "build:installer": "npm run icon && electron-builder --win nsis",
     "build:linux": "npm run icon && electron-builder --linux --publish never",
-    "build:mac": "bash mac-audio/build.sh && npm run icon && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --publish never",
+    "build:mac": "rm -rf dist/mac-universal dist/mac-universal-*-temp && bash mac-audio/build.sh && bash scripts/mac-local-cert.sh && node scripts/install-mac-canvas.js && npm run icon && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --publish never",
+    "build:mac-legacy": "rm -rf dist/legacy/mac-universal dist/legacy/mac-universal-*-temp && bash mac-audio/build.sh && bash scripts/mac-local-cert.sh && node scripts/install-mac-canvas.js && npm run icon && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --publish never -c.electronVersion=32.3.3 -c.mac.minimumSystemVersion=10.15 -c.directories.output=dist/legacy '-c.mac.artifactName=${productName}-${version}-mac-legacy.${ext}'",
     "build:all": "npm run icon && electron-builder --win --linux --publish never",
     "admin:start": "electron license-admin",
     "admin:build": "electron-builder --projectDir license-admin --win portable --publish never",
-    "build:mac-zip": "npm run icon && electron-builder --mac zip --universal --publish never"
+    "build:mac-zip": "node scripts/install-mac-canvas.js && npm run icon && electron-builder --mac zip --universal --publish never"
   },
   "build": {
     "appId": "com.stealthsupport.app",
