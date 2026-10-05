@@ -1596,14 +1596,14 @@ textarea.meet-editbox {
 .link-btn:hover { text-decoration: underline; }
 
 /* ── Wizard: stage cards, nav, profile labels, salary ───────── */
-.stage-cards { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 8px; }
+.stage-cards { display: grid; grid-template-columns: 1fr; gap: 6px; margin-top: 8px; }
 /* Meeting groups: an accordion, one group open at a time (details[name]). */
-.stage-group { margin-top: 12px; }
+.stage-group { margin-top: 8px; }
 .stage-group-head {
   -webkit-app-region: no-drag;
   list-style: none; cursor: pointer; user-select: none;
   display: flex; align-items: center; gap: 8px;
-  padding: 11px 14px;
+  padding: 9px 12px;
   border: 1px solid var(--border); border-radius: var(--radius-lg);
   background: var(--bg); box-shadow: var(--shadow-sm);
   transition: border-color var(--t) var(--ease), background var(--t) var(--ease);
@@ -1649,9 +1649,9 @@ textarea.meet-editbox {
 .stage-group > .stage-cards { margin-top: 10px; }
 .stage-card {
   -webkit-app-region: no-drag;
-  display: flex; align-items: center; gap: 12px;
-  padding: 12px 14px;
-  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border); border-radius: 12px;
   background: var(--bg); box-shadow: var(--shadow-sm);
   cursor: pointer;
   transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease), transform var(--t) var(--ease), background var(--t) var(--ease);
@@ -1666,14 +1666,66 @@ textarea.meet-editbox {
   border: 1px solid rgba(37,99,235,.12);
 }
 .stage-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.stage-name { font-size: 14.5px; font-weight: 650; }
-.stage-desc { font-size: 12px; color: var(--muted); line-height: 1.4; }
-.wizard-nav {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border);
+.stage-name { font-size: 13.5px; font-weight: 650; }
+/* Only the chosen tile shows its description, so the list stays short. */
+.stage-desc {
+  font-size: 12px; color: var(--muted); line-height: 1.4;
+  max-height: 0; opacity: 0; overflow: hidden;
+  transition: max-height .22s var(--ease), opacity .18s var(--ease), margin-top .22s var(--ease);
 }
-.wizard-steps { white-space: nowrap; font-size: 11.5px; color: var(--muted); font-weight: 600; letter-spacing: .4px; text-transform: uppercase; }
-.wizard-next { -webkit-app-region: no-drag; }
+.stage-card:has(input:checked) .stage-desc { max-height: 60px; opacity: 1; margin-top: 2px; }
+.stage-card .stage-icon { width: 32px; height: 32px; border-radius: 10px; }
+.stage-card .stage-icon .ico { width: 17px; height: 17px; }
+.wizard-nav {
+  position: sticky; bottom: -32px; z-index: 2;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 14px -20px -32px; padding: 12px 20px 16px;
+  background: rgba(255,255,255,.82);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  border-top: 1px solid var(--border);
+}
+.wizard-steps {
+  display: inline-flex; align-items: center; gap: 8px;
+  white-space: nowrap; font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: .4px; text-transform: uppercase;
+}
+.wizard-dots { display: inline-flex; gap: 4px; }
+.wizard-dots i { width: 6px; height: 6px; border-radius: 3px; background: var(--border); transition: width .2s var(--ease), background .2s var(--ease); }
+.wizard-dots i.on { background: var(--accent); }
+.wizard-dots i.on:last-of-type, .wizard-dots i.on:not(:has(+ i.on)) { width: 16px; }
+
+/* Next / Start: a pill with an arrow that slides on hover, a press-in on
+   click and a ripple from the point clicked (renderer.js adds the ripple). */
+.wizard-next {
+  -webkit-app-region: no-drag;
+  position: relative; overflow: hidden;
+  display: inline-flex; align-items: center; gap: 10px;
+  height: 40px; min-width: 120px; padding: 0 6px 0 20px;
+  border: none; border-radius: 999px; cursor: pointer;
+  background: linear-gradient(135deg, #4f8bff 0%, #2563eb 55%, #1d4ed8 100%);
+  color: #fff; font: inherit; font-size: 14px; font-weight: 650; letter-spacing: .2px;
+  box-shadow: 0 6px 16px -6px rgba(37,99,235,.65), inset 0 1px 0 rgba(255,255,255,.25);
+  transition: transform .15s var(--ease), box-shadow .2s var(--ease), filter .2s var(--ease);
+}
+.wizard-next > span:first-child { flex: 1; text-align: center; }
+.wizard-next-ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: rgba(255,255,255,.2);
+  transition: transform .2s var(--ease), background .2s var(--ease);
+}
+.wizard-next-ico .ico { font-size: 15px; stroke-width: 2.2; }
+#setupStartBtnV .wizard-next-ico .ico { fill: currentColor; }
+.wizard-next:hover { box-shadow: 0 10px 22px -8px rgba(37,99,235,.75), inset 0 1px 0 rgba(255,255,255,.25); filter: brightness(1.05); }
+.wizard-next:hover .wizard-next-ico { transform: translateX(3px); background: rgba(255,255,255,.28); }
+.wizard-next:active { transform: scale(.96); box-shadow: 0 3px 10px -4px rgba(37,99,235,.6); }
+.wizard-next:focus-visible { outline: none; box-shadow: 0 0 0 3px #fff, 0 0 0 5px rgba(37,99,235,.55); }
+.wizard-next:disabled { background: var(--track); color: var(--muted); box-shadow: none; cursor: default; }
+.wizard-ripple {
+  position: absolute; border-radius: 50%; pointer-events: none;
+  background: rgba(255,255,255,.45); transform: scale(0);
+  animation: wizard-ripple .55s ease-out forwards;
+}
+@keyframes wizard-ripple { to { transform: scale(1); opacity: 0; } }
 .field-label { font-size: 11.5px; font-weight: 600; color: var(--muted); margin: 4px 0 -4px; }
 .input-error { border-color: var(--rec-on) !important; box-shadow: 0 0 0 3px rgba(220,38,38,.15); }
 .salary-block { margin-top: 14px; }

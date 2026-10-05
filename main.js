@@ -1269,6 +1269,11 @@ async function captureRectPng(rect) {
   return tmp;
 }
 
+// Area snip in progress, and whether the main window was showing before it
+// (it hides while the area is picked so it is not in the shot).
+let snipMode = false;
+let snipPrevVisible = true;
+
 function openSnipSelector() {
   if (selectorWin || snipMode) return;
   if (!win) return;
@@ -2358,6 +2363,7 @@ const MEETING_TYPES = {
   technical_interview:{ kind: 'hiring', label: 'Technical interview' },
   live_coding:        { kind: 'hiring', label: 'Live coding / system design' },
   leader_round:       { kind: 'hiring', label: 'CTO / CEO / founder round' },
+  ai_interview:       { kind: 'hiring', label: 'AI interview' },
   standup:            { kind: 'team',   label: 'Engineering standup' },
   one_on_one:         { kind: 'team',   label: '1:1 with manager' },
   sprint_review:      { kind: 'team',   label: 'Sprint review + retro + preview' },
@@ -3217,11 +3223,15 @@ function resolveAnswerMode(forcedMode, q) {
 
 // Record a completed, user-visible turn. Strips the <sticky> presenter block
 // (redundant with the diagram + explanation) to save context budget.
-function recordTurn(user, assistant, mode, images) {
+// heard: the transcript lines the answer replied to. Kept in the history the
+// model sees (not in the saved session) when nothing was typed, so a later
+// answer knows which question each earlier answer was for.
+function recordTurn(user, assistant, mode, images, heard) {
   const a = String(assistant || '').replace(/<sticky>[\s\S]*?<\/sticky>/gi, '').trim();
   const u = String(user || '').trim();
   if (!a) return;
-  convoHistory.push({ user: u, assistant: a, mode: mode || 'ANSWER' });
+  const h = clipMeetingTranscript(heard);
+  convoHistory.push({ user: u || (h ? 'They said:\n' + h : ''), assistant: a, mode: mode || 'ANSWER' });
 
   // Persist into the current saved session (creating one if none is active).
   let s = currentSession();
@@ -3816,6 +3826,13 @@ const MEETING_GUIDANCE = {
 - Business sense: tie technical choices to customers, cost or speed of delivery.
 - When they invite your questions: product direction, what success looks like in the first 3 months, team growth, and for startups funding or runway.`,
 
+  ai_interview: `TYPE: AI INTERVIEW (an automated AI interviewer or screening bot asks the questions, often one after another, and scores the answers). It can't read tone, so the content does all the work.
+- Structure every answer so it is easy to score: the direct answer first, then one concrete example (situation, what you did, the result with a number when the knowledge base has one), then one line on why it matters for this role. About 60 to 120 words; a yes/no or factual question gets 1 or 2 sentences.
+- Use the job description's own words for skills and tools where they match your experience, so keyword scoring picks them up.
+- No small talk and no questions back. If the bot asks whether you have questions, ask one short one about the team or the next step.
+- A skill, tool or topic not in the knowledge base: answer from general engineering knowledge, accurate and confident (what it is, how it works, when to use it, common pitfalls, how you'd approach it), then bridge to the closest real experience in the knowledge base. Before writing, check: does the knowledge base show you using this exact tool? If not, never say you used, built, wrote, ran or deployed it. Open with the knowledge instead ("Operators extend Kubernetes so...", "The way I'd approach it is...") or say it plainly in one short clause ("I haven't run it in production, but..."), then the bridge ("the closest thing I've built is..."). Don't claim a job, project or number that isn't there.
+- Behavioral questions: one real story from the knowledge base, in situation, action, result order.`,
+
   // ── Team meetings ──
   standup: `TYPE: ENGINEERING STANDUP / DAILY STATUS UPDATE. The chair calls names in turn, each person gives an update, then short follow-ups.
 - Your update when called (about 80 to 180 words): open with "Okay. So for me..." or "Yes, so yesterday...". Then per ticket, most important first: ticket ID, what was done (merged, PR opened, deployed to dev, staging or main, dry run), the key number (rows processed, matched vs unmatched, cost), and any gap or bug you found and what you did about it. Then what you're waiting on: whose review or which decision, by name. Then which ticket you move to next. Close with "That's all for me."
@@ -3858,6 +3875,11 @@ const MEETING_GUIDANCE = {
 };
 
 // Shared by every meeting type.
+const ANSWER_SOURCES = `HOW TO BUILD THE ANSWER — use three sources, in this order:
+1. What they just asked or said (the last transcript lines), including what they are really checking.
+2. Your own earlier answers in this call (the conversation above). Stay consistent with them: same projects, numbers, names, dates and opinions. Don't retell a story you already told; refer back to it in a few words ("like the migration I mentioned") or pick another example. If they follow up on something you said, continue from it.
+3. The knowledge base: CV, job description, support notes, earlier meeting records. Pick the facts that answer this question, and where it's natural, link them to what the job description asks for.
+Your personal history (employers, projects, numbers, years, tools you used at work) comes only from the knowledge base or from what you already said in this call. General questions don't need the knowledge base: a concept, how a tool works, how you'd design, debug or test something, best practices, and simple small talk or logistics. Answer those directly from solid engineering knowledge, correct and confident, and tie in your own experience when the knowledge base has a fitting example.`;
 const TURN_RULES = `TURN RULES:
 - Output only the words you say out loud. Never start with your own name or a speaker tag like "Name:"; the transcript tags are for reading, not for your answer.
 - Start with a short acknowledgement when it's natural ("Okay.", "Yeah, that makes sense.", "Good question.").
@@ -3873,10 +3895,10 @@ function meetingStanceBlock() {
   if (kind === 'team') {
     const who = `${whoAmILine()} This is a meeting at your current job, with your team. ${tags} Several people may speak; the chair usually calls names in turn. Your knowledge base (CV, support notes, previous meeting records) is your work context: current tickets and their status, open PRs, recent numbers, blockers, who owns what. Missing files are fine; then stay general and never invent tickets or numbers.`;
     const between = `Between your turns, reactions are tiny: "Morning.", "Thanks.", "Yeah, I can hear you clearly." When your name is called, give your turn in full.`;
-    return `MEETING STANCE — TEAM MEETING: ${who}\n${between}\n${MEETING_GUIDANCE[type]}\n${TURN_RULES}\n${QUESTION_POLICY} If someone states an opinion, do not auto-agree. One spoken turn only.`;
+    return `MEETING STANCE — TEAM MEETING: ${who}\n${between}\n${MEETING_GUIDANCE[type]}\n${ANSWER_SOURCES}\n${TURN_RULES}\n${QUESTION_POLICY} If someone states an opinion, do not auto-agree. One spoken turn only.`;
   }
   const who = `${whoAmILine()} This is a hiring call. ${tags} Your knowledge base is whatever was uploaded (CV and/or JD and/or support). Missing files are fine. You are the candidate, not a helper who follows their lead.`;
-  return `MEETING STANCE — HIRING INTERVIEW: ${who}\n${MEETING_GUIDANCE[type]}\n${TURN_RULES}\n${QUESTION_POLICY} If they state an opinion, do not auto-agree. Never invent experience. One spoken turn only.`;
+  return `MEETING STANCE — HIRING INTERVIEW: ${who}\n${MEETING_GUIDANCE[type]}\n${ANSWER_SOURCES}\n${TURN_RULES}\n${QUESTION_POLICY} If they state an opinion, do not auto-agree. Never invent experience. One spoken turn only.`;
 }
 
 function assembleStaticSystem(mode) {
@@ -3942,7 +3964,7 @@ function buildAnswerMessages(q, imgs, mode, transcript) {
   const messages = [];
   const staticText = assembleStaticSystem(mode);
   if (staticText) messages.push({ role: 'system', content: staticText });
-  const convoBudget = mode === 'ANSWER' ? 3500 : CONVO_CHAR_BUDGET;
+  const convoBudget = mode === 'ANSWER' ? 6000 : CONVO_CHAR_BUDGET;
   for (const m of conversationContextMessages(convoBudget)) messages.push(m);
 
   const body = formatAnswerUserTurn(q, transcript, mode);
@@ -4094,7 +4116,7 @@ async function generateAnswer(question, images, forcedMode, transcript) {
   if (full.trim()) {
     sessionLog.push({ ts: Date.now(), kind: 'question', text: q || `[${(imgs && imgs.length) || 0} image${imgs && imgs.length > 1 ? 's' : ''}]` });
     sessionLog.push({ ts: Date.now(), kind: 'answer', text: full.trim() });
-    recordTurn(q, full, mode, imgs);
+    recordTurn(q, full, mode, imgs, mt);
   }
   if (win && !win.isDestroyed()) win.webContents.send('answer-done', { text: full });
 }
@@ -4260,7 +4282,7 @@ async function startSpeculative(question, forcedMode, transcript) {
     if (speculativeBuffer.trim()) {
       if (q) sessionLog.push({ ts: Date.now(), kind: 'question', text: q });
       sessionLog.push({ ts: Date.now(), kind: 'answer', text: speculativeBuffer.trim() });
-      recordTurn(q, speculativeBuffer, specMode);
+      recordTurn(q, speculativeBuffer, specMode, null, mt);
     }
     if (win && !win.isDestroyed()) win.webContents.send('answer-done', { text: speculativeBuffer });
   } else {
@@ -4306,7 +4328,7 @@ function commitSpeculative(question, images, forcedMode, transcript) {
         if (clean.trim()) {
           if (q) sessionLog.push({ ts: Date.now(), kind: 'question', text: q });
           sessionLog.push({ ts: Date.now(), kind: 'answer', text: clean.trim() });
-          recordTurn(q, clean, specModeCommit);
+          recordTurn(q, clean, specModeCommit, null, mt);
         }
         speculativeActive = false;
         speculativeQuestion = null;
