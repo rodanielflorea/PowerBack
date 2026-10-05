@@ -3560,6 +3560,47 @@ ipcMain.handle('session-kb-remove', (_e, { id, kind, index } = {}) => {
 
 const KB_KINDS = ['cv', 'jd', 'support', 'meetings'];
 
+// pdf.js takes DOMMatrix, ImageData and Path2D from the native @napi-rs/canvas
+// module and stops with "DOMMatrix is not defined" when that module cannot be
+// loaded: its binary is per platform and CPU, and a build does not always
+// carry the one for the machine it runs on (the universal macOS build has the
+// Apple Silicon one only, so it is missing on an Intel Mac). Those classes are
+// for drawing pages. Reading the text only needs them to exist (bitmap Type 3
+// fonts call scaleSelf/translateSelf, and the result is used for drawing
+// alone), so plain stand-ins are enough. They are set before pdf.js loads, so
+// pdf.js uses them on every platform, also where the native module is there.
+function ensurePdfGlobals() {
+  if (!globalThis.DOMMatrix) {
+    globalThis.DOMMatrix = class DOMMatrix {
+      constructor(init) {
+        const m = Array.isArray(init) && init.length === 6 ? init : [1, 0, 0, 1, 0, 0];
+        [this.a, this.b, this.c, this.d, this.e, this.f] = m;
+      }
+      translateSelf(tx = 0, ty = 0) { this.e += this.a * tx + this.c * ty; this.f += this.b * tx + this.d * ty; return this; }
+      scaleSelf(sx = 1, sy = sx) { this.a *= sx; this.b *= sx; this.c *= sy; this.d *= sy; return this; }
+      translate(tx, ty) { return new DOMMatrix([this.a, this.b, this.c, this.d, this.e, this.f]).translateSelf(tx, ty); }
+      scale(sx, sy) { return new DOMMatrix([this.a, this.b, this.c, this.d, this.e, this.f]).scaleSelf(sx, sy); }
+      // Only reached when drawing a page, which this app never does.
+      multiplySelf() { return this; }
+      preMultiplySelf() { return this; }
+      invertSelf() { return this; }
+    };
+  }
+  if (!globalThis.ImageData) {
+    globalThis.ImageData = class ImageData {
+      constructor(a, b, c) {
+        if (typeof a === 'number') { this.width = a; this.height = b; this.data = new Uint8ClampedArray(a * b * 4); }
+        else { this.data = a; this.width = b; this.height = c || (a.length / 4 / b); }
+      }
+    };
+  }
+  if (!globalThis.Path2D) {
+    globalThis.Path2D = class Path2D {
+      addPath() {} moveTo() {} lineTo() {} bezierCurveTo() {} quadraticCurveTo() {} rect() {} arc() {} ellipse() {} closePath() {}
+    };
+  }
+}
+
 // Extract plain text from an uploaded document buffer (any common format).
 async function extractDocText(arrayBuffer, name) {
   const ext = String(name || '').split('.').pop().toLowerCase();
@@ -3577,6 +3618,15 @@ async function extractDocText(arrayBuffer, name) {
   const officeExts = ['pdf', 'docx', 'pptx', 'xlsx', 'odt', 'odp', 'ods', 'doc', 'ppt', 'xls'];
   if (officeExts.includes(ext)) {
     if (!officeParser) throw new Error('Document parser unavailable');
+    // officeparser picks the reader from the file's content, not its name
+    // (a PDF saved as .docx is read as a PDF), and never answers when pdf.js
+    // itself fails to load: the upload then waits for ever with nothing on
+    // screen. So the globals are set for every office file, and for a PDF
+    // pdf.js is loaded here first, where a failure reaches the caller.
+    ensurePdfGlobals();
+    if (ext === 'pdf' || buf.subarray(0, 4).toString('latin1') === '%PDF') {
+      await import('pdfjs-dist/legacy/build/pdf.mjs');
+    }
     return String(await officeParser.parseOfficeAsync(buf)).trim();
   }
   // Unknown extension — best effort as UTF-8 text.
