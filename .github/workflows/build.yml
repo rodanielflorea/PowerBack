@@ -63,6 +63,13 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: bash mac-audio/build.sh
 
+      # npm installs the @napi-rs/canvas binary for this runner's CPU only
+      # (arm64). The PDF reader needs it, so without the x64 one every PDF
+      # upload fails on an Intel Mac. Same step as in `npm run build:mac`.
+      - name: Install both macOS canvas binaries (PDF upload on Intel Macs)
+        if: matrix.os == 'macos-latest'
+        run: node scripts/install-mac-canvas.js
+
       - name: Build macOS (universal, sign + notarize when secrets exist)
         if: matrix.os == 'macos-latest'
         run: |
