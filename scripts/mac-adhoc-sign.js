@@ -11,6 +11,11 @@ const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
+const LOCAL_IDENTITY = 'Ace Local Signing';
+function hasLocalIdentity() {
+  try { execSync(`security find-certificate -c "${LOCAL_IDENTITY}"`, { stdio: 'ignore' }); return true; } catch { return false; }
+}
+
 module.exports = async function afterSign(context) {
   if (context.electronPlatformName !== 'darwin') return;
   if (process.env.CSC_LINK || process.env.CSC_NAME) return; // properly signed already
@@ -19,7 +24,17 @@ module.exports = async function afterSign(context) {
   if (!fs.existsSync(appPath)) return;
   const entitlements = path.join(__dirname, '..', 'build', 'entitlements.mac.plist');
   const ent = fs.existsSync(entitlements) ? ` --entitlements "${entitlements}"` : '';
-  console.log(`  • ad-hoc signing ${appName} (no certificate configured)`);
-  execSync(`codesign --force --deep --sign -${ent} --timestamp=none "${appPath}"`, { stdio: 'inherit' });
+  // An ad-hoc signature is identified by a hash of this exact build, so macOS
+  // forgets the Microphone / Screen Recording permissions on every rebuild.
+  // The self-signed "Ace Local Signing" certificate (scripts/mac-local-cert.sh)
+  // keeps one identity across builds; ad-hoc remains the fallback (CI).
+  const identity = hasLocalIdentity() ? LOCAL_IDENTITY : '-';
+  console.log(identity === '-'
+    ? `  • ad-hoc signing ${appName} (no certificate configured)`
+    : `  • signing ${appName} with "${LOCAL_IDENTITY}" (permissions survive rebuilds)`);
+  // --deep does not reach executables under Resources: sign the helper first.
+  const helper = path.join(appPath, 'Contents', 'Resources', 'mac-audio', 'system-audio');
+  if (fs.existsSync(helper)) execSync(`codesign --force --sign "${identity}" --timestamp=none "${helper}"`, { stdio: 'inherit' });
+  execSync(`codesign --force --deep --sign "${identity}"${ent} --timestamp=none "${appPath}"`, { stdio: 'inherit' });
   execSync(`codesign --verify --deep --strict "${appPath}"`, { stdio: 'inherit' });
 };

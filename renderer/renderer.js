@@ -981,15 +981,21 @@ async function renderContinueKb(id) {
   });
 }
 
+// A failed upload must be visible: the log panel is usually closed.
+function uploadFailed(name, error) {
+  log(`Upload failed (${name}): ${error}`, "err");
+  toast(`Could not upload ${name}: ${error}`, "err");
+}
+
 async function addContinueKbFiles(id, kind, fileList) {
   const files = Array.from(fileList || []);
   for (const f of files) {
     try {
       const buf = await f.arrayBuffer();
       const r = await window.api.sessionKbAdd(id, kind, f.name, buf);
-      if (r && !r.ok) log(`Upload failed (${f.name}): ${r.error || "error"}`, "err");
+      if (r && !r.ok) uploadFailed(f.name, r.error || "error");
     } catch (err) {
-      log(`Upload failed (${f.name}): ${err.message}`, "err");
+      uploadFailed(f.name, err.message);
     }
   }
   renderContinueKb(id);
@@ -1123,9 +1129,9 @@ async function addKbFiles(kind, fileList) {
     try {
       const buf = await f.arrayBuffer();
       const r = await window.api.kbAdd(kind, f.name, buf);
-      if (r && !r.ok) log(`Upload failed (${f.name}): ${r.error || "error"}`, "err");
+      if (r && !r.ok) uploadFailed(f.name, r.error || "error");
     } catch (err) {
-      log(`Upload failed (${f.name}): ${err.message}`, "err");
+      uploadFailed(f.name, err.message);
     }
   }
   refreshKb();
@@ -1664,8 +1670,6 @@ async function refreshTranscriptionUI() {
   languageSelect.value = txCfg.language || "auto";
   captureMicEl.checked = txCfg.captureMic !== false;
   captureSystemEl.checked = txCfg.captureSystem !== false;
-  const autoAnswerEl = document.getElementById("autoAnswer");
-  if (autoAnswerEl) autoAnswerEl.checked = txCfg.autoAnswer === true;
   const recordEl = document.getElementById("recordSession");
   if (recordEl) recordEl.checked = txCfg.recordSession !== false;
   const uploadEl = document.getElementById("uploadSession");
@@ -1759,8 +1763,6 @@ function onTxSourceChange(e) {
   syncTxSourceUi();
 }
 captureMicEl.addEventListener("change", onTxSourceChange);
-const autoAnswerEl = document.getElementById("autoAnswer");
-if (autoAnswerEl) autoAnswerEl.addEventListener("change", () => persistTx({ autoAnswer: autoAnswerEl.checked }));
 const recordSessionEl = document.getElementById("recordSession");
 if (recordSessionEl) recordSessionEl.addEventListener("change", () => persistTx({ recordSession: recordSessionEl.checked }));
 const uploadSessionEl = document.getElementById("uploadSession");
@@ -2051,7 +2053,7 @@ function speakerLineBlock(text) {
 // ── The transcript bubble ────────────────────────────────────────────────────
 // Everything said between two submissions goes into ONE bubble, one line per
 // speaker turn, each line reading "Name : what they said" — the other side and
-// the app user alike. Send / auto-answer seals the bubble and the next words
+// the app user alike. Send seals the bubble and the next words
 // open a new one. Each line keeps its committed words and a live tail (an
 // interim hypothesis
 // mode), so the newest words show the moment they are heard.
@@ -2283,7 +2285,6 @@ function joinSpeech(a, b) {
 // Anyone else: a new line under theirs. The app user's own words never come
 // here — they go to the saved transcript and the recording only.
 function applyMeetLine(who, text, speakerId, isFinal) {
-  lastSpeechAt = Date.now();
   who = String(who || "").trim() || "Interviewer";
   text = String(text || "").trim();
   if (!text) return;
@@ -2408,45 +2409,22 @@ window.api.onUtteranceEnd(() => {
   clearInterimPreview();
   // Prefetch a meeting reaction only if the user is not already typing a question.
   if (!composerInput || !composerInput.value.trim()) kickSpeculative(true);
-  scheduleAutoAnswer();
 });
 
 // macOS system audio: PCM chunks from the helper are pushed into the feed node.
 const IS_MAC = /Mac/i.test(navigator.platform || "");
 let macSysFeed = null;
 if (window.api.onMacSystemAudioChunk) {
-  window.api.onMacSystemAudioChunk((buf) => { if (macSysFeed) { try { macSysFeed.port.postMessage(buf); } catch {} } });
+  window.api.onMacSystemAudioChunk((buf) => {
+    if (macSysFeed) { try { macSysFeed.port.postMessage(buf); } catch {} }
+    // The session recorder (recorder.js) takes the same PCM for the video's audio.
+    if (window.__macRecSub) { try { window.__macRecSub(buf); } catch {} }
+  });
 }
 if (window.api.onMacSystemAudioEnded) {
   window.api.onMacSystemAudioEnded((code) => { if (macSysFeed && recState) { macSysFeed = null; toast("System audio capture stopped (helper exited " + code + ").", "err"); } });
 }
 
-// ── Auto-answer (off by default) ─────────────────────────────────────────────
-// Manual submission is the default. When the user enables "Answer
-// automatically" in Settings, the transcript is submitted (exactly as Send
-// would) a beat after the interviewer stops speaking; the prefetch usually has
-// the answer ready. The choice is stored in transcription.autoAnswer.
-let autoAnswerTimer = null;
-let lastSpeechAt = 0;
-const AUTO_ANSWER_DELAY_MS = 1200;
-const AUTO_ANSWER_MIN_WORDS = 3;
-function scheduleAutoAnswer() {
-  if (autoAnswerTimer) { clearTimeout(autoAnswerTimer); autoAnswerTimer = null; }
-  if (!txCfg || !txCfg.autoAnswer) return; // default (unset/false) = manual
-  const el = lastMeetEl;
-  if (!el || el._autoAnswered) return;
-  autoAnswerTimer = setTimeout(() => {
-    autoAnswerTimer = null;
-    if (lastMeetEl !== el || el._autoAnswered) return;
-    if (Date.now() - lastSpeechAt < AUTO_ANSWER_DELAY_MS - 100) { scheduleAutoAnswer(); return; } // they kept talking
-    if (liveSeg || (composerInput && composerInput.value.trim())) return;
-    if (answerIsStreaming() || _optimisticAnswer) return;
-    const text = liveMeetText();
-    if (!text || text.split(/\s+/).length < AUTO_ANSWER_MIN_WORDS) return;
-    el._autoAnswered = true;
-    submitComposer();
-  }, AUTO_ANSWER_DELAY_MS);
-}
 if (window.api.onTranscriptMic) {
   window.api.onTranscriptMic((v) => {
     if (!v || !v.text) return;
@@ -2465,7 +2443,7 @@ window.api.onTranscriptLiveError((msg) => {
 });
 
 // Errors main reports on the generic error channel (paste, chat, help-me).
-window.api.onCaptureError((msg) => log("Error: " + msg, "err"));
+window.api.onCaptureError((msg) => { log("Error: " + msg, "err"); toast(msg, "err"); });
 // ===== Answer panel =====
 const answerHistory = document.getElementById("answerHistory");
 const answerEmpty = document.getElementById("answerEmpty");
@@ -3658,6 +3636,25 @@ async function refreshMicList() {
   }
 }
 
+// A virtual loopback input (BlackHole and the like) that the call audio is
+// routed to: the only way to get it on macOS before 13.
+const MAC_LOOPBACK_RE = /blackhole|loopback audio|soundflower|background music|vb-cable/i;
+async function openMacLoopbackDevice() {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const dev = devices.find((d) => d.kind === "audioinput" && MAC_LOOPBACK_RE.test(d.label || ""));
+    if (!dev) return null;
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { deviceId: { exact: dev.deviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      video: false,
+    });
+    return { stream, label: dev.label };
+  } catch (e) {
+    log("Loopback device failed: " + e.message, "err");
+    return null;
+  }
+}
+
 let recState = null;
 async function startVoice() {
   if (recState) return;
@@ -3758,14 +3755,30 @@ async function startVoice() {
             log("System audio: macOS ScreenCaptureKit", "info");
           } else {
             log("macOS system audio unavailable: " + ((r && r.error) || "unknown"), "err");
-            toast("System audio could not be captured: " + ((r && r.error) || "unknown") + ". If macOS asked for Screen/System Audio Recording permission, allow it and start listening again.", "err");
+            if (!(r && r.old)) toast("System audio could not be captured: " + ((r && r.error) || "unknown") + ". If macOS asked for Screen/System Audio Recording permission, allow it and start listening again.", "err");
           }
         } catch (e) {
           log("macOS system audio error: " + e.message, "err");
         }
+        // Without the helper (macOS 12 and older, or no permission) the call
+        // audio can still come from a loopback device the user routes it to.
+        if (!sysOk) {
+          const loop = await openMacLoopbackDevice();
+          if (loop) {
+            streams.push(loop.stream);
+            ctx.createMediaStreamSource(loop.stream).connect(dest);
+            window.__macLoopbackStream = loop.stream;
+            sysOk = true;
+            log("System audio: loopback device \"" + loop.label + "\"", "info");
+          } else {
+            toast("Call audio is not captured on this Mac. On macOS 12 or older: install BlackHole 2ch (free), create a Multi-Output Device (your speakers + BlackHole) in Audio MIDI Setup and select it as the sound output, then start listening again.", "err");
+          }
+        }
       }
       // Primary: WASAPI loopback via chromeMediaSource:'desktop' (more reliable).
-      if (!sysOk) try {
+      // Not on macOS: there it yields a silent track, so the meeting would look
+      // transcribed while nothing reaches it; the helper is the only source.
+      if (!sysOk && !IS_MAC) try {
         const sourceId = await window.api.getDesktopSourceId();
         if (!sourceId) throw new Error("no desktop source");
         const sys = await navigator.mediaDevices.getUserMedia({
@@ -3875,6 +3888,7 @@ async function stopVoice() {
   if (recState.xai) await window.api.stopXaiStream();
   else await window.api.stopDeepgramStream();
   recState = null;
+  window.__macLoopbackStream = null;
   recBtn.classList.remove("on");
   updateRecTitle();
   log("Voice transcription stopped", "info");

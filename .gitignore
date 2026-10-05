@@ -42,6 +42,13 @@ mac-audio/build/*
 # Real provider keys: never committed. Copy defaults/api-keys.example.json to
 # defaults/api-keys.json and fill it in; CI writes it from API_KEYS_JSON.
 defaults/api-keys.json
+defaults/api-key*.json
+!defaults/api-keys.example.json
+
+# Archives of the project folder (they contain defaults/api-keys.json) and the
+# metadata folder macOS adds when one is unpacked.
+/*.zip
+__MACOSX/
 
 # Meeting transcripts collected to design the meeting types: private material,
 # never committed. (The build takes only the two files it needs from defaults/.)

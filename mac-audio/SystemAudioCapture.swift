@@ -34,9 +34,13 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
       throw NSError(domain: "system-audio", code: 1, userInfo: [NSLocalizedDescriptionKey: "no display"])
     }
     // Exclude the app that launched us (the parent process) so its own sounds
-    // are never fed back into the transcript.
+    // are never fed back into the transcript. Electron plays audio from its
+    // helper apps (bundle id "<app id>.helper…"), so match by bundle id prefix.
     let parent = getppid()
-    let exclude = content.applications.filter { $0.processID == parent }
+    let parentId = content.applications.first { $0.processID == parent }?.bundleIdentifier ?? ""
+    let exclude = content.applications.filter {
+      $0.processID == parent || (!parentId.isEmpty && $0.bundleIdentifier.hasPrefix(parentId))
+    }
     let filter = SCContentFilter(display: display, excludingApplications: exclude, exceptingWindows: [])
 
     let cfg = SCStreamConfiguration()

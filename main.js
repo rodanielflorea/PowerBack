@@ -68,8 +68,11 @@ const license = require('./license');
 const { uploadFolder } = require('./gofile');
 const { signatureDistance } = require('./speaker-detect');
 const { createSpeakerTracker } = require('./speaker-tracker');
+// The legacy Mac build (Electron 32, for macOS 10.15–11) must never take an
+// update: the regular build needs macOS 12 and would not start after it.
+const LEGACY_MAC = process.platform === 'darwin' && parseInt(process.versions.electron, 10) < 38;
 let autoUpdater = null;
-try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
+if (!LEGACY_MAC) { try { autoUpdater = require('electron-updater').autoUpdater; } catch {} }
 let officeParser = null;
 try { officeParser = require('officeparser'); } catch {}
 
@@ -164,7 +167,6 @@ const DEFAULT_STATE = {
     // transcript, the recording), so the mic is on everywhere. It used to be
     // off on Windows, where system audio alone covers the other side.
     captureMic: true,
-    autoAnswer: false, // default: manual submission (Send / Ctrl+Enter)
     recordSession: true, // record screen + audio and auto-save the bundle on End
     uploadSession: true,  // after saving, upload the bundle to gofile.io and hand back the link
   },
@@ -292,6 +294,9 @@ function loadState() {
       hotkeys: { ...HOTKEY_DEFAULTS },
     };
   }
+  // Answers are manual only (Send / Ctrl+Enter); drop the retired auto-answer
+  // choice that older versions saved.
+  if (state.transcription) delete state.transcription.autoAnswer;
   // Click-through is a transient mode: never start a session with it on, or
   // every click (including the tour's Next) passes through the window.
   state.clickThrough = false;
@@ -1911,6 +1916,7 @@ ipcMain.handle('update-cancel', () => {
 });
 
 ipcMain.handle('check-for-updates', async () => {
+  if (LEGACY_MAC) return { ok: false, message: 'this is the build for older macOS versions; it does not update itself. Download the newest legacy build to update' };
   if (!autoUpdater) return { ok: false, message: 'electron-updater not installed' };
   if (process.env.PORTABLE_EXECUTABLE_FILE) return { ok: false, message: 'this is the portable copy; install Ace with the setup file to get automatic updates' };
   if (!app.isPackaged) return { ok: false, message: 'updates apply to the installed app, not a development run' };
@@ -2168,6 +2174,9 @@ function stopMacSystemAudio() {
 }
 ipcMain.handle('mac-system-audio-start', () => {
   if (process.platform !== 'darwin') return { ok: false, error: 'not macOS' };
+  // ScreenCaptureKit gives audio only from macOS 13 (Darwin 22); older systems
+  // need a loopback device such as BlackHole, which the renderer looks for.
+  if (parseInt(os.release(), 10) < 22) return { ok: false, old: true, error: 'macOS 13 or newer is needed for built-in call-audio capture' };
   const bin = macSystemAudioHelperPath();
   if (!fs.existsSync(bin)) return { ok: false, error: 'system-audio helper is missing from this build' };
   stopMacSystemAudio();
@@ -2221,7 +2230,8 @@ ipcMain.handle('run-diagnostics', async () => {
   const checks = [];
   const add = (name, ok, detail, fix) => checks.push({ name, ok, detail: detail || '', fix: ok ? '' : (fix || '') });
   const keys = getBuiltinKeys();
-  add('Deepgram key (transcription)', !!keys.deepgram, keys.deepgram ? 'built in' : 'missing', 'Rebuild with the API_KEYS_JSON secret (or defaults/api-keys.json) filled in.');
+  const dgKey = keys.deepgram || (state.transcription && state.transcription.deepgramApiKey);
+  add('Deepgram key (transcription)', !!dgKey, keys.deepgram ? 'built in' : (dgKey ? 'saved' : 'missing'), 'Rebuild with the API_KEYS_JSON secret (or defaults/api-keys.json) filled in.');
   const ap = getAnswerProvider();
   add(`${ap.label} key (answers)`, !!getAnswerApiKey(ap.id), getAnswerApiKey(ap.id) ? 'built in' : 'missing', 'Rebuild with the API_KEYS_JSON secret filled in, or pick a provider that has a key.');
   if (mac) {
@@ -2233,7 +2243,7 @@ ipcMain.handle('run-diagnostics', async () => {
     add('System-audio helper present', fs.existsSync(helper), fs.existsSync(helper) ? helper : 'not in this build', 'This build has no system-audio helper; use a build from GitHub Actions (macOS runner).');
     add('Accessibility permission (typing / paste into other apps)', macAccessibilityOk(false), macAccessibilityOk(false) ? 'granted' : 'not granted', MAC_ACCESSIBILITY_HINT + ' Then Quit & reopen the app. If it is already enabled but still shows not granted, remove the app from that list with − and add it again.');
     let osOk = true; try { osOk = parseInt(require('os').release().split('.')[0], 10) >= 22; } catch {}
-    add('macOS 13 or newer (system audio)', osOk, 'Darwin ' + require('os').release(), 'Update macOS to 13 (Ventura) or newer for system-audio capture.');
+    add('macOS 13 or newer (system audio)', osOk, 'Darwin ' + require('os').release(), 'macOS 12 and older cannot give apps the call audio: install BlackHole 2ch (free), make a Multi-Output Device of your speakers + BlackHole in Audio MIDI Setup and pick it as the output; Ace then records the call from BlackHole.');
   }
   const has = (cmd) => { try { require('child_process').execFileSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { stdio: 'ignore' }); return true; } catch { return false; } };
   if (process.platform === 'linux') {
@@ -2309,12 +2319,24 @@ ipcMain.handle('set-anti-close', (_e, v) => {
   else stopWatchdog();
   return state.antiClose;
 });
+// macOS lists no screens until the app has the Screen Recording permission.
+// Say so once per run and open the right Settings pane, so it can be granted.
+let screenPermissionShown = false;
+function macNoScreenSources() {
+  if (process.platform !== 'darwin' || screenPermissionShown) return;
+  screenPermissionShown = true;
+  if (win && !win.isDestroyed()) win.webContents.send('capture-error',
+    'macOS gives Ace no screen to capture: allow Ace under Privacy & Security → Screen Recording (opening it now), then quit and reopen Ace. If Ace is already ticked, remove it with − and add it again.');
+  require('electron').shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture').catch(() => {});
+}
 ipcMain.handle('get-desktop-source-id', async () => {
   macScreenPermissionWarn();
   try {
-    const sources = await desktopCapturer.getSources({ types: ['screen'] });
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+    if (!sources[0]) macNoScreenSources();
     return sources[0] ? sources[0].id : null;
   } catch {
+    macNoScreenSources();
     return null;
   }
 });
@@ -3577,7 +3599,15 @@ async function extractDocText(arrayBuffer, name) {
   const officeExts = ['pdf', 'docx', 'pptx', 'xlsx', 'odt', 'odp', 'ods', 'doc', 'ppt', 'xls'];
   if (officeExts.includes(ext)) {
     if (!officeParser) throw new Error('Document parser unavailable');
-    return String(await officeParser.parseOfficeAsync(buf)).trim();
+    // officeparser never settles when its PDF reader fails to load (the error
+    // escapes as an unhandled rejection), so an upload would wait forever.
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('the document reader did not respond')), 45000);
+    });
+    try {
+      return String(await Promise.race([officeParser.parseOfficeAsync(buf), timeout])).trim();
+    } finally { clearTimeout(timer); }
   }
   // Unknown extension — best effort as UTF-8 text.
   return buf.toString('utf8');
