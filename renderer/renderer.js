@@ -3770,15 +3770,12 @@ async function startVoice() {
             window.__macLoopbackStream = loop.stream;
             sysOk = true;
             log("System audio: loopback device \"" + loop.label + "\"", "info");
-          } else {
-            toast("Call audio is not captured on this Mac. On macOS 12 or older: install BlackHole 2ch (free), create a Multi-Output Device (your speakers + BlackHole) in Audio MIDI Setup and select it as the sound output, then start listening again.", "err");
           }
         }
       }
       // Primary: WASAPI loopback via chromeMediaSource:'desktop' (more reliable).
-      // Not on macOS: there it yields a silent track, so the meeting would look
-      // transcribed while nothing reaches it; the helper is the only source.
-      if (!sysOk && !IS_MAC) try {
+      // On macOS this is the fallback when the helper could not start, as in 2.2.
+      if (!sysOk) try {
         const sourceId = await window.api.getDesktopSourceId();
         if (!sourceId) throw new Error("no desktop source");
         const sys = await navigator.mediaDevices.getUserMedia({
@@ -3795,9 +3792,38 @@ async function startVoice() {
             },
           },
         });
-        sysOk = attachSystemAudio(sys, " (loopback)");
+        if (IS_MAC) {
+          // This loopback also carries what Ace itself plays: the partner's
+          // microphone and the user's own one sent to the virtual cable. Mic
+          // sound must never reach the meeting bubbles, so it is silenced
+          // whenever one of those players is playing.
+          sys.getVideoTracks().forEach((t) => t.stop());
+          const audioTracks = sys.getAudioTracks();
+          if (audioTracks.length) {
+            streams.push(sys);
+            const gate = ctx.createGain();
+            const players = [remoteAudioEl, speakerInAudioEl, document.getElementById("cableOutAudio")].filter(Boolean);
+            const update = () => { gate.gain.value = players.some((el) => el.srcObject && !el.paused) ? 0 : 1; };
+            const events = ["play", "playing", "pause", "ended", "emptied"];
+            players.forEach((el) => events.forEach((ev) => el.addEventListener(ev, update)));
+            update();
+            streams.push({ getTracks: () => [{ stop: () => players.forEach((el) => events.forEach((ev) => el.removeEventListener(ev, update))) }] });
+            ctx.createMediaStreamSource(new MediaStream(audioTracks)).connect(gate).connect(dest);
+            // The session recorder takes the call audio from here on macOS.
+            window.__macLoopbackStream = new MediaStream(audioTracks);
+            sysOk = true;
+            log("System audio capture started (loopback)", "info");
+          } else {
+            sys.getTracks().forEach((t) => t.stop());
+          }
+        } else {
+          sysOk = attachSystemAudio(sys, " (loopback)");
+        }
       } catch (e) {
         log("System loopback failed (" + e.message + "); trying display capture…", "info");
+      }
+      if (!sysOk && IS_MAC) {
+        toast("Call audio is not captured on this Mac. On macOS 12 or older: install BlackHole 2ch (free), create a Multi-Output Device (your speakers + BlackHole) in Audio MIDI Setup and select it as the sound output, then start listening again.", "err");
       }
       // Fallback: the previous getDisplayMedia path (not on macOS — it opens a picker and returns no system audio there).
       if (!sysOk && !IS_MAC) {
