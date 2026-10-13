@@ -884,6 +884,18 @@ body:not(.in-interview) .right-rail { display: none !important; }
   color: #15803d;
   border: 1px solid #86efac;
 }
+.answer-mode-badge--project {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #7dd3fc;
+}
+/* Project mode: a dot shows whether VS Code is connected. */
+.mode-seg-btn--project::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 3px;
+  margin-right: 5px; vertical-align: 1px; background: var(--border-hi, #cbd5e1);
+}
+.mode-seg-btn--project.mode-seg-btn--live::before { background: var(--green, #16a34a); }
+.mode-seg-btn--project.mode-seg-btn--active::before { background: #fff; }
 
 /* ── In-answer presenter script block ──────────────────────────── */
 .answer-script {

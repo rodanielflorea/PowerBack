@@ -1,0 +1,42 @@
+{
+  "name": "ace-vscode",
+  "displayName": "Ace",
+  "description": "Keeps the Ace desktop app in step with the project open in VS Code: file tree, the file being edited, every edit, saves and git changes.",
+  "version": "0.1.0",
+  "publisher": "ace",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "ace.connect", "title": "Ace: Connect" },
+      { "command": "ace.disconnect", "title": "Ace: Disconnect" },
+      { "command": "ace.resync", "title": "Ace: Send the project again" }
+    ],
+    "configuration": {
+      "title": "Ace",
+      "properties": {
+        "ace.host": { "type": "string", "default": "127.0.0.1", "description": "Where the Ace app listens. Leave as is when Ace runs on this computer." },
+        "ace.port": { "type": "number", "default": 2010, "description": "The port the Ace app listens on for VS Code (Settings → Code in Ace)." },
+        "ace.autoConnect": { "type": "boolean", "default": true, "description": "Connect to Ace when VS Code starts and keep retrying while Ace is not running." },
+        "ace.showStatusBar": { "type": "boolean", "default": true, "description": "Show the Ace item in the status bar. When off, the extension still works; use the Ace: Connect / Disconnect commands." },
+        "ace.maxFileKB": { "type": "number", "default": 200, "description": "Files bigger than this are listed but their text is never sent." },
+        "ace.exclude": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["**/node_modules/**", "**/.git/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/*.min.*", "**/*.lock", "**/package-lock.json"],
+          "description": "Glob patterns of files that are never sent to Ace."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "package": "npx --yes @vscode/vsce package --allow-missing-repository --skip-license"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0"
+  }
+}

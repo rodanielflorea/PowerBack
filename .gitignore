@@ -54,3 +54,7 @@ __MACOSX/
 # never committed. (The build takes only the two files it needs from defaults/.)
 defaults/*/
 defaults/*.zip
+
+# VS Code extension: packaged .vsix files and its own node_modules
+vscode-extension/*.vsix
+vscode-extension/node_modules/

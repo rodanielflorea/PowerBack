@@ -26,6 +26,7 @@
       "gofile.js",
       "speaker-detect.js",
       "speaker-tracker.js",
+      "vscode-bridge.js",
       "defaults/api-keys.json",
       "defaults/avoid.txt",
       "preload*.js",
