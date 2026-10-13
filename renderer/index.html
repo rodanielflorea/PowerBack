@@ -75,6 +75,7 @@
       <button class="tab-btn active" data-tab="apikeys" type="button">Providers</button>
       <button class="tab-btn" data-tab="hotkeys" type="button">Hotkeys</button>
       <button class="tab-btn" data-tab="diag" type="button">Check</button>
+      <button class="tab-btn" data-tab="vscode" type="button">VS Code</button>
       <button class="tab-btn" data-tab="help" type="button">User guide</button>
     </nav>
     <div class="settings-body">
@@ -260,6 +261,27 @@
           <div class="updater-row"><button id="diagRunBtn" class="action-btn">Run checks</button><button id="diagInstallBtn" class="action-btn" hidden>Install missing tools</button><span class="updater-status" id="diagStatus"></span></div>
           <p class="hint" id="diagRestartHint" hidden>macOS applies Accessibility and Screen &amp; System Audio Recording changes only after the app is restarted. After enabling them in System Settings: <button class="link-btn" id="diagRelaunchBtn">Quit &amp; reopen now</button></p>
           <div class="diag-list" id="diagList"></div>
+        </section>
+      </div>
+      <div class="settings-tab" data-tab="vscode" hidden>
+        <section class="settings-section">
+          <h3>VS Code</h3>
+          <p class="hint">With the Ace extension installed, VS Code sends this app the project you have open: the file list, the file you are editing, every edit, saves and the git changes. Pick <b>Project</b> above the answers, then press Send with an empty box for the project's status and what changed since the last report, or type a question about the code. Nothing is generated on its own.</p>
+          <div class="field-row">
+            <label class="checkbox"><input type="checkbox" id="vscodeEnabled" /> Listen for VS Code</label>
+          </div>
+          <div class="field">
+            <label class="field-label" for="vscodePort">Port (same as <code>ace.port</code> in the extension's settings)</label>
+            <input type="number" id="vscodePort" class="profile-input" min="1024" max="65535" value="2010" />
+          </div>
+          <p class="hint" id="vscodeStatusLine">Not listening.</p>
+          <h4>Install the extension</h4>
+          <ol class="help-steps">
+            <li>In the <code>vscode-extension</code> folder of this project run <code>npm run package</code>. It produces <code>ace-vscode-0.1.0.vsix</code>.</li>
+            <li>In VS Code: Extensions &rarr; <b>&hellip;</b> &rarr; <b>Install from VSIX&hellip;</b> &rarr; pick that file.</li>
+            <li>Start this app. The VS Code status bar shows <b>Ace</b> with a plug icon when connected; the extension keeps retrying while this app is not running.</li>
+          </ol>
+          <p class="hint">Everything stays on this computer: VS Code talks to this app on <code>127.0.0.1</code>. The extension's own settings (<code>ace.*</code>) choose the port, exclude files, and can hide the status bar item.</p>
         </section>
       </div>
       <div class="settings-tab help-tab" data-tab="help" hidden>
@@ -713,6 +735,7 @@
         <button class="mode-seg-btn mode-seg-btn--active" data-mode="ANSWER" title="Plain text answer">Text</button>
         <button class="mode-seg-btn" data-mode="CODE" title="Force code answer">Code</button>
         <button class="mode-seg-btn" data-mode="DIAGRAM" title="Force diagram answer">Diagram</button>
+        <button class="mode-seg-btn mode-seg-btn--project" data-mode="PROJECT" id="modeProjectBtn" title="VS Code is not connected (Settings &rarr; VS Code)">Project</button>
       </div>
       <button id="answerClearBtn" class="answer-clear-btn" title="Clear answers">Clear</button>
     </div>

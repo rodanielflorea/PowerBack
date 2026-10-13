@@ -68,6 +68,7 @@ const license = require('./license');
 const { uploadFolder } = require('./gofile');
 const { signatureDistance } = require('./speaker-detect');
 const { createSpeakerTracker } = require('./speaker-tracker');
+const { createVscodeBridge } = require('./vscode-bridge');
 // The legacy Mac build (Electron 32, for macOS 10.15–11) must never take an
 // update: the regular build needs macOS 12 and would not start after it.
 const LEGACY_MAC = process.platform === 'darwin' && parseInt(process.versions.electron, 10) < 38;
@@ -213,6 +214,8 @@ const DEFAULT_STATE = {
   floatPos: null,
   stickySize: null,
   hotkeys: { ...HOTKEY_DEFAULTS },
+  // The VS Code extension (vscode-extension/) connects to this port.
+  vscode: { enabled: true, port: 2010 },
 };
 
 const MIN_OPACITY = 0.05;
@@ -282,6 +285,7 @@ function loadState() {
         ? { type: normalizeMeetingType(raw.meeting.type || raw.meeting.hiringType) }
         : { ...DEFAULT_STATE.meeting },
       hotkeys: { ...HOTKEY_DEFAULTS, ...(raw.hotkeys || {}) },
+      vscode: { ...DEFAULT_STATE.vscode, ...(raw.vscode || {}) },
     };
   } catch {
     state = {
@@ -292,6 +296,7 @@ function loadState() {
       answer: { ...DEFAULT_STATE.answer },
       meeting: { ...DEFAULT_STATE.meeting },
       hotkeys: { ...HOTKEY_DEFAULTS },
+      vscode: { ...DEFAULT_STATE.vscode },
     };
   }
   // Answers are manual only (Send / Ctrl+Enter); drop the retired auto-answer
@@ -2063,7 +2068,30 @@ function startApp() {
   createFloatWindow();
   registerHotkeys();
   setupAutoUpdater();
+  if (state.vscode && state.vscode.enabled) vscodeBridge.start(getVscodeConfig().port);
 }
+
+// ── VS Code ──────────────────────────────────────────────────────────────────
+const vscodeBridge = createVscodeBridge({
+  log: appendLogLine,
+  onStatus: (s) => { if (win && !win.isDestroyed()) win.webContents.send('vscode-status', s); },
+  onEvent: (e) => { if (win && !win.isDestroyed()) win.webContents.send('vscode-event', e); },
+});
+function getVscodeConfig() {
+  const v = state.vscode || {};
+  const port = Number(v.port);
+  return { enabled: v.enabled !== false, port: port >= 1024 && port <= 65535 ? Math.floor(port) : 2010 };
+}
+ipcMain.handle('get-vscode-config', () => getVscodeConfig());
+ipcMain.handle('set-vscode-config', (_e, cfg) => {
+  const next = { ...getVscodeConfig(), ...(cfg || {}) };
+  state.vscode = { enabled: next.enabled !== false, port: Number(next.port) || 2010 };
+  const now = getVscodeConfig();
+  saveState();
+  if (now.enabled) vscodeBridge.start(now.port); else vscodeBridge.stop();
+  return now;
+});
+ipcMain.handle('get-vscode-status', () => vscodeBridge.status());
 
 function openLicenseWindow(reason) {
   licenseWin = new BrowserWindow({
@@ -3225,6 +3253,7 @@ function answerConvId() {
 function maxTokensForMode(mode) {
   if (mode === 'CODE') return 8192;
   if (mode === 'DIAGRAM') return 8192;
+  if (mode === 'PROJECT') return 4096;
   return 2048; // spoken answers ~90s still fit; 700 was cutting the ending
 }
 
@@ -3254,6 +3283,8 @@ function recordTurn(user, assistant, mode, images, heard) {
   if (!a) return;
   const h = clipMeetingTranscript(heard);
   convoHistory.push({ user: u || (h ? 'They said:\n' + h : ''), assistant: a, mode: mode || 'ANSWER' });
+  // A project report given: from now on "what changed" counts from here.
+  if (mode === 'PROJECT') vscodeBridge.markReported();
 
   // Persist into the current saved session (creating one if none is active).
   let s = currentSession();
@@ -3938,7 +3969,7 @@ function assembleStaticSystem(mode) {
     staticParts.push('KNOWLEDGE BASE for this candidate (home base for opinions, not a script to read). CV, JD, and support are all optional. Whatever is uploaded is the full base. Support is often the knowledge base by itself. Do NOT copy source wording. Use this base to agree, disagree, or ask. Live meeting talk can add facts or change your mind only when the other person is actually right.\n\n' + kb);
   }
 
-  if (mode !== 'ANSWER') {
+  if (mode === 'CODE' || mode === 'DIAGRAM') {
     staticParts.push('When the user asks for a diagram, chart, flowchart, sequence diagram, or any visual structure, output it as a Mermaid code block (```mermaid ... ```) so it can be rendered graphically. Rules for valid Mermaid: (1) No HTML tags inside node labels — plain text only. (2) Use only rectangle brackets [text] for node shapes — do NOT use [/text] or [/text/] trapezoid syntax. (3) No "color:" in style directives. (4) Keep node IDs simple alphanumeric. (5) Do NOT use ASCII art. (6) READABILITY FIRST: keep each diagram graspable at a glance — aim for at most ~12-15 nodes. If the system is complex, do NOT cram everything into one diagram. Instead output a high-level OVERVIEW diagram first (major components only), then one or more SEPARATE ```mermaid blocks that each zoom into a single subsystem. (7) Group related nodes with subgraphs, and choose a direction that reads well (graph LR for wide pipelines, graph TD for hierarchies). (8) NEVER reuse one identifier for both a subgraph and a node — every subgraph id must be unique and distinct from all node ids (reusing an id causes a render cycle error).');
     staticParts.push('Whenever your answer contains a diagram (Mermaid block) or a code block, append a presenter talking-script at the very end of your response using exactly this format:\n<sticky>\nOVERVIEW\n[One sentence: what this diagram/code shows and why it matters.]\n\nWALKTHROUGH\n[Narrate each major step, node, or code section as if explaining to someone who cannot see the screen. Write in full sentences. Cover every significant part. Aim for 60-90 seconds of speaking.]\n\nKEY INSIGHT\n[One sentence: the single most important takeaway or design decision.]\n</sticky>\nUse plain text only inside the sticky tags — no markdown, no asterisks, no bullet points.');
   }
@@ -3958,6 +3989,8 @@ function assembleStaticSystem(mode) {
 
   if (mode === 'DIAGRAM') {
     staticParts.push('OUTPUT FORMAT — DIAGRAM MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above. Draw a diagram of the system described in the USER MESSAGE below. Your VERY FIRST characters must be ```mermaid — no introduction, no greeting, no self-description, no "Sure!", no "Here is...", no preamble whatsoever. Do NOT introduce yourself or talk about your experience. Start the mermaid block immediately. Keep it readable at a glance: for a complex system, output a high-level overview diagram first, then separate ```mermaid blocks that drill into individual subsystems, rather than one dense diagram. After the closing ``` of EACH diagram, write a thorough explanation of THAT diagram in prose: (a) what every major component/node does, (b) why it is necessary — the specific role it plays and what would break without it, (c) how the parts connect (the data and control flow between them). Then, after the final diagram, add a "Workflow" section that walks through the end-to-end flow step by step, and a "Why this solves the problem" section that explicitly maps the design back to the original requirements — which requirement each major part satisfies and the key trade-offs. Be substantive and concrete; do not pad with filler.');
+  } else if (mode === 'PROJECT') {
+    staticParts.push('PROJECT MODE. The user has a project open in VS Code; its current state follows at the end of this message (file list, git state, the diff of uncommitted changes, what changed since your last report, the file being edited). Answer from that state, naming files and functions as they are. Do not introduce yourself and do not talk about the user\'s career. When the user asks for the status: say in a few lines what the project is and how it is built (from the file list and the files you can see), then what is changed but not committed, then what changed since the last report, in plain words a colleague would use ("you added a retry loop in fetchUsers in api.js"). Be specific about files and lines; say when something cannot be judged from what you were given, and which file you would need. When the user asks a question, answer it directly, with the relevant code quoted briefly. Use a ```mermaid block only when the user asks for a diagram. Markdown is fine here.');
   } else if (mode === 'CODE') {
     staticParts.push('OUTPUT FORMAT — LIVE CODING MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above. Write code that solves the USER MESSAGE below. Your VERY FIRST characters must be ``` opening a code block — no introduction, no greeting, no self-description, no "Sure!", no "Here is...", no preamble of any kind. Do NOT introduce yourself or talk about your experience. Write clean, complete, runnable code with NO comments or docstrings of any kind — no inline comments, no block comments, no triple-quoted docstrings; output only executable code. After the closing ``` you may add a brief explanation only.');
   }
@@ -3977,6 +4010,7 @@ function clipMeetingTranscript(mt) {
 function formatAnswerUserTurn(q, transcript, mode) {
   const ask = String(q || '').trim();
   const mt = clipMeetingTranscript(transcript);
+  if (mode === 'PROJECT') return ask || 'Give the status of the project and what changed since your last report (or, if there was none, what is changed but not committed). Short, concrete, in plain words.';
   if (mode !== 'ANSWER') return ask;
   const parts = [];
   if (mt) {
@@ -3990,9 +4024,15 @@ function formatAnswerUserTurn(q, transcript, mode) {
   return parts.join('\n\n');
 }
 
-function buildAnswerMessages(q, imgs, mode, transcript) {
+async function buildAnswerMessages(q, imgs, mode, transcript) {
   const messages = [];
-  const staticText = assembleStaticSystem(mode);
+  let staticText = assembleStaticSystem(mode);
+  // The project changes with every keystroke, so it goes last: the part
+  // before it stays the same and the prompt cache keeps serving it.
+  if (mode === 'PROJECT') {
+    const block = await vscodeBridge.promptBlock(q);
+    staticText += '\n\n' + (block || 'NO PROJECT: VS Code is not connected (Settings → VS Code). Say so in one line.');
+  }
   if (staticText) messages.push({ role: 'system', content: staticText });
   const convoBudget = mode === 'ANSWER' ? 6000 : CONVO_CHAR_BUDGET;
   for (const m of conversationContextMessages(convoBudget)) messages.push(m);
@@ -4066,7 +4106,7 @@ async function generateAnswer(question, images, forcedMode, transcript) {
   const imgs = Array.isArray(images) && images.length ? images : null;
   const q = String(question || '').trim();
   const mt = String(transcript || '').trim();
-  if (!q && !imgs && !mt) {
+  if (!q && !imgs && !mt && forcedMode !== 'PROJECT') {
     if (win && !win.isDestroyed()) win.webContents.send('answer-error', 'Nothing to answer yet — wait for the interviewer to speak, or type a question.');
     return;
   }
@@ -4090,7 +4130,7 @@ async function generateAnswer(question, images, forcedMode, transcript) {
   // Show the bubble before we build/send the prompt so Send never looks idle.
   if (win && !win.isDestroyed()) win.webContents.send('answer-start', { question: displayQ, hasImage: !!imgs, mode });
 
-  const messages = buildAnswerMessages(q, imgs, mode, mt);
+  const messages = await buildAnswerMessages(q, imgs, mode, mt);
   const promptChars = messages.reduce((n, m) => n + (typeof m.content === 'string' ? m.content.length : 0), 0);
   const sysLen = (messages.find((m) => m.role === 'system') && messages.find((m) => m.role === 'system').content.length) || 0;
   appendLogLine(`[answer] provider=${provider.id} model=${model} mode=${mode} forced=${forcedMode || '-'} sysLen=${sysLen} promptChars=${promptChars} q="${q.slice(0, 80)}" sysMsgs=${messages.filter(m => m.role === 'system').length}`);
@@ -4259,7 +4299,7 @@ async function startSpeculative(question, forcedMode, transcript) {
   const specMode = resolveAnswerMode(forcedMode, q || mt);
   ac._mode = specMode; // stash so commitSpeculative can read it
 
-  const messages = buildAnswerMessages(q, null, specMode, mt);
+  const messages = await buildAnswerMessages(q, null, specMode, mt);
   // Do NOT send answer-start yet — we buffer silently and only show the UI
   // when the user actually commits (or the text matches on submit).
 
@@ -4982,5 +5022,6 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   stopSignalingServer();
   disconnectSignalingClient();
+  vscodeBridge.stop();
 });
 app.on('window-all-closed', () => app.quit());

@@ -2498,6 +2498,8 @@ if (window.api.onAnswerConfigChanged) {
 
 // Manual mode — default Text; CODE/DIAGRAM force specific output format.
 let manualMode = 'ANSWER';
+// What main.js knows about VS Code (filled in at the end of this file).
+let vscodeState = { enabled: false, port: 2010, connected: false, name: "", active: "", branch: "", changed: 0, editsSinceReport: 0, lastError: "" };
 // The typing-speed slider only matters for Write-to-IDE, i.e. Code answers.
 function syncSpeedSlider() {
   const wrap = document.querySelector(".rail-speed-wrap");
@@ -2511,6 +2513,7 @@ if (modeSeg) {
     manualMode = btn.dataset.mode;
     modeSeg.querySelectorAll('.mode-seg-btn').forEach(b => b.classList.toggle('mode-seg-btn--active', b === btn));
     syncSpeedSlider();
+    syncProjectMode();
     _speculativeText = null;
     kickSpeculative(true);
   });
@@ -2801,6 +2804,8 @@ function composerCanSubmit() {
   const q = composerInput ? composerInput.value.trim() : "";
   const live = liveMeetText();
   const imgs = typeof attachedImages !== "undefined" && attachedImages.length > 0;
+  // Project mode: an empty box asks for the status report.
+  if (manualMode === "PROJECT" && vscodeState.connected) return true;
   return !!(q || live || imgs);
 }
 
@@ -2866,7 +2871,8 @@ function dropEmptyStreamingTurn() {
 function submitComposer() {
   if (!composerInput) return;
   const { t: q, mt, live, key: matchKey } = specSnapshot();
-  if (!q && attachedImages.length === 0 && !live) {
+  if (manualMode === "PROJECT" && !vscodeState.connected) { toast("VS Code is not connected. Install the Ace extension (Settings → VS Code).", "err"); return; }
+  if (!q && attachedImages.length === 0 && !live && manualMode !== "PROJECT") {
     // The live bubble may already be sealed; the transcript still has the question.
     if (!mt) { log("Nothing to answer yet — wait for the interviewer or type a question.", "info"); return; }
   }
@@ -2963,6 +2969,7 @@ function addAnswerTurn(question, imgs, mode, ts) {
 
   const turn = document.createElement("div");
   turn.className = "answer-turn";
+  if (mode === "PROJECT" && !(question && String(question).trim())) question = "Project status and what changed";
   const showQ = !!(question && String(question).trim()) || (imgs && imgs.length);
   const q = document.createElement("div");
   q.className = "answer-q";
@@ -3026,7 +3033,7 @@ function addAnswerTurn(question, imgs, mode, ts) {
   if (mode && mode !== 'ANSWER') {
     const badge = document.createElement("span");
     badge.className = "answer-mode-badge answer-mode-badge--" + mode.toLowerCase();
-    badge.textContent = mode === 'DIAGRAM' ? '⬡ Diagram' : '⌨ Live Code';
+    badge.textContent = mode === 'DIAGRAM' ? '⬡ Diagram' : mode === 'PROJECT' ? '⧉ Project' : '⌨ Live Code';
     a.appendChild(badge);
   }
   // Streaming text goes into a child div so the badge span is never touched
@@ -5561,3 +5568,73 @@ window.api.onHotkeysChanged(() => refreshMicPillTooltip().catch(() => {}));
     pending = requestAnimationFrame(() => update(box));
   }, true);
 })();
+
+// ── VS Code ──────────────────────────────────────────────────────────────────
+// The Project mode answers about the project open in VS Code (main.js keeps
+// the picture through vscode-bridge.js). Here: the mode button's state, the
+// composer placeholder, and the settings tab.
+const modeProjectBtn = document.getElementById("modeProjectBtn");
+const vscodeEnabledEl = document.getElementById("vscodeEnabled");
+const vscodePortEl = document.getElementById("vscodePort");
+const vscodeStatusLine = document.getElementById("vscodeStatusLine");
+
+function vscodeStatusText(s) {
+  if (!s.enabled) return s.lastError ? "Not listening: " + s.lastError + "." : "Not listening.";
+  if (!s.connected) return "Listening on 127.0.0.1:" + s.port + ". VS Code is not connected" + (s.name ? " (last project: " + s.name + ")" : "") + ".";
+  const parts = ["Connected: " + (s.name || "(no folder)")];
+  if (s.branch) parts.push("branch " + s.branch + ", " + s.changed + " changed file" + (s.changed === 1 ? "" : "s"));
+  if (s.active) parts.push("editing " + s.active);
+  if (s.editsSinceReport) parts.push(s.editsSinceReport + " edit" + (s.editsSinceReport === 1 ? "" : "s") + " since the last report");
+  return parts.join(" · ");
+}
+
+function syncProjectMode() {
+  if (modeProjectBtn) {
+    modeProjectBtn.classList.toggle("mode-seg-btn--live", !!vscodeState.connected);
+    modeProjectBtn.title = vscodeState.connected
+      ? "Ask about the project open in VS Code (" + (vscodeState.name || "project") + ")"
+      : "VS Code is not connected (Settings → VS Code)";
+  }
+  if (composerInput) {
+    composerInput.placeholder = manualMode === "PROJECT"
+      ? (vscodeState.connected ? "Ask about the project, or leave empty for the status and what changed…" : "VS Code is not connected (Settings → VS Code)")
+      : "Your question (from your knowledge base)…";
+  }
+  if (vscodeStatusLine) vscodeStatusLine.textContent = vscodeStatusText(vscodeState);
+  syncSendEnabled();
+}
+
+function applyVscodeStatus(s) {
+  if (!s) return;
+  vscodeState = { ...vscodeState, ...s };
+  syncProjectMode();
+}
+
+if (window.api.onVscodeStatus) window.api.onVscodeStatus(applyVscodeStatus);
+if (window.api.onVscodeEvent) window.api.onVscodeEvent((e) => {
+  if (!e) return;
+  if (e.type === "connected") toast("VS Code connected: " + (e.name || "project"), "info");
+  else if (e.type === "disconnected") toast("VS Code disconnected.", "info");
+});
+if (window.api.getVscodeStatus) window.api.getVscodeStatus().then(applyVscodeStatus).catch(() => {});
+
+async function refreshVscodeSettings() {
+  if (!window.api.getVscodeConfig) return;
+  const cfg = await window.api.getVscodeConfig();
+  if (vscodeEnabledEl) vscodeEnabledEl.checked = cfg.enabled !== false;
+  if (vscodePortEl) vscodePortEl.value = cfg.port;
+}
+async function persistVscode(patch) {
+  if (!window.api.setVscodeConfig) return;
+  const cfg = await window.api.setVscodeConfig(patch);
+  if (vscodeEnabledEl) vscodeEnabledEl.checked = cfg.enabled !== false;
+  if (vscodePortEl) vscodePortEl.value = cfg.port;
+  if (window.api.getVscodeStatus) applyVscodeStatus(await window.api.getVscodeStatus());
+}
+if (vscodeEnabledEl) vscodeEnabledEl.addEventListener("change", () => persistVscode({ enabled: vscodeEnabledEl.checked }));
+if (vscodePortEl) vscodePortEl.addEventListener("change", () => {
+  const port = parseInt(vscodePortEl.value, 10);
+  if (port >= 1024 && port <= 65535) persistVscode({ port });
+});
+refreshVscodeSettings();
+syncProjectMode();
