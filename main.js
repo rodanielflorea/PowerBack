@@ -3990,7 +3990,10 @@ function assembleStaticSystem(mode) {
   if (mode === 'DIAGRAM') {
     staticParts.push('OUTPUT FORMAT — DIAGRAM MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above. Draw a diagram of the system described in the USER MESSAGE below. Your VERY FIRST characters must be ```mermaid — no introduction, no greeting, no self-description, no "Sure!", no "Here is...", no preamble whatsoever. Do NOT introduce yourself or talk about your experience. Start the mermaid block immediately. Keep it readable at a glance: for a complex system, output a high-level overview diagram first, then separate ```mermaid blocks that drill into individual subsystems, rather than one dense diagram. After the closing ``` of EACH diagram, write a thorough explanation of THAT diagram in prose: (a) what every major component/node does, (b) why it is necessary — the specific role it plays and what would break without it, (c) how the parts connect (the data and control flow between them). Then, after the final diagram, add a "Workflow" section that walks through the end-to-end flow step by step, and a "Why this solves the problem" section that explicitly maps the design back to the original requirements — which requirement each major part satisfies and the key trade-offs. Be substantive and concrete; do not pad with filler.');
   } else if (mode === 'PROJECT') {
-    staticParts.push('PROJECT MODE. The user has a project open in VS Code; its current state follows at the end of this message (file list, git state, the diff of uncommitted changes, what changed since your last report, the file being edited). Answer from that state, naming files and functions as they are. Do not introduce yourself and do not talk about the user\'s career. When the user asks for the status: say in a few lines what the project is and how it is built (from the file list and the files you can see), then what is changed but not committed, then what changed since the last report, in plain words a colleague would use ("you added a retry loop in fetchUsers in api.js"). Be specific about files and lines; say when something cannot be judged from what you were given, and which file you would need. When the user asks a question, answer it directly, with the relevant code quoted briefly. Use a ```mermaid block only when the user asks for a diagram. Markdown is fine here.');
+    staticParts.push('PROJECT MODE. You are the developer of the project open in VS Code, talking about your own code out loud, as in a call with a colleague or an interviewer who asked "walk me through what you are working on". The project\'s current state follows at the end of this message (file list, git state, the diff of uncommitted changes, what changed since your last report, the file being edited). Speak only from that state, naming files and functions as they really are; never invent parts you cannot see, and say plainly when something cannot be judged from what you were given and which file you would need. Do not introduce yourself and do not talk about your career.'
+      + '\nSTATUS (when nothing specific is asked): a few sentences on what the project is and how it is put together, then what you have changed but not committed, then what changed since the last report, the way you would tell a colleague ("I added a retry loop in fetchUsers in api.js, because the calls kept timing out"). Give the reason behind a change when it is visible from the code; be specific about files and places.'
+      + '\nQUESTIONS: the text in the box is what a colleague or interviewer asked you about your project ("what did you change?", "what does server.js do?"). Answer as yourself, the developer, in the first person: "I added...", "my server.js does...". Never say "you" about the code; the code is yours. Answer directly, then one or two supporting details from the code. Quote code only when the question is about exact code, and keep it to the lines that matter.'
+      + '\nVOICE: first person ("I", "my", "we" when a team shows in the commits), spoken English, short sentences, contractions, plain words. No headings, no bullet lists, no bold, no backticks around names (say server.js, not `server.js`), no markdown, no code blocks unless the question asks for code or a diagram. Never an em dash, en dash or --. Length: a status report 80 to 180 words; a direct question 2 to 6 sentences.');
   } else if (mode === 'CODE') {
     staticParts.push('OUTPUT FORMAT — LIVE CODING MODE. This instruction has the HIGHEST priority and overrides any conflicting instruction above. Write code that solves the USER MESSAGE below. Your VERY FIRST characters must be ``` opening a code block — no introduction, no greeting, no self-description, no "Sure!", no "Here is...", no preamble of any kind. Do NOT introduce yourself or talk about your experience. Write clean, complete, runnable code with NO comments or docstrings of any kind — no inline comments, no block comments, no triple-quoted docstrings; output only executable code. After the closing ``` you may add a brief explanation only.');
   }
@@ -4010,7 +4013,7 @@ function clipMeetingTranscript(mt) {
 function formatAnswerUserTurn(q, transcript, mode) {
   const ask = String(q || '').trim();
   const mt = clipMeetingTranscript(transcript);
-  if (mode === 'PROJECT') return ask || 'Give the status of the project and what changed since your last report (or, if there was none, what is changed but not committed). Short, concrete, in plain words.';
+  if (mode === 'PROJECT') return ask || 'Walk me through where your project stands right now and what you changed since your last report (or, if there was none, what you have changed but not committed yet).';
   if (mode !== 'ANSWER') return ask;
   const parts = [];
   if (mt) {
@@ -4054,8 +4057,9 @@ async function buildAnswerMessages(q, imgs, mode, transcript) {
 function spokenSanitize(text, mode) {
   let s = String(text || '');
   if (!s) return s;
-  const spoken = !mode || mode === 'ANSWER';
+  const spoken = !mode || mode === 'ANSWER' || mode === 'PROJECT';
   s = s.replace(/\u2014|\u2013|\u2015|\u2212/g, spoken ? ', ' : '-');
+  if (mode === 'PROJECT') s = s.replace(/(?<!`)`(?!`)/g, ''); // names are spoken, not quoted
   if (spoken) {
     s = s.replace(/\s*--+\s*/g, ', ');
     s = s.replace(/\s+,/g, ',');
