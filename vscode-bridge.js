@@ -307,14 +307,37 @@ function createVscodeBridge({ log, onStatus, onEvent }) {
       const d = [...project.diagnostics].slice(0, 10).map(([p, items]) => `${p}: ` + items.slice(0, 8).map((it) => `L${it.line + 1} ${it.severity}: ${it.message}`).join('; ')).join('\n');
       out.push(`PROBLEMS REPORTED BY VS CODE:\n${clip(d, 3000)}`);
     }
-    // Files named in the question, in full when they are small enough.
-    const asked = filesNamedIn(question);
-    for (const p of asked.slice(0, 3)) {
+    // Files named in the question, in full when they are small enough. For a
+    // status report (nothing asked) the files that say what the project is:
+    // the README, package.json and the entry point it names.
+    const asked = String(question || '').trim() ? filesNamedIn(question) : keyFiles();
+    for (const p of asked.slice(0, 4)) {
       if (a && p === a.path && a.lineCount <= (a.to - a.from + 1)) continue;
       const text = await requestFile(p);
       if (text !== null) out.push(`FILE ${p}:\n${clip(text, FILE_CHARS)}`);
     }
     return out.join('\n\n');
+  }
+
+  function keyFiles() {
+    const has = (p) => project.files.find((f) => f.path === p && f.size > 0 && f.size < 24 * 1024);
+    const out = [];
+    const readme = project.files.find((f) => /^readme(\.md|\.txt)?$/i.test(f.path) && f.size < 24 * 1024);
+    if (readme) out.push(readme.path);
+    const pkg = has('package.json');
+    if (pkg) {
+      out.push('package.json');
+      const saved = project.saved.get('package.json') || project.fetched.get('package.json');
+      try {
+        const main = saved && JSON.parse(saved.text).main;
+        if (typeof main === 'string' && has(main.replace(/^\.\//, ''))) out.push(main.replace(/^\.\//, ''));
+      } catch {}
+    }
+    for (const cand of ['src/index.js', 'src/main.js', 'src/app.js', 'src/server.js', 'index.js', 'main.js', 'app.js', 'server.js', 'main.py', 'app.py', 'src/main.ts', 'src/index.ts', 'src/App.tsx', 'src/main.rs', 'main.go', 'cmd/main.go']) {
+      if (out.length >= 4) break;
+      if (has(cand) && !out.includes(cand)) out.push(cand);
+    }
+    return out;
   }
 
   function filesNamedIn(question) {
