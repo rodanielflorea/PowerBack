@@ -85,8 +85,7 @@ const PROVIDERS = {
       'google/gemini-3.8-flash',
       'x-ai/grok-4.7',
       'deepseek/deepseek-v4.1-flash',
-      'qwen/qwen3.8-max-prime',
-      'mistralai/mistral-large-4-0',
+      'anthropic/claude-haiku-5.5',
     ],
     style: 'openai',
     chatUrl: 'https://openrouter.ai/api/v1/chat/completions',
@@ -365,13 +364,14 @@ function xaiChatBody(model, messages, { stream, maxTokens }) {
   return body;
 }
 
-// OpenRouter: the plain OpenAI chat shape. Reasoning is switched off for a
-// fast first token where the model allows it; a model that rejects the
-// `reasoning` field gets the body without it (second attempt).
-function openrouterChatBody(model, messages, { stream, maxTokens, noReasoning }) {
+// OpenRouter: the plain OpenAI chat shape. Reasoning models are asked for
+// the least thinking, kept out of the stream, for a fast first token
+// (`enabled: false` is rejected by Claude: "reasoning is mandatory"); a model
+// that rejects the `reasoning` field gets the body without it (second attempt).
+function openrouterChatBody(model, messages, { stream, maxTokens, lowReasoning }) {
   const body = { model, messages, stream: !!stream };
   if (maxTokens) body.max_tokens = maxTokens;
-  if (noReasoning) body.reasoning = { enabled: false };
+  if (lowReasoning) body.reasoning = { effort: 'low', exclude: true };
   return body;
 }
 
@@ -403,7 +403,7 @@ function streamAttempts(p, model, messages, { maxTokens, convId } = {}) {
   }
   if (p.id === 'openrouter') {
     return [
-      { url: p.chatUrl, body: openrouterChatBody(model, messages, { stream: true, maxTokens: cap, noReasoning: true }), takeDelta: deltaFromOpenAi },
+      { url: p.chatUrl, body: openrouterChatBody(model, messages, { stream: true, maxTokens: cap, lowReasoning: true }), takeDelta: deltaFromOpenAi },
       { url: p.chatUrl, body: openrouterChatBody(model, messages, { stream: true, maxTokens: cap }), takeDelta: deltaFromOpenAi },
     ];
   }
@@ -468,7 +468,7 @@ async function completeChat({ provider, apiKey, model, messages, maxTokens, sign
     body = openaiChatBody(model, messages, { stream: false, maxTokens: maxTokens || 16 });
   } else if (p.id === 'openrouter') {
     url = p.chatUrl;
-    body = openrouterChatBody(model, messages, { stream: false, maxTokens: maxTokens || 16, noReasoning: true });
+    body = openrouterChatBody(model, messages, { stream: false, maxTokens: maxTokens || 16 });
   } else {
     url = p.chatUrl;
     body = xaiChatBody(model, messages, { stream: false, maxTokens: maxTokens || 16 });
