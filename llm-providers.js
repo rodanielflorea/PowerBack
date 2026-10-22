@@ -29,13 +29,14 @@ const PROVIDERS = {
     id: 'anthropic',
     label: 'Anthropic',
     short: 'Anthropic',
-    defaultModel: 'claude-haiku-4-5',
+    defaultModel: 'claude-sonnet-5-5',
     keyHint: 'Get a key at console.anthropic.com.',
     keyPlaceholder: 'Paste Anthropic key (sk-ant-…)…',
     fallbackModels: [
-      'claude-haiku-4-5',
+      'claude-sonnet-5-5',
+      'claude-opus-5-5',
+      'claude-fable-5-1',
       'claude-sonnet-5',
-      'claude-sonnet-4-6',
       'claude-opus-5',
       'claude-fable-5',
     ],
@@ -48,25 +49,52 @@ const PROVIDERS = {
     id: 'openai',
     label: 'OpenAI',
     short: 'OpenAI',
-    defaultModel: 'gpt-4o',
+    defaultModel: 'gpt-5.6-luna',
     keyHint: 'Get a key at platform.openai.com/api-keys.',
     keyPlaceholder: 'Paste OpenAI key (sk-…)…',
     fallbackModels: [
-      'gpt-4o',
-      'gpt-4.1',
       'gpt-5.6-luna',
-      'gpt-5.4',
       'gpt-5.6-terra',
       'gpt-5.6-sol',
+      'gpt-5.6-luna-pro',
+      'gpt-5.6-terra-pro',
+      'gpt-5.6-sol-pro',
+      'gpt-5.4',
     ],
     style: 'openai',
     chatUrl: 'https://api.openai.com/v1/chat/completions',
     modelsUrl: 'https://api.openai.com/v1/models',
     warmUrl: 'https://api.openai.com/v1/models',
   },
+  // One key for many vendors' models. OpenAI-compatible chat endpoint; model
+  // ids are "vendor/model". The model list is public (no key needed).
+  openrouter: {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    short: 'OpenRouter',
+    defaultModel: 'anthropic/claude-sonnet-5.5',
+    keyHint: 'Get a key at openrouter.ai/keys.',
+    keyPlaceholder: 'Paste OpenRouter key (sk-or-…)…',
+    fallbackModels: [
+      'anthropic/claude-sonnet-5.5',
+      'anthropic/claude-opus-5.5',
+      'anthropic/claude-fable-5.1',
+      'openai/gpt-5.6-luna',
+      'openai/gpt-5.6-terra',
+      'openai/gpt-5.6-sol',
+      'google/gemini-3.8-flash',
+      'x-ai/grok-4.7',
+      'deepseek/deepseek-v4.1-flash',
+      'anthropic/claude-haiku-5.5',
+    ],
+    style: 'openai',
+    chatUrl: 'https://openrouter.ai/api/v1/chat/completions',
+    modelsUrl: 'https://openrouter.ai/api/v1/models',
+    warmUrl: 'https://openrouter.ai/api/v1/models',
+  },
 };
 
-const PROVIDER_ORDER = ['xai', 'anthropic', 'openai'];
+const PROVIDER_ORDER = ['xai', 'anthropic', 'openai', 'openrouter'];
 
 // Node's default undici keep-alive is ~4s, so a pause between interview
 // questions drops the socket and the next answer pays TLS again. Hold the
@@ -132,6 +160,8 @@ function authHeaders(provider, apiKey, extra) {
   }
   // Sticky routing so xAI prompt-cache hits the same server across turns.
   if (provider.id === 'xai' && extra.convId) h['x-grok-conv-id'] = String(extra.convId);
+  // OpenRouter asks apps to say who they are (shown on its usage page).
+  if (provider.id === 'openrouter') { h['HTTP-Referer'] = 'https://github.com/rodanielflorea/PowerBack'; h['X-Title'] = 'Ace'; }
   return h;
 }
 
@@ -334,6 +364,17 @@ function xaiChatBody(model, messages, { stream, maxTokens }) {
   return body;
 }
 
+// OpenRouter: the plain OpenAI chat shape. Reasoning models are asked for
+// the least thinking, kept out of the stream, for a fast first token
+// (`enabled: false` is rejected by Claude: "reasoning is mandatory"); a model
+// that rejects the `reasoning` field gets the body without it (second attempt).
+function openrouterChatBody(model, messages, { stream, maxTokens, lowReasoning }) {
+  const body = { model, messages, stream: !!stream };
+  if (maxTokens) body.max_tokens = maxTokens;
+  if (lowReasoning) body.reasoning = { effort: 'low', exclude: true };
+  return body;
+}
+
 function streamAttempts(p, model, messages, { maxTokens, convId } = {}) {
   const cap = maxTokens || (p.style === 'anthropic' ? 16384 : undefined);
   if (p.style === 'anthropic') {
@@ -358,6 +399,12 @@ function streamAttempts(p, model, messages, { maxTokens, convId } = {}) {
         body: respBody,
         takeDelta: (json) => deltaFromOpenAiResponses(json) || deltaFromOpenAi(json),
       },
+    ];
+  }
+  if (p.id === 'openrouter') {
+    return [
+      { url: p.chatUrl, body: openrouterChatBody(model, messages, { stream: true, maxTokens: cap, lowReasoning: true }), takeDelta: deltaFromOpenAi },
+      { url: p.chatUrl, body: openrouterChatBody(model, messages, { stream: true, maxTokens: cap }), takeDelta: deltaFromOpenAi },
     ];
   }
   return [{
@@ -419,6 +466,9 @@ async function completeChat({ provider, apiKey, model, messages, maxTokens, sign
   } else if (p.id === 'openai') {
     url = 'https://api.openai.com/v1/chat/completions';
     body = openaiChatBody(model, messages, { stream: false, maxTokens: maxTokens || 16 });
+  } else if (p.id === 'openrouter') {
+    url = p.chatUrl;
+    body = openrouterChatBody(model, messages, { stream: false, maxTokens: maxTokens || 16 });
   } else {
     url = p.chatUrl;
     body = xaiChatBody(model, messages, { stream: false, maxTokens: maxTokens || 16 });
@@ -444,18 +494,42 @@ function isChatModelId(provider, id) {
     return !/imagine|voice|tts|stt|image|video/.test(s);
   }
   if (provider.id === 'openai') {
-    if (!/^gpt-5|^gpt-4/.test(s)) return false;
-    return !/realtime|transcribe|tts|audio|image|search|moderation|instruct/.test(s);
+    // GPT-4 generation models are being retired; only 5.x is offered.
+    if (!/^gpt-5/.test(s)) return false;
+    return !/realtime|transcribe|tts|audio|image|search|moderation|instruct|codex|chat-latest/.test(s);
   }
-  if (provider.id === 'anthropic') return s.startsWith('claude-');
+  // Dated snapshots (claude-…-20251001) are the older generations.
+  if (provider.id === 'anthropic') return s.startsWith('claude-') && !/-\d{8}$/.test(s);
+  if (provider.id === 'openrouter') return !/:batch$|:free$|:online$|-image\b|\bimage-|-tts\b|-audio\b|embedding/.test(s);
   return true;
+}
+
+// OpenRouter lists hundreds of models; keep the text chat ones, the curated
+// list first, then the rest newest first.
+function openrouterModelIds(data, fallback) {
+  const rows = (data || []).filter((m) => m && m.id && isChatModelId(PROVIDERS.openrouter, m.id)).filter((m) => {
+    const out = (m.architecture && m.architecture.output_modalities) || [];
+    const inp = (m.architecture && m.architecture.input_modalities) || [];
+    return (!out.length || out.includes('text')) && (!inp.length || inp.includes('text'));
+  });
+  rows.sort((a, b) => (b.created || 0) - (a.created || 0));
+  const ids = rows.map((m) => m.id);
+  const curated = fallback.filter((id) => ids.includes(id));
+  return curated.concat(ids.filter((id) => !curated.includes(id))).slice(0, 250);
 }
 
 async function listModels({ provider, apiKey }) {
   const p = typeof provider === 'string' ? getProvider(provider) : provider;
-  if (!apiKey) return null;
+  if (!apiKey && p.id !== 'openrouter') return null;
   try {
     let ids = [];
+    if (p.id === 'openrouter') {
+      const r = await fetch(p.modelsUrl, { headers: apiKey ? authHeaders(p, apiKey) : {} });
+      if (!r.ok) return null;
+      const data = await r.json();
+      ids = openrouterModelIds(data.data, p.fallbackModels);
+      return ids.length ? ids : null;
+    }
     if (p.style === 'anthropic') {
       const r = await fetch(p.modelsUrl, { headers: authHeaders(p, apiKey) });
       if (!r.ok) return null;
@@ -521,9 +595,19 @@ function modelAbbr(providerId, modelId) {
     if (/luna/i.test(id)) return 'Lun';
     if (/terra/i.test(id)) return 'Ter';
     if (/sol/i.test(id)) return 'Sol';
-    if (/gpt-4o/i.test(id)) return '4o';
-    if (/gpt-4\.1/i.test(id)) return '4.1';
     return 'GPT';
+  }
+  if (p === 'openrouter') {
+    const name = id.slice(id.indexOf('/') + 1);
+    if (/claude/i.test(name)) return modelAbbr('anthropic', name);
+    if (/gpt/i.test(name)) return modelAbbr('openai', name);
+    if (/grok/i.test(name)) return modelAbbr('xai', name);
+    if (/gemini/i.test(name)) return 'Gem';
+    if (/deepseek/i.test(name)) return 'DS';
+    if (/qwen/i.test(name)) return 'Qw';
+    if (/mistral/i.test(name)) return 'Mi';
+    if (/llama/i.test(name)) return 'Ll';
+    return 'OR';
   }
   return 'M';
 }
