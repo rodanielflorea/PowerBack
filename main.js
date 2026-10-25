@@ -192,12 +192,13 @@ const DEFAULT_STATE = {
   answer: {
     provider: 'openai',
     apiKey: '',
-    model: 'gpt-4o',
-    keys: { xai: '', anthropic: '', openai: '' },
+    model: 'gpt-5.6-luna',
+    keys: { xai: '', anthropic: '', openai: '', openrouter: '' },
     models: {
       xai: 'grok-4.20-0309-non-reasoning',
-      anthropic: 'claude-haiku-4-5',
-      openai: 'gpt-4o',
+      anthropic: 'claude-sonnet-5-5',
+      openai: 'gpt-5.6-luna',
+      openrouter: 'anthropic/claude-sonnet-5.5',
     },
   },
   meeting: {
@@ -250,7 +251,7 @@ function getBuiltinKeys() {
   let raw = {};
   try { raw = JSON.parse(fs.readFileSync(BUILTIN_KEYS_FILE, 'utf8')); } catch {}
   builtinKeys = {};
-  for (const k of ['deepgram', 'xai', 'anthropic', 'openai']) {
+  for (const k of ['deepgram', 'xai', 'anthropic', 'openai', 'openrouter']) {
     const v = String(raw[k] || '').trim();
     if (v) builtinKeys[k] = v;
   }
@@ -265,10 +266,11 @@ function applyBuiltinKeys() {
   if (b.xai) { state.transcription.xaiApiKey = b.xai; state.answer.keys.xai = b.xai; state.answer.apiKey = b.xai; }
   if (b.anthropic) state.answer.keys.anthropic = b.anthropic;
   if (b.openai) state.answer.keys.openai = b.openai;
+  if (b.openrouter) state.answer.keys.openrouter = b.openrouter;
 }
 ipcMain.handle('get-builtin-keys', () => {
   const b = getBuiltinKeys();
-  return { deepgram: !!b.deepgram, xai: !!b.xai, anthropic: !!b.anthropic, openai: !!b.openai };
+  return { deepgram: !!b.deepgram, xai: !!b.xai, anthropic: !!b.anthropic, openai: !!b.openai, openrouter: !!b.openrouter };
 });
 
 function loadState() {
@@ -337,20 +339,25 @@ function migrateAnswerConfig() {
   a.models = { ...DEFAULT_STATE.answer.models, ...(a.models || {}) };
 
   if (!a.provider || !PROVIDERS[a.provider]) {
-    const withKey = ['openai', 'anthropic', 'xai'].find((id) => String((prevKeys[id] || a.keys[id] || '')).trim());
+    const withKey = ['openai', 'anthropic', 'openrouter', 'xai'].find((id) => String((prevKeys[id] || a.keys[id] || '')).trim());
     a.provider = withKey || 'openai';
   }
 
   if (!a.keys.xai && a.apiKey) a.keys.xai = a.apiKey;
   if (!a.apiKey && a.keys.xai) a.apiKey = a.keys.xai;
 
-  // Stock defaults that were slower — move to the fast model unless the
-  // user already picked something else.
+  // Stock defaults that were slower, and models the providers are retiring
+  // (GPT-4 generation, Haiku 4.5, Claude 4.x): move to the current default
+  // unless the user already picked something else.
   const oldSlow = {
     xai: ['grok-4.6', 'grok-4.5'],
-    anthropic: ['claude-sonnet-5'],
-    openai: ['gpt-5.6-terra'],
+    anthropic: ['claude-sonnet-5', 'claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8'],
+    openai: ['gpt-5.6-terra', 'gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4-turbo', 'gpt-4'],
   };
+  for (const id of Object.keys(PROVIDERS)) {
+    if (oldSlow[id] && oldSlow[id].includes(a.models[id])) a.models[id] = getProvider(id).defaultModel;
+  }
+  if (oldSlow[a.provider] && oldSlow[a.provider].includes(a.model)) a.model = a.models[a.provider] || getProvider(a.provider).defaultModel;
   const stored = a.models[a.provider] || a.model;
   if (oldSlow[a.provider] && oldSlow[a.provider].includes(stored)) {
     a.model = getProvider(a.provider).defaultModel;
