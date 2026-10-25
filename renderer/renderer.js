@@ -2203,7 +2203,7 @@ function addMeetBubble(lines, live) {
   for (const l of lines || []) appendLine(el, l.who, l.text, l.live);
   ensureSpacer();
   answerHistory.insertBefore(el, answerSpacer);
-  try { el.scrollIntoView({ block: "nearest" }); } catch {}
+  revealMeetBubble(el);
   return el;
 }
 
@@ -2324,7 +2324,7 @@ function applyMeetLine(who, text, speakerId, isFinal) {
   liveSeg = isFinal ? "" : text;
   liveMeetEl = isFinal ? null : el;
   if (isFinal) persistMeetBubble(el, false);
-  try { el.scrollIntoView({ block: "nearest" }); } catch {}
+  revealMeetBubble(el);
   if (speakerChanged && (!composerInput || !composerInput.value.trim())) {
     kickSpeculative(true);
   } else if (typeof syncSendEnabled === "function") {
@@ -2943,6 +2943,22 @@ if (answerClearBtn) {
   });
 }
 
+// Bring a transcript bubble into view as it grows. A bubble taller than the
+// panel is lined up by its bottom edge so the newest words stay on screen;
+// scrollIntoView "nearest" would settle on its top and hide them.
+function revealMeetBubble(el) {
+  if (!el || !answerHistory) return;
+  try {
+    const cRect = answerHistory.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    if (r.height > cRect.height) {
+      answerHistory.scrollTop += r.bottom - cRect.bottom;
+    } else {
+      el.scrollIntoView({ block: "nearest" });
+    }
+  } catch {}
+}
+
 // Spacer div pinned at the bottom of answerHistory — always sized to the
 // panel height so there is always room to scroll any turn to the top,
 // even when total content is shorter than the panel.
@@ -3055,13 +3071,16 @@ function addAnswerTurn(question, imgs, mode, ts) {
   ensureSpacer();
   answerHistory.insertBefore(turn, answerSpacer);
 
+  // Land on the start of the answer, with a strip of what came before it
+  // (the question, or the transcript) above for context. Measured from the
+  // answer's TOP: on Submit a drafted answer is pasted in whole before this
+  // runs, and measuring a bottom edge would open the bubble at its end.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     const cRect = answerHistory.getBoundingClientRect();
-    const target = showQ ? q : a;
-    const tRect = target.getBoundingClientRect();
-    const tBottomInScroll = answerHistory.scrollTop + (tRect.bottom - cRect.top);
-    const tail = Math.min(72, tRect.height);
-    answerHistory.scrollTop = tBottomInScroll - tail;
+    const aTopInScroll = answerHistory.scrollTop + (a.getBoundingClientRect().top - cRect.top);
+    const prev = showQ ? q : turn.previousElementSibling;
+    const context = prev ? Math.min(72, prev.getBoundingClientRect().height) : 0;
+    answerHistory.scrollTop = Math.max(0, aTopInScroll - context);
   }));
   return a;
 }
