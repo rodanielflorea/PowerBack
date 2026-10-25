@@ -171,7 +171,12 @@
       recId = begun.id;
       const id = recId;
       writes = Promise.resolve();
-      rec = new MediaRecorder(new MediaStream(streamTracks), { mimeType: videoTrack ? pickMime() : "audio/webm" });
+      // Chromium's default is about 2.5 Mbps, which blurs small on-screen text;
+      // 4 Mbps at 15 fps keeps it readable for about 1.8 GB an hour.
+      const recOpts = videoTrack
+        ? { mimeType: pickMime(), videoBitsPerSecond: 4000000, audioBitsPerSecond: 128000 }
+        : { mimeType: "audio/webm", audioBitsPerSecond: 128000 };
+      rec = new MediaRecorder(new MediaStream(streamTracks), recOpts);
       rec.ondataavailable = (e) => {
         if (!e.data || !e.data.size) return;
         // In order, one after another: the pieces only make a file in sequence.
