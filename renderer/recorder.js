@@ -22,6 +22,24 @@
   }
 
   async function getScreenVideoTrack() {
+    // Windows: take the video through getDisplayMedia (main answers it with the
+    // same screen). A chromeMediaSource "desktop" capture of a screen is shared
+    // with every other one of that screen, and the speaker-name watcher holds
+    // one at 4 fps, which held recordings to 4 fps too. getDisplayMedia gets a
+    // capturer of its own (measured: 29 fps beside the watcher's 4).
+    if (!IS_MAC && navigator.mediaDevices.getDisplayMedia) {
+      try {
+        const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 } }, audio: false });
+        s.getAudioTracks().forEach((t) => t.stop());
+        const vt = s.getVideoTracks()[0];
+        if (vt) {
+          tracks.push(s);
+          log("recording video: display capture");
+          return vt;
+        }
+        s.getTracks().forEach((t) => t.stop());
+      } catch (e) { log("recording video: display capture unavailable (" + e.message + "), using desktop capture"); }
+    }
     const id = window.api.getDesktopSourceId ? await window.api.getDesktopSourceId() : null;
     if (!id) throw new Error("no screen source");
     const s = await navigator.mediaDevices.getUserMedia({
