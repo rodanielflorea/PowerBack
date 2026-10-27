@@ -26,7 +26,7 @@
     if (!id) throw new Error("no screen source");
     const s = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: id, maxFrameRate: 15 } },
+      video: { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: id, maxFrameRate: 30 } },
     });
     tracks.push(s);
     return s.getVideoTracks()[0];
@@ -171,10 +171,12 @@
       recId = begun.id;
       const id = recId;
       writes = Promise.resolve();
-      // Chromium's default is about 2.5 Mbps, which blurs small on-screen text;
-      // 4 Mbps at 15 fps keeps it readable for about 1.8 GB an hour.
+      // Chromium's default is about 2.5 Mbps, which blurs small on-screen text.
+      // 30 fps for smooth motion; 6 Mbps keeps each frame as sharp as the
+      // earlier 4 Mbps at 15 fps did (still screens cost little), up to
+      // about 2.7 GB an hour.
       const recOpts = videoTrack
-        ? { mimeType: pickMime(), videoBitsPerSecond: 4000000, audioBitsPerSecond: 128000 }
+        ? { mimeType: pickMime(), videoBitsPerSecond: 6000000, audioBitsPerSecond: 128000 }
         : { mimeType: "audio/webm", audioBitsPerSecond: 128000 };
       rec = new MediaRecorder(new MediaStream(streamTracks), recOpts);
       rec.ondataavailable = (e) => {
