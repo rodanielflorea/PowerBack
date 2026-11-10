@@ -1592,12 +1592,11 @@ function startSignalingServer() {
       appendLogLine(`[supporter] #${id} joined from ${ip}`);
       try { ws.send(JSON.stringify({ type: 'hello', id, micMode: initialMicMode })); } catch {}
       for (const m of chatHistory) {
-        if (!m || !m.fromMe) continue;
-        if (m.type !== 'chat-text' && m.type !== 'chat-image') continue;
+        if (!m || (m.type !== 'chat-text' && m.type !== 'chat-image')) continue;
         try {
           const payload = m.type === 'chat-text'
-            ? { type: 'chat-text', text: m.text, ts: m.ts }
-            : { type: 'chat-image', dataUrl: m.dataUrl, ts: m.ts };
+            ? { type: 'chat-text', text: m.text, ts: m.ts, fromSupporter: !m.fromMe }
+            : { type: 'chat-image', dataUrl: m.dataUrl, ts: m.ts, fromSupporter: !m.fromMe };
           ws.send(JSON.stringify(payload));
         } catch {}
       }
@@ -1633,13 +1632,18 @@ function startSignalingServer() {
         return;
       }
       if (msg && (msg.type === 'chat-text' || msg.type === 'chat-image')) {
-        if (win) win.webContents.send('capture-text', `[chat received from #${id}: ${msg.type}${msg.text ? ' "' + msg.text.slice(0,40) + '"' : ''}]`);
-        pushChatToSticky({ ...msg, fromId: id, fromMe: false, ts: msg.ts || Date.now() });
+        const entry = msg.type === 'chat-text'
+          ? { type: 'chat-text', text: String(msg.text || ''), ts: msg.ts || Date.now(), fromId: id, fromMe: false }
+          : { type: 'chat-image', dataUrl: String(msg.dataUrl || ''), ts: msg.ts || Date.now(), fromId: id, fromMe: false };
+        chatHistory.push(entry);
+        if (chatHistory.length > CHAT_HISTORY_MAX) chatHistory.shift();
+        if (win) win.webContents.send('supporter-chat-in', entry);
         return;
       }
       if (msg && msg.type === 'chat-clear') {
         chatHistory = [];
         pushHistoryToStickyDom();
+        if (win) win.webContents.send('chat-clear');
         for (const e2 of supporterConns.values()) {
           if (e2 && e2.ws && e2.ws.readyState === WebSocket.OPEN) {
             try { e2.ws.send(JSON.stringify({ type: 'chat-clear', ts: Date.now() })); } catch {}
@@ -5034,6 +5038,24 @@ ipcMain.on('remote-submit-result', (_e, r) => {
   try { entry.ws.send(JSON.stringify({ type: 'remote-submit-result', ok: !!r.ok, reason: String(r.reason || '') })); } catch {}
 });
 // Supporter: ask the speaker's Ace to answer, as if they had pressed Send.
+// Speaker: a message from the chat column to the supporter.
+ipcMain.handle('speaker-chat-send', (_e, m) => {
+  if (state.network.role !== 'speaker' || !m) return false;
+  const entry = m.dataUrl
+    ? { type: 'chat-image', dataUrl: String(m.dataUrl), ts: Date.now(), fromMe: true }
+    : { type: 'chat-text', text: String(m.text || '').trim(), ts: Date.now(), fromMe: true };
+  if (entry.type === 'chat-text' && !entry.text) return false;
+  chatHistory.push(entry);
+  if (chatHistory.length > CHAT_HISTORY_MAX) chatHistory.shift();
+  const data = JSON.stringify(entry.type === 'chat-text'
+    ? { type: 'chat-text', text: entry.text, ts: entry.ts }
+    : { type: 'chat-image', dataUrl: entry.dataUrl, ts: entry.ts });
+  let sent = 0;
+  for (const c of supporterConns.values()) {
+    if (c && c.ws && c.ws.readyState === WebSocket.OPEN) { try { c.ws.send(data); sent++; } catch {} }
+  }
+  return sent > 0;
+});
 ipcMain.handle('remote-submit', (_e, mode) => {
   if (state.network.role !== 'supporter' || !wsClient || wsClient.readyState !== WebSocket.OPEN) return false;
   try { wsClient.send(JSON.stringify({ type: 'remote-submit', mode: String(mode || '') })); return true; } catch { return false; }

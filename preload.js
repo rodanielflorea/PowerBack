@@ -72,6 +72,8 @@ contextBridge.exposeInMainWorld('api', {
   remoteSubmitResult: (r) => ipcRenderer.send('remote-submit-result', r),
   onRemoteSubmitResult: (cb) => ipcRenderer.on('remote-submit-result', (_e, v) => cb(v)),
   setSidePane: (open, width) => ipcRenderer.invoke('set-side-pane', open, width),
+  speakerChatSend: (m) => ipcRenderer.invoke('speaker-chat-send', m),
+  onSupporterChatIn: (cb) => ipcRenderer.on('supporter-chat-in', (_e, v) => cb(v)),
   logAppend: (line) => ipcRenderer.invoke('log-append', line),
   logRecent: () => ipcRenderer.invoke('log-recent'),
   logClear: () => ipcRenderer.invoke('log-clear'),

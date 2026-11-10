@@ -292,6 +292,7 @@ hideBtn.addEventListener("click", () => window.api.hide());
 quitBtn.addEventListener("click", () => window.api.quit());
 
 function applyRoleClass(role) {
+  if (!role && typeof closeSidePane === "function") closeSidePane();
   document.body.classList.toggle("role-supporter", role === "supporter");
   document.body.classList.toggle("role-speaker", role === "speaker");
   const chatMain = document.getElementById("chatMain");
@@ -4659,7 +4660,7 @@ function _createSupporterPeer(localStream) {
       netCfg && netCfg.incomingVolume != null ? netCfg.incomingVolume : 1,
     );
     remoteAudioEl.volume = vol;
-    remoteAudioEl.muted = false;
+    remoteAudioEl.muted = !!supporterSoundMuted;
     const p = remoteAudioEl.play();
     if (p && p.then)
       p.then(() => log(`Supporter: <audio> play() resolved`, "info")).catch(
@@ -4712,12 +4713,14 @@ window.api.onSignaling((msg) => {
       toast(`A supporter joined${msg.ip ? " from " + msg.ip : ""}.`, "info");
       speakerHandleOpened(msg.connId);
       mirrorStart();
+      openSpeakerChatPane(msg.ip ? `Supporter connected · ${msg.ip}` : "Supporter connected");
     }
   } else if (type === "closed") {
     if (netCfg && netCfg.role === "speaker" && msg.connId) {
       toast("The supporter left.", "info");
       speakerHandleClosed(msg.connId);
       mirrorStop();
+      chatSetStatus("The supporter left");
     }
     else if (netCfg && netCfg.role === "supporter") {
       if (supporterPeer) {
@@ -4810,8 +4813,9 @@ function chatClearAll() {
 if (window.api && typeof window.api.onChatIncoming === "function") {
   window.api.onChatIncoming((msg) => {
     if (!msg) return;
-    if (msg.type === "chat-text") chatAddText(msg.text || "", true, false, msg.ts);
-    else if (msg.type === "chat-image") chatAddImage(msg.dataUrl || "", true, false, msg.ts);
+    const mine = !!msg.fromSupporter;
+    if (msg.type === "chat-text") chatAddText(msg.text || "", true, mine, msg.ts);
+    else if (msg.type === "chat-image") chatAddImage(msg.dataUrl || "", true, mine, msg.ts);
   });
 }
 if (window.api && typeof window.api.onChatClear === "function") {
@@ -4827,10 +4831,12 @@ async function chatSendText() {
   const text = chatInputEl.value;
   if (!text || !text.trim()) return;
   chatInputEl.value = "";
-  const ok = await window.api.sendChatText(text).catch(() => false);
+  const speaker = netCfg && netCfg.role === "speaker";
+  const ok = speaker
+    ? await window.api.speakerChatSend({ text }).catch(() => false)
+    : await window.api.sendChatText(text).catch(() => false);
   chatAddText(text, ok);
-  if (!ok) chatSetStatus("Send failed (not connected)");
-  else chatSetStatus("Sent");
+  if (!ok) chatSetStatus(speaker ? "Not sent: no supporter connected" : "Send failed (not connected)");
 }
 
 async function downscaleImage(dataUrl, maxW = 1280, quality = 0.85) {
@@ -4872,7 +4878,9 @@ async function chatSendFile(file) {
   reader.onload = async (e) => {
     const raw = e.target.result;
     const small = await downscaleImage(raw);
-    const ok = await window.api.sendChatImage(small).catch(() => false);
+    const ok = netCfg && netCfg.role === "speaker"
+      ? await window.api.speakerChatSend({ dataUrl: small }).catch(() => false)
+      : await window.api.sendChatImage(small).catch(() => false);
     chatAddImage(small, ok);
     chatSetStatus(ok ? "Image sent" : "Image send failed (not connected)");
   };
@@ -5792,8 +5800,10 @@ function enterSupporterView() {
   applyRoleClass("supporter");
   if (answerMain) answerMain.hidden = false;
   clearMirroredTurns();
+  document.body.classList.add("side-pane-open");
   if (window.api.setSidePane) window.api.setSidePane(true, 300);
   supporterComposerUi(true);
+  setSupporterSound(supporterSoundMuted);
   chatClearAll();
   chatSetStatus("");
   const v = Math.round(((netCfg && netCfg.incomingVolume != null) ? netCfg.incomingVolume : 1) * 100);
@@ -5821,7 +5831,7 @@ async function leaveSupporterView(message) {
   chatClearAll();
   clearMirroredTurns();
   supporterComposerUi(false);
-  if (window.api.setSidePane) window.api.setSidePane(false);
+  closeSidePane();
   if (message) showJoin(message);
   else showModeSelect();
 }
@@ -6155,7 +6165,7 @@ function supporterComposerUi(on) {
   if (!composerInput || !getAnswerBtn) return;
   if (!composerDefaults) composerDefaults = { title: getAnswerBtn.title, html: getAnswerBtn.innerHTML };
   if (on) {
-    composerInput.placeholder = "Message to them (Enter). The AI button answers the current transcript on their computer (Ctrl+Enter).";
+    composerInput.placeholder = "Message to them… (Enter)";
     getAnswerBtn.title = "Send the current transcript to the AI on their computer (Ctrl+Enter)";
     getAnswerBtn.textContent = "AI";
     getAnswerBtn.disabled = false;
@@ -6167,3 +6177,57 @@ function supporterComposerUi(on) {
     syncSendEnabled();
   }
 }
+
+// ── The chat column ─────────────────────────────────────────────────────────
+// Both sides: when a supporter joins, the window grows to the right by a
+// "Private chat" column. The supporter types in the composer (Enter); the
+// interviewer has a message box in the column, and can close the column.
+// Runs from the start screen while the app is still loading, so it reads
+// nothing declared further down (netCfg, chatMainEl).
+function closeSidePane() {
+  const was = document.body.classList.contains("side-pane-open");
+  document.body.classList.remove("side-pane-open");
+  const chat = document.getElementById("chatMain");
+  if (chat && !document.body.classList.contains("role-supporter")) chat.hidden = true;
+  if (was && window.api.setSidePane) window.api.setSidePane(false);
+}
+function openSpeakerChatPane(status) {
+  if (!chatMainEl || document.body.classList.contains("role-supporter")) return;
+  if (!document.body.classList.contains("in-interview")) return;
+  chatMainEl.hidden = false;
+  if (!document.body.classList.contains("side-pane-open")) {
+    document.body.classList.add("side-pane-open");
+    if (window.api.setSidePane) window.api.setSidePane(true, 300);
+  }
+  if (status) {
+    chatSetStatus(status);
+    // The column's header now says who is connected.
+    const panel = document.getElementById("supporterPanel");
+    if (panel) panel.hidden = true;
+  }
+}
+if (window.api.onSupporterChatIn)
+  window.api.onSupporterChatIn((m) => {
+    if (!m) return;
+    openSpeakerChatPane();
+    if (m.type === "chat-text") chatAddText(m.text || "", true, false, m.ts);
+    else if (m.type === "chat-image") chatAddImage(m.dataUrl || "", true, false, m.ts);
+  });
+const chatPaneCloseBtn = document.getElementById("chatPaneClose");
+if (chatPaneCloseBtn) chatPaneCloseBtn.addEventListener("click", () => closeSidePane());
+// A new session starts with an empty chat.
+const _hideSetupForChat = hideSetup;
+hideSetup = function () { chatClearAll(); return _hideSetupForChat.apply(this, arguments); };
+
+// Supporter: mute or unmute the call sound.
+var supporterSoundMuted = false;
+const supporterSoundBtn = document.getElementById("supporterSoundBtn");
+function setSupporterSound(muted) {
+  supporterSoundMuted = !!muted;
+  if (remoteAudioEl) remoteAudioEl.muted = supporterSoundMuted;
+  if (supporterSoundBtn) {
+    supporterSoundBtn.classList.toggle("muted", supporterSoundMuted);
+    supporterSoundBtn.title = supporterSoundMuted ? "Unmute the call" : "Mute the call";
+  }
+}
+if (supporterSoundBtn) supporterSoundBtn.addEventListener("click", () => setSupporterSound(!supporterSoundMuted));

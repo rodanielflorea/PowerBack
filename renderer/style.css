@@ -2886,9 +2886,13 @@ body.role-supporter .rail-speed-wrap { display: none !important; }
 
 /* Supporter: their answer panel on the left, the chat column on the right */
 :root { --sup-pane-w: 300px; }
-body.role-supporter .answer-main { right: calc(var(--rail-w) + var(--sup-pane-w)); }
-body.role-supporter .chat-main { left: auto; right: var(--rail-w); width: var(--sup-pane-w); border-left: 1px solid var(--border); }
+body.side-pane-open .answer-main { right: calc(var(--rail-w) + var(--sup-pane-w)); }
+body.side-pane-open .chat-main { left: auto; right: var(--rail-w); width: var(--sup-pane-w); border-left: 1px solid var(--border); }
+body.side-pane-open .cable-nudge { right: calc(var(--rail-w) + var(--sup-pane-w)); }
 body.role-supporter .chat-input-area { display: none !important; }
+/* The interviewer's column: just the chat, with its own message box. */
+body.role-speaker .chat-main .supporter-bar,
+body.role-speaker .chat-main .mic-mode-banner { display: none !important; }
 body.role-supporter .answer-presetbar .csel:has(#meetingTypeSelect),
 body.role-supporter #answerClearBtn,
 body.role-supporter #answerHistory .meet-actions,
@@ -2898,10 +2902,25 @@ body.role-supporter .supporter-chat-send { display: inline-flex; align-items: ce
 .supporter-chat-send svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
 body.role-supporter #getAnswerBtn { font-size: 12px; font-weight: 800; letter-spacing: .3px; }
 .chat-header { position: relative; }
-.chat-clear-btn { display: none; }
-body.role-supporter .chat-clear-btn {
-  display: inline-flex; position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+body.side-pane-open .chat-header { justify-content: flex-start; gap: 6px; padding: 0 64px 0 12px; height: 34px; }
+.chat-header-ico { width: 14px; height: 14px; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linejoin: round; flex: none; }
+body.side-pane-open .chat-header-title { font-weight: 700; white-space: nowrap; flex: none; }
+body.side-pane-open .chat-header-status { flex: 1 1 auto; min-width: 0; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-clear-btn, .chat-pane-close { display: none; }
+body.side-pane-open .chat-clear-btn, body.role-speaker.side-pane-open .chat-pane-close {
+  display: inline-flex; align-items: center; justify-content: center; position: absolute; top: 50%; transform: translateY(-50%);
   border: 0; background: transparent; color: var(--muted); padding: 3px; border-radius: 4px; cursor: pointer;
 }
-body.role-supporter .chat-clear-btn:hover { background: var(--surface-2); color: var(--rec-on); }
+body.side-pane-open .chat-clear-btn { right: 36px; }
+body.role-supporter.side-pane-open .chat-clear-btn { right: 8px; }
+body.role-speaker.side-pane-open .chat-pane-close { right: 8px; font-size: 18px; line-height: 1; width: 22px; height: 22px; }
+body.side-pane-open .chat-clear-btn:hover { background: var(--surface-2); color: var(--rec-on); }
+body.side-pane-open .chat-pane-close:hover { background: var(--surface-2); color: var(--text); }
+body.side-pane-open .chat-empty { margin: auto; text-align: center; color: var(--muted); }
+.supporter-sound-btn { border: 1px solid var(--border-hi); background: var(--bg); color: var(--text); border-radius: 99px; width: 28px; height: 24px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.supporter-sound-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.supporter-sound-btn .snd-off { display: none; }
+.supporter-sound-btn.muted { background: #fee2e2; border-color: #fca5a5; color: var(--rec-on); }
+.supporter-sound-btn.muted .snd-on { display: none; }
+.supporter-sound-btn.muted .snd-off { display: inline; }
 .chat-clear-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }

@@ -62,7 +62,7 @@
     <div class="supporter-panel-row"><span class="supporter-panel-key">Code</span><span class="supporter-panel-val supporter-code" id="supporterPanelCode">&nbsp;</span></div>
     <p class="supporter-panel-status" id="supporterPanelStatus">&nbsp;</p>
     <button class="action-btn-secondary" id="supporterPanelKick" hidden>Disconnect the supporter</button>
-    <p class="supporter-panel-hint">Both computers must be on the same network. The supporter hears your microphone and the call. Their notes pop up on a sticky note here. Their microphone starts off.</p>
+    <p class="supporter-panel-hint">Both computers must be on the same network. The supporter hears your microphone and the call, sees your answer panel, and can press Send for you. Your chat with them opens on the right. Their microphone starts off.</p>
   </div>
 
   <aside class="right-rail iv-btn" id="rightRail">
@@ -336,7 +336,8 @@
             <li>On the helper's computer, open Ace and choose <b>Join as supporter</b>. Enter the address and the code, then click <b>Connect</b>.</li>
             <li>The helper hears your microphone and the call, and sees your answer panel as it changes: the transcript bubbles and every answer.</li>
             <li>The helper's <b>AI</b> button (or Ctrl+Enter) presses Send on your Ace for you: your AI answers the current transcript, in the mode the helper picked, and the answer shows on both screens.</li>
-            <li>What the helper types and sends with Enter (or the chat button) pops up on a sticky note on your screen; your replies there show in their chat column.</li>
+            <li>When the helper joins, your window and theirs widen by a <b>Private chat</b> column. What they send shows there, and you reply in its message box. The <b>&times;</b> closes it again; the trash button clears it on both sides.</li>
+            <li>The helper's speaker button mutes and unmutes the call sound on their side.</li>
             <li>The helper's microphone starts off. With <b>Talk to them</b>, only you hear them; the meeting does not.</li>
           </ol>
           <p>Both computers must be on the same network. The code changes every session, and one supporter can join at a time. On Windows, allow the firewall prompt the first time. To stop, click <b>Disconnect the supporter</b> in the headset panel, or <b>End</b> on the helper's side.</p>
@@ -818,8 +819,11 @@
         <button class="supporter-mic-btn" data-mic="mute" type="button" title="Nobody hears you">Mic off</button>
         <button class="supporter-mic-btn" data-mic="aOnly" type="button" title="Only the person you support hears you, not the meeting">Talk to them</button>
       </div>
+      <button class="supporter-sound-btn" id="supporterSoundBtn" type="button" title="Mute the call">
+        <svg class="snd-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10v4a1 1 0 0 0 1 1h3l5 4V5L7 9H4a1 1 0 0 0-1 1z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M18.5 6.5a7.5 7.5 0 0 1 0 11"/></svg>
+        <svg class="snd-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10v4a1 1 0 0 0 1 1h3l5 4V5L7 9H4a1 1 0 0 0-1 1z"/><path d="m16 9 6 6"/><path d="m22 9-6 6"/></svg>
+      </button>
       <label class="supporter-vol" title="Call volume">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10v4a1 1 0 0 0 1 1h3l5 4V5L7 9H4a1 1 0 0 0-1 1z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg>
         <input type="range" id="supporterVolume" min="0" max="100" step="5" />
       </label>
     </div>
@@ -828,14 +832,16 @@
       <span class="mic-mode-banner-text" id="micModeBannerText">Your mic is off. Nobody hears you.</span>
     </div>
     <div class="chat-header">
-      <span class="chat-header-title">Chat with them</span>
+      <svg class="chat-header-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg>
+      <span class="chat-header-title">Private chat</span>
       <span class="chat-header-status" id="chatHeaderStatus">&nbsp;</span>
       <button class="chat-clear-btn" id="chatClearBtn" type="button" title="Clear the chat on both sides">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="m6 7 1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>
       </button>
+      <button class="chat-pane-close" id="chatPaneClose" type="button" title="Close the chat (the window gets narrower again)">&times;</button>
     </div>
     <div class="chat-history" id="chatHistory">
-      <div class="chat-empty" id="chatEmpty">No messages yet. Type in the box at the bottom and press Enter; it pops up on their screen.</div>
+      <div class="chat-empty" id="chatEmpty">No messages yet</div>
     </div>
     <div class="chat-input-area">
       <textarea id="chatInput" rows="2" placeholder="Type a message and press Enter to send (Shift+Enter for newline)" spellcheck="false"></textarea>
