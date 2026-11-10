@@ -183,6 +183,7 @@ const DEFAULT_STATE = {
     virtualCableId: '',
     listenDeviceId: '',
     maxSupporters: 5,
+    shareScreen: true,       // the speaker's screen is streamed to the supporter
   },
   welcomeSeen: false,
   // Uploaded base-knowledge documents (extracted text), per category.
@@ -2099,6 +2100,16 @@ ipcMain.handle('set-vscode-config', (_e, cfg) => {
   return now;
 });
 ipcMain.handle('get-vscode-status', () => vscodeBridge.status());
+// The addresses a supporter on the LAN can reach this computer at.
+ipcMain.handle('get-local-ips', () => {
+  const out = [];
+  try {
+    for (const list of Object.values(os.networkInterfaces())) {
+      for (const n of list || []) if (n.family === 'IPv4' && !n.internal) out.push(n.address);
+    }
+  } catch {}
+  return out;
+});
 
 function openLicenseWindow(reason) {
   licenseWin = new BrowserWindow({
@@ -4909,7 +4920,7 @@ ipcMain.handle('chat-send-image', (_e, dataUrl) => {
 ipcMain.handle('get-network-config', () => ({ ...state.network }));
 ipcMain.handle('set-network-config', (_e, cfg) => {
   state.network = { ...state.network, ...(cfg || {}) };
-  state.network.role = 'speaker'; // supporter mode is not offered in this build
+  if (!['speaker', 'supporter'].includes(state.network.role)) state.network.role = 'speaker';
   if (state.network.role === 'speaker') {
     state.network.address = `0.0.0.0:${state.network.speakerPort || 2000}`;
   } else if (state.network.role === 'supporter') {

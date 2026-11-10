@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('api', {
   getVscodeConfig: () => ipcRenderer.invoke('get-vscode-config'),
   setVscodeConfig: (cfg) => ipcRenderer.invoke('set-vscode-config', cfg),
   getVscodeStatus: () => ipcRenderer.invoke('get-vscode-status'),
+  getLocalIps: () => ipcRenderer.invoke('get-local-ips'),
   onVscodeStatus: (cb) => ipcRenderer.on('vscode-status', (_e, v) => cb(v)),
   onVscodeEvent: (cb) => ipcRenderer.on('vscode-event', (_e, v) => cb(v)),
   setMeetingConfig: (cfg) => ipcRenderer.invoke('set-meeting-config', cfg),

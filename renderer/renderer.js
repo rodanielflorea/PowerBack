@@ -314,6 +314,8 @@ const profileOverlay = document.getElementById("profileOverlay");
 
 function hideAllSetupOverlays() {
   if (modeSelectOverlay) modeSelectOverlay.hidden = true;
+  const joinOverlay = document.getElementById("joinOverlay");
+  if (joinOverlay) joinOverlay.hidden = true;
   if (stageOverlay) stageOverlay.hidden = true;
   if (profileOverlay) profileOverlay.hidden = true;
   if (setupOverlay) setupOverlay.hidden = true;
@@ -763,7 +765,7 @@ syncSetupRoleV();
 
 if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
   await saveWizardMeetingType();
-  const sup = false; // supporter mode is not offered in this build
+  const sup = false; // the Start button is the speaker's; supporters join from the welcome screen
   const chosenRole = "speaker";
   const patch = { role: chosenRole };
   if (sup) {
@@ -1205,6 +1207,7 @@ function hideEndModal() {
 }
 
 endBtn.addEventListener("click", async () => {
+  if (netCfg && netCfg.role === "supporter") { await leaveSupporter(); return; }
   endBtn.disabled = true;
   let info = { company: "", role: "" };
   try { if (window.api.extractJdInfo) info = (await window.api.extractJdInfo()) || info; } catch {}
@@ -4434,6 +4437,7 @@ function teardownPeers() {
     speakerLocalStream.getTracks().forEach((t) => t.stop());
     speakerLocalStream = null;
   }
+  stopScreenForSupporter();
   speakerMicOnlyStream = null;
   if (supporterMicStream) {
     supporterMicStream.getTracks().forEach((t) => t.stop());
@@ -4480,11 +4484,15 @@ async function speakerHandleOpened(connId) {
     log("SimplePeer not loaded", "err");
     return;
   }
-  const stream = await captureSpeakerStream();
-  if (!stream) {
+  const audio = await captureSpeakerStream();
+  if (!audio) {
     log("Speaker: nothing to stream — aborting connection " + connId, "err");
     return;
   }
+  // One stream for the supporter: the call's audio now, the screen once the
+  // peer is connected (see "connect" below). Kept per peer so the screen can
+  // be added or removed later.
+  const stream = new MediaStream(audio.getTracks());
   const tracks = stream.getTracks();
   log(`Speaker[${connId}]: streaming ${tracks.length} track(s)`, "info");
 
@@ -4494,7 +4502,7 @@ async function speakerHandleOpened(connId) {
     trickle: true,
     config: RTC_CONFIG,
   });
-  speakerPeers.set(connId, { peer });
+  speakerPeers.set(connId, { peer, stream });
   attachPcDiagnostics(peer, `Speaker[${connId}]`);
 
   peer.on("signal", (sig) => {
@@ -4506,7 +4514,22 @@ async function speakerHandleOpened(connId) {
     }
     window.api.sendSignaling({ connId, type: "signal", payload: sig });
   });
-  peer.on("connect", () => log(`Speaker[${connId}]: P2P connected`, "info"));
+  peer.on("connect", async () => {
+    log(`Speaker[${connId}]: P2P connected`, "info");
+    // The screen capturer only produces a frame when something on the screen
+    // changes, so the track is added now, connected: its first frame reaches
+    // the supporter instead of being made before anyone could receive it.
+    let on = false;
+    if (netCfg && netCfg.shareScreen !== false) {
+      const screen = await captureScreenForSupporter();
+      const entry = speakerPeers.get(connId);
+      if (screen && entry && !peer.destroyed) {
+        try { peer.addTrack(screen.getVideoTracks()[0], entry.stream); on = true; }
+        catch (e) { log(`Speaker[${connId}]: adding the screen failed: ${e.message}`, "err"); }
+      }
+    }
+    window.api.sendSignaling({ connId, type: "screen", on });
+  });
   const speakerSeenStreams = new Set();
   const attachRemote = (remote, src) => {
     if (speakerSeenStreams.has(remote.id)) return;
@@ -4660,9 +4683,10 @@ function _createSupporterPeer(localStream) {
     startLevelMeter(remote);
   };
   supporterPeer.on("stream", (remote) => attachRemote(remote, "stream"));
-  supporterPeer.on("track", (track, remote) =>
-    attachRemote(remote, `track[${track.kind}]`),
-  );
+  supporterPeer.on("track", (track, remote) => {
+    if (track.kind === "video") { attachScreenTrack(track); return; }
+    attachRemote(remote, `track[${track.kind}]`);
+  });
   supporterPeer.on("error", (err) =>
     log("Supporter peer error: " + err.message, "err"),
   );
@@ -4670,6 +4694,7 @@ function _createSupporterPeer(localStream) {
     log("Supporter: peer closed", "info");
     supporterPeer = null;
     stopLevelMeter();
+    clearScreenView("The speaker left.");
   });
 
   remoteAudioEl.onplaying = () => log("Supporter: <audio> is playing", "info");
@@ -4715,7 +4740,10 @@ window.api.onSignaling((msg) => {
         } catch {}
       }
       stopLevelMeter();
+      clearScreenView("Connection to the speaker closed.");
     }
+  } else if (type === "screen") {
+    if (netCfg && netCfg.role === "supporter") onScreenShareState(!!msg.on);
   } else if (type === "signal") {
     if (netCfg && netCfg.role === "speaker")
       speakerHandleSignal(msg.connId, msg.payload);
@@ -5674,3 +5702,225 @@ if (vscodePortEl) vscodePortEl.addEventListener("change", () => {
 });
 refreshVscodeSettings();
 syncProjectMode();
+
+// ── Supporter sees the speaker's screen ──────────────────────────────────────
+// Speaker (B): the screen is captured the way the recorder does it and sent as
+// a video track on the same peer as the call's audio. B's own windows are
+// content-protected, so they are not in the picture. Supporter (A): the track
+// plays in the panel above the chat; a "screen" message says whether B shares.
+
+let speakerScreenStream = null;
+const SCREEN_FPS = 15;
+
+async function captureScreenForSupporter() {
+  if (speakerScreenStream && speakerScreenStream.getVideoTracks().some((t) => t.readyState === "live")) return speakerScreenStream;
+  stopScreenForSupporter();
+  const video = { frameRate: { ideal: SCREEN_FPS, max: SCREEN_FPS }, width: { max: 1920 }, height: { max: 1080 } };
+  let s = null;
+  // Windows: getDisplayMedia gets a capturer of its own (see recorder.js); the
+  // main process answers it with the primary screen, no picker.
+  if (!IS_MAC && navigator.mediaDevices.getDisplayMedia) {
+    try { s = await navigator.mediaDevices.getDisplayMedia({ video, audio: false }); }
+    catch (e) { log("Screen for supporter: display capture unavailable (" + e.message + "), using desktop capture", "info"); }
+  }
+  if (!s) {
+    try {
+      const id = window.api.getDesktopSourceId ? await window.api.getDesktopSourceId() : null;
+      if (!id) throw new Error("no screen source");
+      s = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: id, maxFrameRate: SCREEN_FPS, maxWidth: 1920, maxHeight: 1080 } },
+      });
+    } catch (e) {
+      log("Screen for supporter: capture failed: " + e.message, "err");
+      return null;
+    }
+  }
+  s.getAudioTracks().forEach((t) => t.stop());
+  const vt = s.getVideoTracks()[0];
+  if (!vt) { s.getTracks().forEach((t) => t.stop()); return null; }
+  speakerScreenStream = new MediaStream([vt]);
+  const st = vt.getSettings ? vt.getSettings() : {};
+  log(`Screen for supporter: ${st.width || "?"}x${st.height || "?"} @ ${st.frameRate || SCREEN_FPS} fps`, "info");
+  vt.onended = () => { if (speakerScreenStream && speakerScreenStream.getVideoTracks()[0] === vt) { speakerScreenStream = null; notifyScreenState(false); } };
+  return speakerScreenStream;
+}
+
+function stopScreenForSupporter() {
+  if (!speakerScreenStream) return;
+  speakerScreenStream.getTracks().forEach((t) => { t.onended = null; t.stop(); });
+  speakerScreenStream = null;
+}
+
+function notifyScreenState(on) {
+  speakerPeers.forEach((entry, connId) => {
+    try { window.api.sendSignaling({ connId, type: "screen", on: !!on }); } catch {}
+  });
+}
+
+// The speaker's setting: on applies at once to every connected supporter.
+async function setShareScreen(on) {
+  on = !!on;
+  await persistNet({ shareScreen: on });
+  if (shareScreenEl) shareScreenEl.checked = on;
+  if (!netCfg || netCfg.role !== "speaker" || speakerPeers.size === 0) { if (!on) stopScreenForSupporter(); return; }
+  if (on) {
+    const screen = await captureScreenForSupporter();
+    if (!screen) { toast("The screen could not be captured.", "err"); return; }
+    const vt = screen.getVideoTracks()[0];
+    speakerPeers.forEach((entry, connId) => {
+      try { entry.peer.addTrack(vt, entry.stream); } catch (e) { log(`Speaker[${connId}]: addTrack failed: ${e.message}`, "err"); }
+    });
+    notifyScreenState(true);
+  } else {
+    const vt = speakerScreenStream ? speakerScreenStream.getVideoTracks()[0] : null;
+    speakerPeers.forEach((entry, connId) => {
+      if (!vt) return;
+      try { entry.peer.removeTrack(vt, entry.stream); } catch (e) { log(`Speaker[${connId}]: removeTrack failed: ${e.message}`, "err"); }
+    });
+    stopScreenForSupporter();
+    notifyScreenState(false);
+  }
+}
+
+const shareScreenEl = document.getElementById("shareScreen");
+const supporterJoinAddrEl = document.getElementById("supporterJoinAddr");
+if (shareScreenEl) shareScreenEl.addEventListener("change", () => setShareScreen(shareScreenEl.checked));
+async function refreshSupporterSettings() {
+  try {
+    const cfg = await window.api.getNetworkConfig();
+    if (shareScreenEl) shareScreenEl.checked = cfg.shareScreen !== false;
+    if (supporterJoinAddrEl) {
+      const port = cfg.speakerPort || 2000;
+      let ips = [];
+      try { ips = (window.api.getLocalIps && await window.api.getLocalIps()) || []; } catch {}
+      supporterJoinAddrEl.textContent = (ips.length ? ips.map((ip) => ip + ":" + port).join("  or  ") : "<this computer's IP>:" + port);
+    }
+  } catch {}
+}
+refreshSupporterSettings();
+
+// ── Supporter side ──
+const screenViewEl = document.getElementById("screenView");
+const screenVideoEl = document.getElementById("screenVideo");
+const screenStatusEl = document.getElementById("screenStatus");
+const screenToggleBtn = document.getElementById("screenToggleBtn");
+const screenFullBtn = document.getElementById("screenFullBtn");
+let screenShareOn = null; // what B last said: true / false / null (unknown)
+
+function setScreenStatus(text, noVideo) {
+  if (screenStatusEl) screenStatusEl.textContent = text;
+  if (screenViewEl) screenViewEl.classList.toggle("no-video", !!noVideo);
+}
+
+let screenTrackId = null;
+function attachScreenTrack(track) {
+  if (!screenVideoEl || !track) return;
+  if (track.id === screenTrackId && screenVideoEl.srcObject) return; // the same track, told twice
+  screenTrackId = track.id;
+  const ms = new MediaStream([track]);
+  screenVideoEl.srcObject = ms;
+  const p = screenVideoEl.play();
+  if (p && p.catch) p.catch(() => {});
+  const describe = () => {
+    const w = screenVideoEl.videoWidth, h = screenVideoEl.videoHeight;
+    setScreenStatus(w ? `Speaker's screen · ${w}×${h}` : "Speaker's screen", false);
+  };
+  screenVideoEl.onloadedmetadata = describe;
+  screenVideoEl.onresize = describe;
+  track.onended = () => clearScreenView("The speaker stopped sharing the screen.");
+  track.onmute = () => { if (screenShareOn === false) clearScreenView("The speaker stopped sharing the screen."); };
+  track.onunmute = describe;
+  screenShareOn = true;
+  describe();
+  log("Supporter: receiving the speaker's screen", "info");
+}
+
+function clearScreenView(text) {
+  if (screenVideoEl) { try { screenVideoEl.srcObject = null; } catch {} }
+  setScreenStatus(text || "No screen.", true);
+}
+
+function onScreenShareState(on) {
+  screenShareOn = on;
+  if (!on) clearScreenView("The speaker is not sharing the screen.");
+  else if (!(screenVideoEl && screenVideoEl.srcObject)) setScreenStatus("Waiting for the speaker's screen…", true);
+}
+
+if (screenToggleBtn) screenToggleBtn.addEventListener("click", () => {
+  if (!screenViewEl) return;
+  const collapsed = screenViewEl.classList.toggle("collapsed");
+  screenToggleBtn.innerHTML = collapsed ? "&#x25BE;" : "&#x25B4;";
+  screenToggleBtn.title = collapsed ? "Show the screen" : "Hide the screen";
+});
+const goFull = () => { if (screenVideoEl && screenVideoEl.srcObject && screenVideoEl.requestFullscreen) screenVideoEl.requestFullscreen().catch(() => {}); };
+if (screenFullBtn) screenFullBtn.addEventListener("click", goFull);
+if (screenVideoEl) screenVideoEl.addEventListener("dblclick", goFull);
+
+// Join flow: welcome → address → connected.
+const joinOverlay = document.getElementById("joinOverlay");
+const joinAddress = document.getElementById("joinAddress");
+const joinStatus = document.getElementById("joinStatus");
+const joinBackBtn = document.getElementById("joinBackBtn");
+const joinConnectBtn = document.getElementById("joinConnectBtn");
+const joinSettingsBtn = document.getElementById("joinSettingsBtn");
+const modeSupporterBtn = document.getElementById("modeSupporterBtn");
+
+async function showJoin() {
+  leaveInterviewUi();
+  if (joinOverlay) joinOverlay.hidden = false;
+  if (joinStatus) joinStatus.textContent = "";
+  try {
+    const cfg = await window.api.getNetworkConfig();
+    if (joinAddress && !joinAddress.value) joinAddress.value = cfg.supporterAddress && cfg.supporterAddress !== "172.16.98.11:2000" ? cfg.supporterAddress : "";
+  } catch {}
+  if (joinAddress) joinAddress.focus();
+}
+
+async function joinAsSupporter(addr) {
+  addr = String(addr || "").trim();
+  if (!/^[^:\s]+:\d+$/.test(addr)) {
+    if (joinStatus) joinStatus.textContent = "Enter the address as host:port, for example 192.168.1.20:2000.";
+    if (joinAddress) joinAddress.focus();
+    return false;
+  }
+  if (joinConnectBtn) joinConnectBtn.disabled = true;
+  if (joinStatus) joinStatus.textContent = "Connecting to " + addr + "…";
+  try {
+    await window.api.setNetworkConfig({ role: "supporter", supporterAddress: addr });
+    netCfg = await window.api.getNetworkConfig();
+    await window.api.startNetwork();
+  } finally { if (joinConnectBtn) joinConnectBtn.disabled = false; }
+  enterSupporterUi();
+  log("Joined as supporter: " + addr, "info");
+  return true;
+}
+
+function enterSupporterUi() {
+  if (settingsOverlay) settingsOverlay.hidden = true;
+  hideAllSetupOverlays();
+  document.body.classList.add("in-interview");
+  endBtn.classList.add("live");
+  applyRoleClass("supporter");
+  if (answerMain) answerMain.hidden = true;
+  screenShareOn = null;
+  setScreenStatus("Connecting to the speaker…", true);
+}
+
+async function leaveSupporter() {
+  try { await window.api.stopNetwork(); } catch {}
+  teardownPeers();
+  clearScreenView("No screen.");
+  document.body.classList.remove("in-interview");
+  endBtn.classList.remove("live");
+  applyRoleClass("");
+  try { await window.api.setNetworkConfig({ role: "speaker" }); netCfg = await window.api.getNetworkConfig(); } catch {}
+  showModeSelect();
+  log("Left the supporter session", "info");
+}
+
+if (modeSupporterBtn) modeSupporterBtn.addEventListener("click", () => showJoin());
+if (joinBackBtn) joinBackBtn.addEventListener("click", () => showModeSelect());
+if (joinSettingsBtn) joinSettingsBtn.addEventListener("click", () => openSettings());
+if (joinConnectBtn) joinConnectBtn.addEventListener("click", () => joinAsSupporter(joinAddress && joinAddress.value));
+if (joinAddress) joinAddress.addEventListener("keydown", (e) => { if (e.key === "Enter") joinAsSupporter(joinAddress.value); });
