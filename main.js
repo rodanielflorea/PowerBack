@@ -125,6 +125,8 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 })();
 
 const STATE_FILE = path.join(app.getPath('userData'), 'state.json');
+// Pixels a supporter's chat column added to the window (left out when saved).
+let sidePaneExtra = 0;
 const LOG_FILE = path.join(app.getPath('userData'), 'activity.log');
 const LOG_MAX_LINES_RETURNED = 500;
 
@@ -411,7 +413,7 @@ function saveState() {
     const [x, y] = win.getPosition();
     const [width, height] = win.getSize();
     state.x = x; state.y = y;
-    state.width = width; state.height = height;
+    state.width = Math.max(200, width - sidePaneExtra); state.height = height;
     if (!LINUX_CSS_OPACITY) state.opacity = win.getOpacity();
   }
   try {
@@ -1626,6 +1628,10 @@ function startSignalingServer() {
         setSupporterMicMode(id, msg.mode);
         return;
       }
+      if (msg && msg.type === 'remote-submit') {
+        if (win) win.webContents.send('remote-submit', { connId: id, mode: msg.mode });
+        return;
+      }
       if (msg && (msg.type === 'chat-text' || msg.type === 'chat-image')) {
         if (win) win.webContents.send('capture-text', `[chat received from #${id}: ${msg.type}${msg.text ? ' "' + msg.text.slice(0,40) + '"' : ''}]`);
         pushChatToSticky({ ...msg, fromId: id, fromMe: false, ts: msg.ts || Date.now() });
@@ -1705,6 +1711,14 @@ function connectSignalingClient() {
       // The speaker decides the starting mic mode; show it even when unchanged.
       supporterOwnMicMode = MIC_MODES.includes(msg.micMode) ? msg.micMode : 'mute';
       if (win) win.webContents.send('mic-mode-changed', { mode: supporterOwnMicMode, source: 'speaker' });
+    }
+    if (msg && msg.type === 'mirror') {
+      if (win) win.webContents.send('mirror-in', msg);
+      return;
+    }
+    if (msg && msg.type === 'remote-submit-result') {
+      if (win) win.webContents.send('remote-submit-result', msg);
+      return;
     }
     if (msg && msg.type === 'help-request') {
       if (win) win.webContents.send('help-request-received', msg);
@@ -5003,6 +5017,44 @@ ipcMain.handle('join-as-supporter', (_e, { address, code } = {}) => {
   supporterOwnMicMode = 'mute';
   connectSignalingClient();
   return { ok: true, address: addr };
+});
+// Speaker: the answer panel, as changed bubbles, to every supporter.
+ipcMain.on('mirror-out', (_e, payload) => {
+  if (state.network.role !== 'speaker' || !payload) return;
+  let data = null;
+  for (const entry of supporterConns.values()) {
+    if (!entry || !entry.ws || entry.ws.readyState !== WebSocket.OPEN) continue;
+    if (!data) data = JSON.stringify({ type: 'mirror', reset: !!payload.reset, mode: payload.mode || null, ops: Array.isArray(payload.ops) ? payload.ops : [] });
+    try { entry.ws.send(data); } catch {}
+  }
+});
+ipcMain.on('remote-submit-result', (_e, r) => {
+  const entry = r && supporterConns.get(String(r.connId));
+  if (!entry || !entry.ws || entry.ws.readyState !== WebSocket.OPEN) return;
+  try { entry.ws.send(JSON.stringify({ type: 'remote-submit-result', ok: !!r.ok, reason: String(r.reason || '') })); } catch {}
+});
+// Supporter: ask the speaker's Ace to answer, as if they had pressed Send.
+ipcMain.handle('remote-submit', (_e, mode) => {
+  if (state.network.role !== 'supporter' || !wsClient || wsClient.readyState !== WebSocket.OPEN) return false;
+  try { wsClient.send(JSON.stringify({ type: 'remote-submit', mode: String(mode || '') })); return true; } catch { return false; }
+});
+// Supporter: the window grows to the right by the chat column, and back.
+ipcMain.handle('set-side-pane', (_e, open, width) => {
+  if (!win || win.isDestroyed()) return false;
+  const b = win.getBounds();
+  if (open && !sidePaneExtra) {
+    const extra = Math.max(200, Math.min(600, parseInt(width, 10) || 300));
+    const wa = screen.getDisplayMatching(b).workArea;
+    const w = b.width + extra;
+    const x = b.x + w > wa.x + wa.width ? Math.max(wa.x, wa.x + wa.width - w) : b.x;
+    sidePaneExtra = extra;
+    win.setBounds({ x, y: b.y, width: w, height: b.height });
+  } else if (!open && sidePaneExtra) {
+    const w = Math.max(200, b.width - sidePaneExtra);
+    sidePaneExtra = 0;
+    win.setBounds({ x: b.x, y: b.y, width: w, height: b.height });
+  }
+  return true;
 });
 ipcMain.handle('leave-supporter', () => {
   disconnectSignalingClient();

@@ -2823,6 +2823,7 @@ function specSnapshot() {
 }
 
 function composerCanSubmit() {
+  if (document.body.classList.contains("role-supporter")) return true;
   const q = composerInput ? composerInput.value.trim() : "";
   const live = liveMeetText();
   const imgs = typeof attachedImages !== "undefined" && attachedImages.length > 0;
@@ -2836,6 +2837,7 @@ function syncSendEnabled() {
 }
 
 function startSpeculativeNow() {
+  if (document.body.classList.contains("role-supporter")) return;
   if (_optimisticAnswer || answerIsStreaming()) return;
   if (typeof attachedImages !== "undefined" && attachedImages.length > 0) return;
   const { t, mt, live, key } = specSnapshot();
@@ -2851,6 +2853,7 @@ function startSpeculativeNow() {
 
 function kickSpeculative(immediate) {
   syncSendEnabled();
+  if (document.body.classList.contains("role-supporter")) return;
   if (_optimisticAnswer || answerIsStreaming()) return;
   ensureApiWarmed();
   if (_speculativeTimer) { clearTimeout(_speculativeTimer); _speculativeTimer = null; }
@@ -2891,6 +2894,7 @@ function dropEmptyStreamingTurn() {
 }
 
 function submitComposer() {
+  if (document.body.classList.contains("role-supporter")) { supporterAskAI(); return; }
   if (!composerInput) return;
   const { t: q, mt, live, key: matchKey } = specSnapshot();
   if (manualMode === "PROJECT" && !vscodeState.connected) { toast("VS Code is not connected. Install the Ace extension (Settings → VS Code).", "err"); return; }
@@ -3113,6 +3117,7 @@ function setManualMode(mode) {
   if (modeSeg) modeSeg.querySelectorAll('.mode-seg-btn').forEach((b) =>
     b.classList.toggle('mode-seg-btn--active', b.dataset.mode === manualMode));
   syncSpeedSlider();
+  if (typeof mirrorState !== "undefined" && mirrorState && mirrorState.active && window.api.mirrorOut) window.api.mirrorOut({ mode: manualMode, ops: [] });
 }
 
 // Resend (regenerate): re-submit the same question/images as a new turn, in
@@ -4706,11 +4711,13 @@ window.api.onSignaling((msg) => {
     if (netCfg && netCfg.role === "speaker" && msg.connId) {
       toast(`A supporter joined${msg.ip ? " from " + msg.ip : ""}.`, "info");
       speakerHandleOpened(msg.connId);
+      mirrorStart();
     }
   } else if (type === "closed") {
     if (netCfg && netCfg.role === "speaker" && msg.connId) {
       toast("The supporter left.", "info");
       speakerHandleClosed(msg.connId);
+      mirrorStop();
     }
     else if (netCfg && netCfg.role === "supporter") {
       if (supporterPeer) {
@@ -5640,7 +5647,7 @@ function syncProjectMode() {
       ? "Ask about the project open in VS Code (" + (vscodeState.name || "project") + ")"
       : "VS Code is not connected (Settings → VS Code)";
   }
-  if (composerInput) {
+  if (composerInput && !document.body.classList.contains("role-supporter")) {
     composerInput.placeholder = manualMode === "PROJECT"
       ? (vscodeState.connected ? "Ask about the project, or leave empty for the status and what changed…" : "VS Code is not connected (Settings → VS Code)")
       : "Your question (from your knowledge base)…";
@@ -5783,14 +5790,17 @@ function enterSupporterView() {
   endBtn.classList.add("live");
   endBtn.title = "Leave — back to the start screen";
   applyRoleClass("supporter");
-  if (answerMain) answerMain.hidden = true;
+  if (answerMain) answerMain.hidden = false;
+  clearMirroredTurns();
+  if (window.api.setSidePane) window.api.setSidePane(true, 300);
+  supporterComposerUi(true);
   chatClearAll();
-  chatSetStatus("Type, paste or drop an image");
+  chatSetStatus("");
   const v = Math.round(((netCfg && netCfg.incomingVolume != null) ? netCfg.incomingVolume : 1) * 100);
   if (supporterVolumeEl) supporterVolumeEl.value = v;
   updateSupporterMicButtons(currentMicMode);
   updateMicModeBanner(currentMicMode);
-  setTimeout(() => { try { chatInputEl && chatInputEl.focus(); } catch {} }, 50);
+  setTimeout(() => { try { composerInput && composerInput.focus(); } catch {} }, 50);
   log(`Supporting ${supporterAddress}`, "info");
 }
 
@@ -5809,6 +5819,9 @@ async function leaveSupporterView(message) {
   try { netCfg = await window.api.getNetworkConfig(); } catch {}
   endBtn.title = "End session — back to the start screen";
   chatClearAll();
+  clearMirroredTurns();
+  supporterComposerUi(false);
+  if (window.api.setSidePane) window.api.setSidePane(false);
   if (message) showJoin(message);
   else showModeSelect();
 }
@@ -5924,3 +5937,233 @@ if (supporterPanelKick)
     if (id) await window.api.kickSupporter(id);
     refreshSupporterInvite();
   });
+
+// ── Supporter mode: their answer panel, live ───────────────────────────────
+// Speaker side: every change in the answer panel (a transcript bubble growing,
+// an answer streaming in) is sent as the changed bubble's HTML, at most every
+// 16 ms, plus the whole panel when a supporter is let in. The supporter shows
+// the bubbles as they are; it runs nothing of its own.
+var mirrorState = { active: false, ids: new WeakMap(), next: 1, dirty: new Set(), removed: [], timer: null, observer: null };
+function mirrorIdOf(el) {
+  let id = mirrorState.ids.get(el);
+  if (!id) { id = "m" + mirrorState.next++; mirrorState.ids.set(el, id); }
+  return id;
+}
+function isMirrorTurn(el) {
+  return !!el && el.nodeType === 1 && el.parentElement === answerHistory &&
+    (el.classList.contains("meet-turn") || el.classList.contains("answer-turn"));
+}
+function topTurnOf(node) {
+  let n = node && node.nodeType === 1 ? node : node && node.parentElement;
+  while (n && n.parentElement !== answerHistory) n = n.parentElement;
+  return n;
+}
+function prevTurnId(el) {
+  let p = el.previousElementSibling;
+  while (p && !isMirrorTurn(p)) p = p.previousElementSibling;
+  return p ? mirrorIdOf(p) : null;
+}
+function mirrorFlush() {
+  mirrorState.timer = null;
+  if (!mirrorState.active) { mirrorState.dirty.clear(); mirrorState.removed = []; return; }
+  const ops = mirrorState.removed.map((id) => ({ op: "remove", id }));
+  mirrorState.removed = [];
+  const dirty = [...mirrorState.dirty].filter(isMirrorTurn);
+  mirrorState.dirty.clear();
+  dirty.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+  for (const el of dirty) ops.push({ op: "upsert", id: mirrorIdOf(el), after: prevTurnId(el), html: el.outerHTML });
+  if (ops.length) window.api.mirrorOut({ ops });
+}
+function mirrorSnapshot() {
+  const ops = [];
+  answerHistory.querySelectorAll(":scope > .meet-turn, :scope > .answer-turn").forEach((el) =>
+    ops.push({ op: "upsert", id: mirrorIdOf(el), after: prevTurnId(el), html: el.outerHTML }));
+  window.api.mirrorOut({ reset: true, mode: manualMode, ops });
+}
+function mirrorStart() {
+  if (!answerHistory || !window.api.mirrorOut) return;
+  mirrorState.active = true;
+  if (!mirrorState.observer) {
+    mirrorState.observer = new MutationObserver((records) => {
+      if (!mirrorState.active) return;
+      for (const r of records) {
+        if (r.type === "childList" && r.target === answerHistory) {
+          r.removedNodes.forEach((n) => {
+            if (n.nodeType !== 1) return;
+            mirrorState.dirty.delete(n);
+            if (mirrorState.ids.has(n)) mirrorState.removed.push(mirrorState.ids.get(n));
+          });
+          r.addedNodes.forEach((n) => { if (n.nodeType === 1) mirrorState.dirty.add(n); });
+          continue;
+        }
+        const top = topTurnOf(r.target);
+        if (top) mirrorState.dirty.add(top);
+      }
+      if (!mirrorState.timer) mirrorState.timer = setTimeout(mirrorFlush, 16);
+    });
+    mirrorState.observer.observe(answerHistory, { childList: true, subtree: true, characterData: true, attributes: true });
+  }
+  mirrorSnapshot();
+}
+function mirrorStop() {
+  mirrorState.active = false;
+  if (mirrorState.observer) { mirrorState.observer.disconnect(); mirrorState.observer = null; }
+  if (mirrorState.timer) { clearTimeout(mirrorState.timer); mirrorState.timer = null; }
+  mirrorState.dirty.clear();
+  mirrorState.removed = [];
+}
+
+// Speaker side: the supporter pressed "Send to the AI".
+if (window.api.onRemoteSubmit)
+  window.api.onRemoteSubmit((req) => {
+    const connId = req && req.connId;
+    let ok = false, reason = "";
+    if (!document.body.classList.contains("in-interview") || document.body.classList.contains("role-supporter")) {
+      reason = "not-in-call";
+    } else {
+      const mode = req && req.mode;
+      if (["ANSWER", "CODE", "DIAGRAM", "PROJECT"].includes(mode) && mode !== manualMode) setManualMode(mode);
+      const before = currentAnswerEl;
+      submitComposer();
+      ok = !!currentAnswerEl && currentAnswerEl !== before;
+      if (ok) toast("Your supporter asked the AI.", "info");
+      else reason = "nothing";
+    }
+    window.api.remoteSubmitResult({ connId, ok, reason });
+  });
+
+// Supporter side: show their bubbles. The HTML comes from the speaker's own
+// panel; scripts, event attributes and javascript: links are dropped anyway.
+const mirroredEls = new Map();
+function sanitizeMirrorHtml(html) {
+  const t = document.createElement("template");
+  t.innerHTML = String(html || "");
+  t.content.querySelectorAll("script, iframe, object, embed, link, meta, base, form").forEach((n) => n.remove());
+  t.content.querySelectorAll("*").forEach((n) => {
+    for (const a of Array.from(n.attributes)) {
+      const name = a.name.toLowerCase();
+      if (name.startsWith("on")) n.removeAttribute(a.name);
+      else if (/^(href|src|xlink:href|action|formaction)$/.test(name) && /^\s*javascript:/i.test(a.value)) n.removeAttribute(a.name);
+    }
+  });
+  return t.content.firstElementChild;
+}
+function clearMirroredTurns() {
+  mirroredEls.clear();
+  if (!answerHistory) return;
+  answerHistory.querySelectorAll(":scope > .meet-turn, :scope > .answer-turn").forEach((n) => n.remove());
+  if (answerEmpty) answerEmpty.hidden = false;
+}
+function lastTurnEl() {
+  const all = answerHistory.querySelectorAll(":scope > .meet-turn, :scope > .answer-turn");
+  return all.length ? all[all.length - 1] : null;
+}
+function applyMirror(msg) {
+  if (!answerHistory || !msg || !document.body.classList.contains("role-supporter")) return;
+  ensureSpacer();
+  if (msg.mode && ["ANSWER", "CODE", "DIAGRAM", "PROJECT"].includes(msg.mode) && msg.mode !== manualMode) setManualMode(msg.mode);
+  if (msg.reset) clearMirroredTurns();
+  let newAnswer = null, meetTouched = null;
+  for (const op of msg.ops || []) {
+    if (op.op === "remove") {
+      const el = mirroredEls.get(op.id);
+      if (el) el.remove();
+      mirroredEls.delete(op.id);
+      continue;
+    }
+    if (op.op !== "upsert") continue;
+    const el = sanitizeMirrorHtml(op.html);
+    if (!el) continue;
+    el.dataset.mid = op.id;
+    const old = mirroredEls.get(op.id);
+    if (old && old.parentElement === answerHistory) {
+      old.replaceWith(el);
+    } else {
+      const after = op.after ? mirroredEls.get(op.after) : null;
+      if (after && after.parentElement === answerHistory) after.after(el);
+      else if (!op.after) {
+        const first = answerHistory.querySelector(":scope > .meet-turn, :scope > .answer-turn");
+        answerHistory.insertBefore(el, first || answerSpacer);
+      } else answerHistory.insertBefore(el, answerSpacer);
+      if (!msg.reset && el.classList.contains("answer-turn")) newAnswer = el;
+    }
+    mirroredEls.set(op.id, el);
+    if (el.classList.contains("meet-turn")) meetTouched = el;
+  }
+  if (answerEmpty) answerEmpty.hidden = !!answerHistory.querySelector(".answer-turn, .meet-turn");
+  if (msg.reset) {
+    const last = lastTurnEl();
+    if (last) try { last.scrollIntoView({ block: "end" }); } catch {}
+    return;
+  }
+  // The same scrolling as on their screen: a new answer opens at its start,
+  // the live transcript keeps its newest words in view.
+  if (newAnswer) {
+    const cRect = answerHistory.getBoundingClientRect();
+    const a = newAnswer.querySelector(".answer-a") || newAnswer;
+    const top = answerHistory.scrollTop + (a.getBoundingClientRect().top - cRect.top);
+    answerHistory.scrollTop = Math.max(0, top - 72);
+  } else if (meetTouched && meetTouched === lastTurnEl()) {
+    revealMeetBubble(meetTouched);
+  }
+}
+if (window.api.onMirrorIn) window.api.onMirrorIn((msg) => applyMirror(msg));
+
+// Supporter side: the two send buttons.
+async function supporterAskAI() {
+  const sent = await window.api.remoteSubmit(manualMode).catch(() => false);
+  if (!sent) toast("Not connected to them.", "err");
+}
+async function supporterSendChat() {
+  const text = composerInput ? composerInput.value.trim() : "";
+  const imgs = typeof attachedImages !== "undefined" ? attachedImages.slice() : [];
+  if (!text && !imgs.length) return;
+  if (composerInput) composerInput.value = "";
+  if (imgs.length) clearAttachedImages();
+  if (text) {
+    const ok = await window.api.sendChatText(text).catch(() => false);
+    chatAddText(text, ok);
+  }
+  for (const im of imgs) {
+    const url = `data:${im.mime || "image/png"};base64,${im.base64}`;
+    const ok = await window.api.sendChatImage(url).catch(() => false);
+    chatAddImage(url, ok);
+  }
+}
+if (window.api.onRemoteSubmitResult)
+  window.api.onRemoteSubmitResult((r) => {
+    if (!r || r.ok) return;
+    toast(r.reason === "nothing"
+      ? "Nothing to answer yet. Wait until they hear a question."
+      : "Their Ace is not in a call right now.", "warn");
+  });
+const supporterChatBtn = document.getElementById("supporterChatBtn");
+if (supporterChatBtn) supporterChatBtn.addEventListener("click", (e) => { e.preventDefault(); supporterSendChat(); });
+if (composerInput)
+  composerInput.addEventListener("keydown", (e) => {
+    if (!document.body.classList.contains("role-supporter")) return;
+    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
+      e.preventDefault();
+      supporterSendChat();
+    }
+  });
+const chatClearBtn = document.getElementById("chatClearBtn");
+if (chatClearBtn) chatClearBtn.addEventListener("click", () => { if (window.api.clearSticky) window.api.clearSticky(); chatClearAll(); });
+
+let composerDefaults = null;
+function supporterComposerUi(on) {
+  if (!composerInput || !getAnswerBtn) return;
+  if (!composerDefaults) composerDefaults = { title: getAnswerBtn.title, html: getAnswerBtn.innerHTML };
+  if (on) {
+    composerInput.placeholder = "Message to them (Enter). The AI button answers the current transcript on their computer (Ctrl+Enter).";
+    getAnswerBtn.title = "Send the current transcript to the AI on their computer (Ctrl+Enter)";
+    getAnswerBtn.textContent = "AI";
+    getAnswerBtn.disabled = false;
+  } else {
+    getAnswerBtn.title = composerDefaults.title;
+    getAnswerBtn.innerHTML = composerDefaults.html;
+    // The interviewer's own hint (syncProjectMode keeps it while not a supporter).
+    composerInput.placeholder = "Your question (from your knowledge base)…";
+    syncSendEnabled();
+  }
+}
