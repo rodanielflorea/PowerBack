@@ -169,6 +169,7 @@ const DEFAULT_STATE = {
     // off on Windows, where system audio alone covers the other side.
     captureMic: true,
     recordSession: true, // record screen + audio and auto-save the bundle on End
+    recordDisplay: '',   // display id the recording captures; '' = the main display
     uploadSession: true,  // after saving, upload the bundle to gofile.io and hand back the link
   },
   antiClose: true, // Windows: relaunch the app if another program closes it
@@ -454,11 +455,15 @@ function createWindow() {
   });
   session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
+      // The session recording takes its video from here on Windows, so this is
+      // the screen chosen for recording. System audio does not depend on it.
+      const src = pickRecordSource(sources);
       // Chromium supports system-audio loopback capture only on Windows.
-      if (sources[0]) callback({ video: sources[0], audio: process.platform === 'win32' ? 'loopback' : undefined });
+      if (src) callback({ video: src, audio: process.platform === 'win32' ? 'loopback' : undefined });
       else callback({});
     });
   }, { useSystemPicker: false });
+  bindDisplayEvents();
 
   win = new BrowserWindow({
     x: startBounds.x,
@@ -2364,12 +2369,48 @@ function macNoScreenSources() {
     'macOS gives Ace no screen to capture: allow Ace under Privacy & Security → Screen Recording (opening it now), then quit and reopen Ace. If Ace is already ticked, remove it with − and add it again.');
   require('electron').shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture').catch(() => {});
 }
+// The display the session recording captures: the one chosen in Settings, or
+// the main display when none is chosen or the chosen one is unplugged.
+// desktopCapturer sources carry the display id on Windows and macOS; Linux
+// gives one source for the whole desktop, so there is nothing to choose there.
+function pickRecordSource(sources) {
+  if (!sources || !sources.length) return null;
+  const byDisplay = (id) => sources.find((s) => id && String(s.display_id) === String(id));
+  const chosen = String((state.transcription && state.transcription.recordDisplay) || '');
+  let main = '';
+  try { main = String(screen.getPrimaryDisplay().id); } catch {}
+  return byDisplay(chosen) || byDisplay(main) || sources[0];
+}
+function recordableDisplays() {
+  if (process.platform === 'linux') return [];
+  let all = [], mainId = null;
+  try { all = screen.getAllDisplays(); mainId = screen.getPrimaryDisplay().id; } catch { return []; }
+  return all.slice()
+    .sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y)
+    .map((d, i) => {
+      const w = Math.round(d.size.width * (d.scaleFactor || 1));
+      const h = Math.round(d.size.height * (d.scaleFactor || 1));
+      const name = d.label ? `: ${d.label}` : '';
+      return { id: String(d.id), label: `Display ${i + 1}${name}, ${w}\u00d7${h}${d.id === mainId ? ' (main)' : ''}`, main: d.id === mainId };
+    });
+}
+ipcMain.handle('list-displays', () => recordableDisplays());
+let displayEventsBound = false;
+function bindDisplayEvents() {
+  if (displayEventsBound) return;
+  displayEventsBound = true;
+  const tell = () => { if (win && !win.isDestroyed()) win.webContents.send('displays-changed'); };
+  for (const ev of ['display-added', 'display-removed']) {
+    try { screen.on(ev, tell); } catch {}
+  }
+}
 ipcMain.handle('get-desktop-source-id', async () => {
   macScreenPermissionWarn();
   try {
     const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
     if (!sources[0]) macNoScreenSources();
-    return sources[0] ? sources[0].id : null;
+    const src = pickRecordSource(sources);
+    return src ? src.id : null;
   } catch {
     macNoScreenSources();
     return null;

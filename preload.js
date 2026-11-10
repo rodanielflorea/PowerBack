@@ -162,6 +162,8 @@ contextBridge.exposeInMainWorld('api', {
   onTranscriptLiveError: (cb) => ipcRenderer.on('transcript-live-error', (_e, v) => cb(v)),
   onUtteranceEnd: (cb) => ipcRenderer.on('transcript-utterance-end', () => cb()),
   getDesktopSourceId: () => ipcRenderer.invoke('get-desktop-source-id'),
+  listDisplays: () => ipcRenderer.invoke('list-displays'),
+  onDisplaysChanged: (cb) => ipcRenderer.on('displays-changed', () => cb()),
   getCursorScreenSourceId: () => ipcRenderer.invoke('get-cursor-screen-source-id'),
   getCursorDisplayIndex: () => ipcRenderer.invoke('get-cursor-display-index'),
   getAllScreenSourceIds: () => ipcRenderer.invoke('get-all-screen-source-ids'),
