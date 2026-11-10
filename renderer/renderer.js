@@ -313,6 +313,10 @@ const stageOverlay = document.getElementById("stageOverlay");
 const profileOverlay = document.getElementById("profileOverlay");
 
 function hideAllSetupOverlays() {
+  const joinEl = document.getElementById("joinOverlay");
+  if (joinEl) joinEl.hidden = true;
+  const supPanel = document.getElementById("supporterPanel");
+  if (supPanel) supPanel.hidden = true;
   if (modeSelectOverlay) modeSelectOverlay.hidden = true;
   if (stageOverlay) stageOverlay.hidden = true;
   if (profileOverlay) profileOverlay.hidden = true;
@@ -763,7 +767,7 @@ syncSetupRoleV();
 
 if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
   await saveWizardMeetingType();
-  const sup = false; // supporter mode is not offered in this build
+  const sup = false; // the interview wizard always starts the speaker; supporters join from the welcome screen
   const chosenRole = "speaker";
   const patch = { role: chosenRole };
   if (sup) {
@@ -1205,6 +1209,7 @@ function hideEndModal() {
 }
 
 endBtn.addEventListener("click", async () => {
+  if (document.body.classList.contains("role-supporter")) { leaveSupporterView(); return; }
   endBtn.disabled = true;
   let info = { company: "", role: "" };
   try { if (window.api.extractJdInfo) info = (await window.api.extractJdInfo()) || info; } catch {}
@@ -4583,9 +4588,9 @@ async function ensureSupporterMic() {
         },
       });
       supporterMicTrack = supporterMicStream.getAudioTracks()[0];
-      supporterMicTrack.enabled = true;
-      setPttStatus(true);
-      log("Supporter mic active (transmitting to speaker)", "info");
+      supporterMicTrack.enabled = currentMicMode !== "mute";
+      setPttStatus(supporterMicTrack.enabled);
+      log(`Supporter mic ready (${supporterMicTrack.enabled ? "on" : "off"})`, "info");
       return supporterMicTrack;
     } catch (e) {
       log("Supporter mic capture failed: " + e.message, "err");
@@ -4698,10 +4703,15 @@ function supporterHandleSignal(payload) {
 window.api.onSignaling((msg) => {
   const type = msg.type;
   if (type === "opened") {
-    if (netCfg && netCfg.role === "speaker") speakerHandleOpened(msg.connId);
+    if (netCfg && netCfg.role === "speaker" && msg.connId) {
+      toast(`A supporter joined${msg.ip ? " from " + msg.ip : ""}.`, "info");
+      speakerHandleOpened(msg.connId);
+    }
   } else if (type === "closed") {
-    if (netCfg && netCfg.role === "speaker" && msg.connId)
+    if (netCfg && netCfg.role === "speaker" && msg.connId) {
+      toast("The supporter left.", "info");
       speakerHandleClosed(msg.connId);
+    }
     else if (netCfg && netCfg.role === "supporter") {
       if (supporterPeer) {
         try {
@@ -4725,12 +4735,13 @@ window.api.onSignaling((msg) => {
     log("Network: rejected (" + (msg.reason || "unknown") + ")", "err");
   } else if (type === "hello") {
     log("Network: connected as supporter (peer id " + msg.id + ")", "info");
+    supporterAdmittedUi();
   }
 });
 
 const chatMainEl = document.getElementById("chatMain");
 const chatHistoryEl = document.getElementById("chatHistory");
-const chatEmptyEl = document.getElementById("chatEmpty");
+let chatEmptyEl = document.getElementById("chatEmpty");
 const chatInputEl = document.getElementById("chatInput");
 const chatSendBtn = document.getElementById("chatSendBtn");
 const chatAttachBtn = document.getElementById("chatAttachBtn");
@@ -4927,12 +4938,9 @@ if (chatInputEl)
   });
 
 window.api.onKickedBySpeaker(() => {
-  log("Disconnected by speaker — auto-reconnect disabled", "err");
-  if (typeof teardownPeers === "function") teardownPeers();
+  log("Disconnected by the speaker", "err");
   if (netActionBtn) delete netActionBtn.dataset.connecting;
-  window.alert(
-    "You were disconnected by the speaker. Click End to reconfigure or reconnect.",
-  );
+  supporterLostConnection("They disconnected you. Ask for the code again to rejoin.");
 });
 
 const helpAlertEl = document.getElementById("helpAlert");
@@ -5057,18 +5065,19 @@ window.api.onMicModeChanged((info) => {
   if (mode === "mute")
     msg =
       role === "supporter"
-        ? `${icon} You are MUTED — nobody hears you`
-        : `${icon} Supporter is MUTED`;
+        ? `${icon} Your mic is off. Nobody hears you.`
+        : `${icon} The supporter's mic is off.`;
   else if (mode === "aOnly")
     msg =
       role === "supporter"
-        ? `${icon} You speak to A only — C cannot hear you`
-        : `${icon} Supporter is private (A only)`;
+        ? `${icon} They hear you. The meeting does not.`
+        : `${icon} The supporter can talk to you. The meeting does not hear them.`;
   else if (mode === "aAndC")
     msg =
       role === "supporter"
-        ? `${icon} You are LIVE — A + C hear you`
-        : `${icon} Supporter is LIVE to A + C`;
+        ? `${icon} You are live: they and the meeting hear you.`
+        : `${icon} The supporter is live in the meeting.`;
+  updateSupporterMicButtons(mode);
   toast(msg, mode);
   log(msg, "info");
 });
@@ -5096,10 +5105,10 @@ function updateMicModeBanner(mode) {
   banner.classList.remove("mode-mute", "mode-aOnly", "mode-aAndC");
   banner.classList.add("mode-" + mode);
   icon.textContent = MIC_MODE_ICONS[mode] || "";
-  if (mode === "mute") text.textContent = "You are MUTED — nobody hears you";
+  if (mode === "mute") text.textContent = "Your mic is off. Nobody hears you.";
   else if (mode === "aOnly")
-    text.textContent = "You speak to A only — C cannot hear you";
-  else if (mode === "aAndC") text.textContent = "You are LIVE — A + C hear you";
+    text.textContent = "They hear you. The meeting does not.";
+  else if (mode === "aAndC") text.textContent = "You are live: they and the meeting hear you.";
 }
 
 async function refreshMicPill() {
@@ -5674,3 +5683,244 @@ if (vscodePortEl) vscodePortEl.addEventListener("change", () => {
 });
 refreshVscodeSettings();
 syncProjectMode();
+
+// ── Supporter mode ──────────────────────────────────────────────────────────
+// The welcome screen's "Join as supporter" opens the join screen (address and
+// code from the speaker's headset panel). Once let in, the window shows the
+// notes chat with the mic and volume controls; End leaves. On the speaker's
+// side the headset button in the title bar shows the address and the code.
+const joinOverlayEl = document.getElementById("joinOverlay");
+const joinAddressEl = document.getElementById("joinAddress");
+const joinCodeEl = document.getElementById("joinCode");
+const joinStatusEl = document.getElementById("joinStatus");
+const joinConnectBtn = document.getElementById("joinConnectBtn");
+const supporterBarDot = document.getElementById("supporterBarDot");
+const supporterBarText = document.getElementById("supporterBarText");
+const supporterVolumeEl = document.getElementById("supporterVolume");
+let joinPending = null;      // { address, timer } while waiting to be let in
+let supporterAddress = "";
+
+const JOIN_REASONS = {
+  code: "That code is wrong. Check the code in their headset panel; it changes every session.",
+  blocked: "Too many wrong codes from this computer. They need to end and start their session again for a new code.",
+  capacity: "Someone else is already supporting this call.",
+  duplicate: "This computer is already connected.",
+  timeout: "No code reached them in time. Try again.",
+  ended: "Their session ended.",
+  refused: "They refused the connection.",
+};
+function joinReasonText(reason, address) {
+  if (reason === "unreachable")
+    return `Can't reach ${address || "that address"}. Check the address, that both computers are on the same network, and that their call is started in Ace.`;
+  return JOIN_REASONS[reason] || JOIN_REASONS.refused;
+}
+
+function setJoinStatus(text, kind) {
+  if (!joinStatusEl) return;
+  joinStatusEl.textContent = text || "";
+  joinStatusEl.className = "join-status" + (kind ? " " + kind : "");
+}
+
+function showJoin(message) {
+  leaveInterviewUi();
+  if (joinOverlayEl) joinOverlayEl.hidden = false;
+  if (joinAddressEl && !joinAddressEl.value) {
+    const saved = (netCfg && netCfg.supporterAddress) || "";
+    if (saved && saved !== "172.16.98.11:2000") joinAddressEl.value = saved;
+  }
+  if (joinConnectBtn) joinConnectBtn.disabled = false;
+  setJoinStatus(message || "", message ? "err" : "");
+  setTimeout(() => {
+    const el = joinAddressEl && !joinAddressEl.value ? joinAddressEl : joinCodeEl;
+    try { el && el.focus(); } catch {}
+  }, 50);
+}
+
+function clearJoinPending() {
+  if (joinPending && joinPending.timer) clearTimeout(joinPending.timer);
+  joinPending = null;
+  if (joinConnectBtn) joinConnectBtn.disabled = false;
+}
+
+async function startJoin() {
+  if (joinPending) return;
+  const address = (joinAddressEl && joinAddressEl.value.trim()) || "";
+  const code = (joinCodeEl && joinCodeEl.value.replace(/\D/g, "")) || "";
+  if (!address) { setJoinStatus("Enter their address.", "err"); joinAddressEl && joinAddressEl.focus(); return; }
+  if (code.length !== 6) { setJoinStatus("Enter the 6-digit code.", "err"); joinCodeEl && joinCodeEl.focus(); return; }
+  netCfg = { ...(netCfg || {}), role: "supporter" };
+  teardownPeers();
+  const r = await window.api.joinAsSupporter({ address, code }).catch((e) => ({ ok: false, error: e.message }));
+  if (!r || !r.ok) { setJoinStatus((r && r.error) || "Could not connect.", "err"); return; }
+  supporterAddress = r.address;
+  if (joinConnectBtn) joinConnectBtn.disabled = true;
+  setJoinStatus(`Connecting to ${r.address}…`, "busy");
+  joinPending = {
+    address: r.address,
+    timer: setTimeout(async () => {
+      if (!joinPending) return;
+      clearJoinPending();
+      await window.api.leaveSupporter().catch(() => {});
+      setJoinStatus(joinReasonText("unreachable", r.address), "err");
+    }, 15000),
+  };
+  try { netCfg = await window.api.getNetworkConfig(); } catch {}
+}
+
+// The speaker let us in: switch to the supporter screen.
+function supporterAdmittedUi() {
+  if (!netCfg || netCfg.role !== "supporter") return;
+  const wasJoining = !!joinPending;
+  clearJoinPending();
+  if (wasJoining || !document.body.classList.contains("role-supporter")) enterSupporterView();
+  setSupporterBar(true);
+}
+
+function enterSupporterView() {
+  hideAllSetupOverlays();
+  if (settingsOverlay) settingsOverlay.hidden = true;
+  document.body.classList.add("in-interview");
+  endBtn.classList.add("live");
+  endBtn.title = "Leave — back to the start screen";
+  applyRoleClass("supporter");
+  if (answerMain) answerMain.hidden = true;
+  chatClearAll();
+  chatSetStatus("Type, paste or drop an image");
+  const v = Math.round(((netCfg && netCfg.incomingVolume != null) ? netCfg.incomingVolume : 1) * 100);
+  if (supporterVolumeEl) supporterVolumeEl.value = v;
+  updateSupporterMicButtons(currentMicMode);
+  updateMicModeBanner(currentMicMode);
+  setTimeout(() => { try { chatInputEl && chatInputEl.focus(); } catch {} }, 50);
+  log(`Supporting ${supporterAddress}`, "info");
+}
+
+function setSupporterBar(connected) {
+  if (supporterBarDot) supporterBarDot.classList.toggle("on", !!connected);
+  if (supporterBarText)
+    supporterBarText.textContent = connected
+      ? `Connected to ${supporterAddress || "the speaker"}`
+      : "Connection lost. Reconnecting…";
+}
+
+async function leaveSupporterView(message) {
+  clearJoinPending();
+  await window.api.leaveSupporter().catch(() => {});
+  teardownPeers();
+  try { netCfg = await window.api.getNetworkConfig(); } catch {}
+  endBtn.title = "End session — back to the start screen";
+  chatClearAll();
+  if (message) showJoin(message);
+  else showModeSelect();
+}
+
+// Dropped, refused or ended while on the supporter screen: back to joining.
+function supporterLostConnection(message) {
+  if (!document.body.classList.contains("role-supporter")) return;
+  leaveSupporterView(message);
+}
+
+function updateSupporterMicButtons(mode) {
+  document.querySelectorAll(".supporter-mic-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.mic === mode);
+  });
+}
+
+if (window.api.onJoinRejected)
+  window.api.onJoinRejected((info) => {
+    const reason = (info && info.reason) || "refused";
+    log("Supporter connection refused: " + reason, "err");
+    if (joinPending) {
+      const addr = joinPending.address;
+      clearJoinPending();
+      window.api.leaveSupporter().catch(() => {});
+      setJoinStatus(joinReasonText(reason, addr), "err");
+      return;
+    }
+    if (reason === "code") supporterLostConnection("Their session restarted with a new code. Enter the new code.");
+    else supporterLostConnection(joinReasonText(reason, supporterAddress));
+  });
+
+window.api.onNetworkStatus((status) => {
+  if (!status) return;
+  if (document.body.classList.contains("role-supporter") && status.role === "supporter") setSupporterBar(!!status.connected);
+  refreshSupporterInvite(status);
+});
+
+document.querySelectorAll(".supporter-mic-btn").forEach((b) => {
+  b.addEventListener("click", () => {
+    if (window.api.setMicMode) window.api.setMicMode(b.dataset.mic);
+  });
+});
+if (supporterVolumeEl)
+  supporterVolumeEl.addEventListener("input", () => {
+    const v = Math.min(100, parseInt(supporterVolumeEl.value, 10) || 0) / 100;
+    applyIncomingVolume(v);
+    persistNet({ incomingVolume: v });
+  });
+
+const modeSupporterBtn = document.getElementById("modeSupporterBtn");
+if (modeSupporterBtn) modeSupporterBtn.addEventListener("click", () => showJoin());
+const joinBackBtn = document.getElementById("joinBackBtn");
+if (joinBackBtn)
+  joinBackBtn.addEventListener("click", async () => {
+    if (joinPending) { clearJoinPending(); await window.api.leaveSupporter().catch(() => {}); }
+    setJoinStatus("");
+    showModeSelect();
+  });
+const joinSettingsBtn = document.getElementById("joinSettingsBtn");
+if (joinSettingsBtn) joinSettingsBtn.addEventListener("click", () => openSettings());
+if (joinConnectBtn) joinConnectBtn.addEventListener("click", () => startJoin());
+[joinAddressEl, joinCodeEl].forEach((el) => {
+  if (el) el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); startJoin(); } });
+});
+
+// Speaker: the headset button and its panel.
+const supporterInviteBtn = document.getElementById("supporterInviteBtn");
+const supporterPanel = document.getElementById("supporterPanel");
+const supporterPanelAddr = document.getElementById("supporterPanelAddr");
+const supporterPanelCode = document.getElementById("supporterPanelCode");
+const supporterPanelStatus = document.getElementById("supporterPanelStatus");
+const supporterPanelKick = document.getElementById("supporterPanelKick");
+const supporterPanelOther = document.getElementById("supporterPanelOther");
+
+async function refreshSupporterInvite(status) {
+  if (!window.api.getSupporterInvite) return;
+  let inv;
+  try { inv = await window.api.getSupporterInvite(); } catch { return; }
+  const sup = (inv.supporters || [])[0];
+  if (supporterInviteBtn) supporterInviteBtn.classList.toggle("connected", !!sup);
+  if (!supporterPanel || supporterPanel.hidden) return;
+  // The real network address first; VPN and virtual adapters are listed
+  // below it, for a supporter who is on the same VPN.
+  const all = (inv.addresses || []).map((a) => `${a.address}:${inv.port}`);
+  if (supporterPanelAddr) supporterPanelAddr.textContent = inv.hosting ? (all[0] || "No network found") : "—";
+  if (supporterPanelOther) {
+    supporterPanelOther.hidden = !inv.hosting || all.length < 2;
+    supporterPanelOther.textContent = all.length > 1 ? "Other addresses of this computer (VPN, virtual): " + all.slice(1).join(", ") : "";
+  }
+  if (supporterPanelCode) supporterPanelCode.textContent = inv.hosting && inv.code ? inv.code.slice(0, 3) + " " + inv.code.slice(3) : "—";
+  if (supporterPanelStatus) {
+    supporterPanelStatus.className = "supporter-panel-status" + (sup ? " connected" : "");
+    supporterPanelStatus.textContent = !inv.hosting
+      ? "Not open to supporters right now. Start a session first."
+      : sup ? `Connected: ${sup.ip || "a supporter"}` : "Waiting for a supporter…";
+  }
+  if (supporterPanelKick) {
+    supporterPanelKick.hidden = !sup;
+    supporterPanelKick.dataset.id = sup ? sup.id : "";
+  }
+}
+if (supporterInviteBtn)
+  supporterInviteBtn.addEventListener("click", () => {
+    if (!supporterPanel) return;
+    supporterPanel.hidden = !supporterPanel.hidden;
+    refreshSupporterInvite();
+  });
+const supporterPanelClose = document.getElementById("supporterPanelClose");
+if (supporterPanelClose) supporterPanelClose.addEventListener("click", () => { if (supporterPanel) supporterPanel.hidden = true; });
+if (supporterPanelKick)
+  supporterPanelKick.addEventListener("click", async () => {
+    const id = supporterPanelKick.dataset.id;
+    if (id) await window.api.kickSupporter(id);
+    refreshSupporterInvite();
+  });

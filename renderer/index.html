@@ -19,6 +19,10 @@
       <span class="rec-dot-live"></span>
     </button>
     <span class="net-status-pill iv-btn" id="netStatusPill" hidden>--</span>
+    <button class="btn supporter-invite-btn iv-btn" id="supporterInviteBtn" title="Supporter: let someone join from another computer">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>
+      <span class="supporter-invite-dot"></span>
+    </button>
     <div class="drag"></div>
     <div class="slider" id="slider" title="Click and drag horizontally to change opacity">
       <div class="slider-fill" id="sliderFill"></div>
@@ -36,7 +40,7 @@
         <path class="cursor-through" d="M15 5 h6 M15 8.5 h6" />
       </svg>
     </button>
-    <!-- The "To A" mic-mode pill is retired (supporter mode is not offered); kept hidden for renderer bindings. -->
+    <!-- The "To A" mic-mode pill is retired (supporters change their mic on their own screen); kept hidden for renderer bindings. -->
     <button class="btn mic-pill iv-btn" id="micPill" hidden>
       <span class="mic-pill-icon" id="micPillIcon">🔒</span><span class="mic-pill-label" id="micPillLabel">TO A</span>
     </button>
@@ -46,6 +50,20 @@
     <button class="btn" id="hideBtn" title="Hide (Ctrl+Alt+H)">&minus;</button>
     <button class="btn" id="quitBtn" title="Quit">&times;</button>
   </header>
+
+  <div class="supporter-panel" id="supporterPanel" hidden>
+    <div class="supporter-panel-head">
+      <span>Supporter</span>
+      <button class="btn" id="supporterPanelClose" title="Close">&times;</button>
+    </div>
+    <p class="supporter-panel-lead">On the other computer, open Ace, choose <b>Join as supporter</b> and enter:</p>
+    <div class="supporter-panel-row"><span class="supporter-panel-key">Address</span><span class="supporter-panel-val" id="supporterPanelAddr">&nbsp;</span></div>
+    <p class="supporter-panel-other" id="supporterPanelOther" hidden></p>
+    <div class="supporter-panel-row"><span class="supporter-panel-key">Code</span><span class="supporter-panel-val supporter-code" id="supporterPanelCode">&nbsp;</span></div>
+    <p class="supporter-panel-status" id="supporterPanelStatus">&nbsp;</p>
+    <button class="action-btn-secondary" id="supporterPanelKick" hidden>Disconnect the supporter</button>
+    <p class="supporter-panel-hint">Both computers must be on the same network. The supporter hears your microphone and the call. Their notes pop up on a sticky note here. Their microphone starts off.</p>
+  </div>
 
   <aside class="right-rail iv-btn" id="rightRail">
     <button class="rail-btn" id="settingsBtn" title="Settings &amp; user guide">&#9881;</button>
@@ -312,6 +330,17 @@
         </section>
 
         <section class="settings-section help-section">
+          <h3>Supporter mode (a helper on another computer)</h3>
+          <ol class="help-steps">
+            <li>Start your call in Ace as usual. Then click the <b>headset button</b> at the top. It shows this computer's address and a 6-digit code.</li>
+            <li>On the helper's computer, open Ace and choose <b>Join as supporter</b>. Enter the address and the code, then click <b>Connect</b>.</li>
+            <li>The helper hears your microphone and the call. What they type or paste pops up on a sticky note on your screen.</li>
+            <li>The helper's microphone starts off. With <b>Talk to them</b>, only you hear them; the meeting does not.</li>
+          </ol>
+          <p>Both computers must be on the same network. The code changes every session, and one supporter can join at a time. On Windows, allow the firewall prompt the first time. To stop, click <b>Disconnect the supporter</b> in the headset panel, or <b>End</b> on the helper's side.</p>
+        </section>
+
+        <section class="settings-section help-section">
           <h3>During the interview</h3>
           <ul>
             <li><b>Blue bubbles</b> are what the interviewer said. When a question ends, the answer appears underneath it.</li>
@@ -440,16 +469,39 @@
           </span>
           <span class="mode-choice-arrow" aria-hidden="true">&#8250;</span>
         </button>
-        <button class="mode-choice-card mode-choice-card--disabled" id="modeSupporterBtn" disabled title="Coming soon">
+        <button class="mode-choice-card" id="modeSupporterBtn">
           <span class="mode-choice-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg></span>
           <span class="mode-choice-text">
             <span class="mode-choice-name">Join as supporter</span>
-            <span class="mode-choice-desc">Help someone else in their call · coming soon</span>
+            <span class="mode-choice-desc">Help someone in their call: hear it and send them notes</span>
           </span>
           <span class="mode-choice-arrow" aria-hidden="true">&#8250;</span>
         </button>
       </div>
       <p class="welcome-foot">New here? <button class="link-btn" id="welcomeTourBtn">Take the tour</button> <span class="welcome-dot">·</span> <button class="link-btn" id="welcomeHelpBtn">Read the user guide</button></p>
+    </div>
+  </section>
+
+  <!-- Supporter mode: join someone else's call -->
+  <section class="setup-overlay" id="joinOverlay" hidden>
+    <div class="setup-card">
+      <div class="setup-topbar">
+        <button class="setup-back-btn" id="joinBackBtn" title="Back">&#8592;</button>
+        <h2 class="setup-title">Join as supporter</h2>
+        <button class="setup-gear-btn" id="joinSettingsBtn" title="Settings &amp; user guide">&#9881;</button>
+      </div>
+      <p class="setup-intro">You hear their call and can send them notes and pictures, which pop up on their screen. Both computers must be on the same network. In their Ace, the headset button at the top shows the address and the code.</p>
+      <div class="profile-inputs profile-inputs--vertical">
+        <label class="field-label" for="joinAddress">Their address</label>
+        <input type="text" id="joinAddress" class="profile-input" placeholder="192.168.1.20:2000" spellcheck="false" autocomplete="off" />
+        <label class="field-label" for="joinCode">Code</label>
+        <input type="text" id="joinCode" class="profile-input join-code-input" placeholder="6 digits" inputmode="numeric" maxlength="7" spellcheck="false" autocomplete="off" />
+      </div>
+      <p class="join-status" id="joinStatus" role="status"></p>
+      <div class="wizard-nav">
+        <span class="wizard-steps"></span>
+        <button class="wizard-next" id="joinConnectBtn"><span>Connect</span><span class="wizard-next-ico"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></span></button>
+      </div>
     </div>
   </section>
 
@@ -754,16 +806,28 @@
   </section>
 
   <section class="chat-main" id="chatMain" hidden>
-    <div class="mic-mode-banner mode-aOnly" id="micModeBanner">
-      <span class="mic-mode-banner-icon" id="micModeBannerIcon">&#128274;</span>
-      <span class="mic-mode-banner-text" id="micModeBannerText">You speak to A only — C cannot hear you</span>
+    <div class="supporter-bar">
+      <span class="supporter-bar-dot" id="supporterBarDot"></span>
+      <span class="supporter-bar-text" id="supporterBarText">Connecting…</span>
+      <div class="supporter-mic-seg" role="group" aria-label="Your microphone">
+        <button class="supporter-mic-btn" data-mic="mute" type="button" title="Nobody hears you">Mic off</button>
+        <button class="supporter-mic-btn" data-mic="aOnly" type="button" title="Only the person you support hears you, not the meeting">Talk to them</button>
+      </div>
+      <label class="supporter-vol" title="Call volume">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10v4a1 1 0 0 0 1 1h3l5 4V5L7 9H4a1 1 0 0 0-1 1z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg>
+        <input type="range" id="supporterVolume" min="0" max="100" step="5" />
+      </label>
+    </div>
+    <div class="mic-mode-banner mode-mute" id="micModeBanner">
+      <span class="mic-mode-banner-icon" id="micModeBannerIcon">&#128263;</span>
+      <span class="mic-mode-banner-text" id="micModeBannerText">Your mic is off. Nobody hears you.</span>
     </div>
     <div class="chat-header">
-      <span class="chat-header-title">&#128172; Chat &rarr; A</span>
-      <span class="chat-header-status" id="chatHeaderStatus">Drop image, paste, or type</span>
+      <span class="chat-header-title">Notes to them</span>
+      <span class="chat-header-status" id="chatHeaderStatus">Type, paste or drop an image</span>
     </div>
     <div class="chat-history" id="chatHistory">
-      <div class="chat-empty" id="chatEmpty">No messages yet. Type below or drop an image anywhere.</div>
+      <div class="chat-empty" id="chatEmpty">Nothing sent yet. What you send pops up on their screen.</div>
     </div>
     <div class="chat-input-area">
       <textarea id="chatInput" rows="2" placeholder="Type a message and press Enter to send (Shift+Enter for newline)" spellcheck="false"></textarea>
