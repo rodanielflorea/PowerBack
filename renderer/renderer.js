@@ -1594,6 +1594,7 @@ function openSettings() {
   refreshMeetingUI();
   loadAvoidPhrases();
   refreshMicList();
+  refreshDisplayList();
   refreshHotkeysUI();
   refreshNetworkUI();
   applyRoleSettingsTabs(isSupporter);
@@ -1767,6 +1768,44 @@ const recordSessionEl = document.getElementById("recordSession");
 if (recordSessionEl) recordSessionEl.addEventListener("change", () => persistTx({ recordSession: recordSessionEl.checked }));
 const uploadSessionEl = document.getElementById("uploadSession");
 if (uploadSessionEl) uploadSessionEl.addEventListener("change", () => persistTx({ uploadSession: uploadSessionEl.checked }));
+
+// Which display the recording captures. Only offered with two or more displays.
+const recordDisplaySel = document.getElementById("recordDisplaySelect");
+async function refreshDisplayList() {
+  if (!recordDisplaySel || !window.api.listDisplays) return;
+  let list = [];
+  try { list = (await window.api.listDisplays()) || []; } catch {}
+  const field = document.getElementById("recordDisplayField");
+  if (field) field.hidden = list.length < 2;
+  recordDisplaySel.innerHTML = "";
+  const def = document.createElement("option");
+  def.value = "";
+  def.textContent = "Main display";
+  recordDisplaySel.appendChild(def);
+  for (const d of list) {
+    const o = document.createElement("option");
+    o.value = d.id;
+    o.textContent = d.label;
+    recordDisplaySel.appendChild(o);
+  }
+  let cfg = txCfg;
+  try { cfg = (await window.api.getTranscriptionConfig()) || cfg; } catch {}
+  const want = String((cfg && cfg.recordDisplay) || "");
+  recordDisplaySel.value = list.some((d) => d.id === want) ? want : "";
+  if (typeof recordDisplaySel._cselRefresh === "function") recordDisplaySel._cselRefresh();
+}
+if (recordDisplaySel) recordDisplaySel.addEventListener("change", async () => {
+  await persistTx({ recordDisplay: recordDisplaySel.value });
+  // A running recording moves to the new screen: the file so far is closed
+  // and a second one starts; End saves both with the session.
+  if (typeof window.isRecording === "function" && window.isRecording()) {
+    try { await window.stopRecording(); } catch {}
+    if (typeof window.startRecording === "function") window.startRecording(true);
+    log("Recording moved to the newly chosen screen (a second video file).", "info");
+  }
+});
+if (window.api.onDisplaysChanged) window.api.onDisplaysChanged(() => { refreshDisplayList(); });
+refreshDisplayList();
 captureSystemEl.addEventListener("change", onTxSourceChange);
 const recIndicatorEl = document.getElementById("recIndicator");
 window.__recIndicator = (on) => {
