@@ -292,6 +292,7 @@ hideBtn.addEventListener("click", () => window.api.hide());
 quitBtn.addEventListener("click", () => window.api.quit());
 
 function applyRoleClass(role) {
+  if (!role && typeof closeSidePane === "function") closeSidePane();
   document.body.classList.toggle("role-supporter", role === "supporter");
   document.body.classList.toggle("role-speaker", role === "speaker");
   const chatMain = document.getElementById("chatMain");
@@ -313,9 +314,11 @@ const stageOverlay = document.getElementById("stageOverlay");
 const profileOverlay = document.getElementById("profileOverlay");
 
 function hideAllSetupOverlays() {
+  const joinEl = document.getElementById("joinOverlay");
+  if (joinEl) joinEl.hidden = true;
+  const supPanel = document.getElementById("supporterPanel");
+  if (supPanel) supPanel.hidden = true;
   if (modeSelectOverlay) modeSelectOverlay.hidden = true;
-  const joinOverlay = document.getElementById("joinOverlay");
-  if (joinOverlay) joinOverlay.hidden = true;
   if (stageOverlay) stageOverlay.hidden = true;
   if (profileOverlay) profileOverlay.hidden = true;
   if (setupOverlay) setupOverlay.hidden = true;
@@ -765,7 +768,7 @@ syncSetupRoleV();
 
 if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
   await saveWizardMeetingType();
-  const sup = false; // the Start button is the speaker's; supporters join from the welcome screen
+  const sup = false; // the interview wizard always starts the speaker; supporters join from the welcome screen
   const chosenRole = "speaker";
   const patch = { role: chosenRole };
   if (sup) {
@@ -1207,7 +1210,7 @@ function hideEndModal() {
 }
 
 endBtn.addEventListener("click", async () => {
-  if (netCfg && netCfg.role === "supporter") { await leaveSupporter(); return; }
+  if (document.body.classList.contains("role-supporter")) { leaveSupporterView(); return; }
   endBtn.disabled = true;
   let info = { company: "", role: "" };
   try { if (window.api.extractJdInfo) info = (await window.api.extractJdInfo()) || info; } catch {}
@@ -1597,8 +1600,10 @@ function openSettings() {
   refreshMeetingUI();
   loadAvoidPhrases();
   refreshMicList();
+  refreshDisplayList();
   refreshHotkeysUI();
   refreshNetworkUI();
+  refreshSupporterSettings();
   applyRoleSettingsTabs(isSupporter);
 }
 
@@ -1770,6 +1775,44 @@ const recordSessionEl = document.getElementById("recordSession");
 if (recordSessionEl) recordSessionEl.addEventListener("change", () => persistTx({ recordSession: recordSessionEl.checked }));
 const uploadSessionEl = document.getElementById("uploadSession");
 if (uploadSessionEl) uploadSessionEl.addEventListener("change", () => persistTx({ uploadSession: uploadSessionEl.checked }));
+
+// Which display the recording captures. Only offered with two or more displays.
+const recordDisplaySel = document.getElementById("recordDisplaySelect");
+async function refreshDisplayList() {
+  if (!recordDisplaySel || !window.api.listDisplays) return;
+  let list = [];
+  try { list = (await window.api.listDisplays()) || []; } catch {}
+  const field = document.getElementById("recordDisplayField");
+  if (field) field.hidden = list.length < 2;
+  recordDisplaySel.innerHTML = "";
+  const def = document.createElement("option");
+  def.value = "";
+  def.textContent = "Main display";
+  recordDisplaySel.appendChild(def);
+  for (const d of list) {
+    const o = document.createElement("option");
+    o.value = d.id;
+    o.textContent = d.label;
+    recordDisplaySel.appendChild(o);
+  }
+  let cfg = txCfg;
+  try { cfg = (await window.api.getTranscriptionConfig()) || cfg; } catch {}
+  const want = String((cfg && cfg.recordDisplay) || "");
+  recordDisplaySel.value = list.some((d) => d.id === want) ? want : "";
+  if (typeof recordDisplaySel._cselRefresh === "function") recordDisplaySel._cselRefresh();
+}
+if (recordDisplaySel) recordDisplaySel.addEventListener("change", async () => {
+  await persistTx({ recordDisplay: recordDisplaySel.value });
+  // A running recording moves to the new screen: the file so far is closed
+  // and a second one starts; End saves both with the session.
+  if (typeof window.isRecording === "function" && window.isRecording()) {
+    try { await window.stopRecording(); } catch {}
+    if (typeof window.startRecording === "function") window.startRecording(true);
+    log("Recording moved to the newly chosen screen (a second video file).", "info");
+  }
+});
+if (window.api.onDisplaysChanged) window.api.onDisplaysChanged(() => { refreshDisplayList(); });
+refreshDisplayList();
 captureSystemEl.addEventListener("change", onTxSourceChange);
 const recIndicatorEl = document.getElementById("recIndicator");
 window.__recIndicator = (on) => {
@@ -2821,6 +2864,7 @@ function specSnapshot() {
 }
 
 function composerCanSubmit() {
+  if (document.body.classList.contains("role-supporter")) return true;
   const q = composerInput ? composerInput.value.trim() : "";
   const live = liveMeetText();
   const imgs = typeof attachedImages !== "undefined" && attachedImages.length > 0;
@@ -2834,6 +2878,7 @@ function syncSendEnabled() {
 }
 
 function startSpeculativeNow() {
+  if (document.body.classList.contains("role-supporter")) return;
   if (_optimisticAnswer || answerIsStreaming()) return;
   if (typeof attachedImages !== "undefined" && attachedImages.length > 0) return;
   const { t, mt, live, key } = specSnapshot();
@@ -2849,6 +2894,7 @@ function startSpeculativeNow() {
 
 function kickSpeculative(immediate) {
   syncSendEnabled();
+  if (document.body.classList.contains("role-supporter")) return;
   if (_optimisticAnswer || answerIsStreaming()) return;
   ensureApiWarmed();
   if (_speculativeTimer) { clearTimeout(_speculativeTimer); _speculativeTimer = null; }
@@ -2889,6 +2935,7 @@ function dropEmptyStreamingTurn() {
 }
 
 function submitComposer() {
+  if (document.body.classList.contains("role-supporter")) { supporterAskAI(); return; }
   if (!composerInput) return;
   const { t: q, mt, live, key: matchKey } = specSnapshot();
   if (manualMode === "PROJECT" && !vscodeState.connected) { toast("VS Code is not connected. Install the Ace extension (Settings → VS Code).", "err"); return; }
@@ -3111,6 +3158,7 @@ function setManualMode(mode) {
   if (modeSeg) modeSeg.querySelectorAll('.mode-seg-btn').forEach((b) =>
     b.classList.toggle('mode-seg-btn--active', b.dataset.mode === manualMode));
   syncSpeedSlider();
+  if (typeof mirrorState !== "undefined" && mirrorState && mirrorState.active && window.api.mirrorOut) window.api.mirrorOut({ mode: manualMode, ops: [] });
 }
 
 // Resend (regenerate): re-submit the same question/images as a new turn, in
@@ -4606,9 +4654,9 @@ async function ensureSupporterMic() {
         },
       });
       supporterMicTrack = supporterMicStream.getAudioTracks()[0];
-      supporterMicTrack.enabled = true;
-      setPttStatus(true);
-      log("Supporter mic active (transmitting to speaker)", "info");
+      supporterMicTrack.enabled = currentMicMode !== "mute";
+      setPttStatus(supporterMicTrack.enabled);
+      log(`Supporter mic ready (${supporterMicTrack.enabled ? "on" : "off"})`, "info");
       return supporterMicTrack;
     } catch (e) {
       log("Supporter mic capture failed: " + e.message, "err");
@@ -4672,7 +4720,7 @@ function _createSupporterPeer(localStream) {
       netCfg && netCfg.incomingVolume != null ? netCfg.incomingVolume : 1,
     );
     remoteAudioEl.volume = vol;
-    remoteAudioEl.muted = false;
+    remoteAudioEl.muted = !!supporterSoundMuted;
     const p = remoteAudioEl.play();
     if (p && p.then)
       p.then(() => log(`Supporter: <audio> play() resolved`, "info")).catch(
@@ -4723,10 +4771,19 @@ function supporterHandleSignal(payload) {
 window.api.onSignaling((msg) => {
   const type = msg.type;
   if (type === "opened") {
-    if (netCfg && netCfg.role === "speaker") speakerHandleOpened(msg.connId);
+    if (netCfg && netCfg.role === "speaker" && msg.connId) {
+      toast(`A supporter joined${msg.ip ? " from " + msg.ip : ""}.`, "info");
+      speakerHandleOpened(msg.connId);
+      mirrorStart();
+      openSpeakerChatPane(msg.ip ? `Supporter connected · ${msg.ip}` : "Supporter connected");
+    }
   } else if (type === "closed") {
-    if (netCfg && netCfg.role === "speaker" && msg.connId)
+    if (netCfg && netCfg.role === "speaker" && msg.connId) {
+      toast("The supporter left.", "info");
       speakerHandleClosed(msg.connId);
+      mirrorStop();
+      chatSetStatus("The supporter left");
+    }
     else if (netCfg && netCfg.role === "supporter") {
       if (supporterPeer) {
         try {
@@ -4753,12 +4810,13 @@ window.api.onSignaling((msg) => {
     log("Network: rejected (" + (msg.reason || "unknown") + ")", "err");
   } else if (type === "hello") {
     log("Network: connected as supporter (peer id " + msg.id + ")", "info");
+    supporterAdmittedUi();
   }
 });
 
 const chatMainEl = document.getElementById("chatMain");
 const chatHistoryEl = document.getElementById("chatHistory");
-const chatEmptyEl = document.getElementById("chatEmpty");
+let chatEmptyEl = document.getElementById("chatEmpty");
 const chatInputEl = document.getElementById("chatInput");
 const chatSendBtn = document.getElementById("chatSendBtn");
 const chatAttachBtn = document.getElementById("chatAttachBtn");
@@ -4820,8 +4878,9 @@ function chatClearAll() {
 if (window.api && typeof window.api.onChatIncoming === "function") {
   window.api.onChatIncoming((msg) => {
     if (!msg) return;
-    if (msg.type === "chat-text") chatAddText(msg.text || "", true, false, msg.ts);
-    else if (msg.type === "chat-image") chatAddImage(msg.dataUrl || "", true, false, msg.ts);
+    const mine = !!msg.fromSupporter;
+    if (msg.type === "chat-text") chatAddText(msg.text || "", true, mine, msg.ts);
+    else if (msg.type === "chat-image") chatAddImage(msg.dataUrl || "", true, mine, msg.ts);
   });
 }
 if (window.api && typeof window.api.onChatClear === "function") {
@@ -4837,10 +4896,12 @@ async function chatSendText() {
   const text = chatInputEl.value;
   if (!text || !text.trim()) return;
   chatInputEl.value = "";
-  const ok = await window.api.sendChatText(text).catch(() => false);
+  const speaker = netCfg && netCfg.role === "speaker";
+  const ok = speaker
+    ? await window.api.speakerChatSend({ text }).catch(() => false)
+    : await window.api.sendChatText(text).catch(() => false);
   chatAddText(text, ok);
-  if (!ok) chatSetStatus("Send failed (not connected)");
-  else chatSetStatus("Sent");
+  if (!ok) chatSetStatus(speaker ? "Not sent: no supporter connected" : "Send failed (not connected)");
 }
 
 async function downscaleImage(dataUrl, maxW = 1280, quality = 0.85) {
@@ -4882,7 +4943,9 @@ async function chatSendFile(file) {
   reader.onload = async (e) => {
     const raw = e.target.result;
     const small = await downscaleImage(raw);
-    const ok = await window.api.sendChatImage(small).catch(() => false);
+    const ok = netCfg && netCfg.role === "speaker"
+      ? await window.api.speakerChatSend({ dataUrl: small }).catch(() => false)
+      : await window.api.sendChatImage(small).catch(() => false);
     chatAddImage(small, ok);
     chatSetStatus(ok ? "Image sent" : "Image send failed (not connected)");
   };
@@ -4955,12 +5018,9 @@ if (chatInputEl)
   });
 
 window.api.onKickedBySpeaker(() => {
-  log("Disconnected by speaker — auto-reconnect disabled", "err");
-  if (typeof teardownPeers === "function") teardownPeers();
+  log("Disconnected by the speaker", "err");
   if (netActionBtn) delete netActionBtn.dataset.connecting;
-  window.alert(
-    "You were disconnected by the speaker. Click End to reconfigure or reconnect.",
-  );
+  supporterLostConnection("They disconnected you. Ask for the code again to rejoin.");
 });
 
 const helpAlertEl = document.getElementById("helpAlert");
@@ -5085,18 +5145,19 @@ window.api.onMicModeChanged((info) => {
   if (mode === "mute")
     msg =
       role === "supporter"
-        ? `${icon} You are MUTED — nobody hears you`
-        : `${icon} Supporter is MUTED`;
+        ? `${icon} Your mic is off. Nobody hears you.`
+        : `${icon} The supporter's mic is off.`;
   else if (mode === "aOnly")
     msg =
       role === "supporter"
-        ? `${icon} You speak to A only — C cannot hear you`
-        : `${icon} Supporter is private (A only)`;
+        ? `${icon} They hear you. The meeting does not.`
+        : `${icon} The supporter can talk to you. The meeting does not hear them.`;
   else if (mode === "aAndC")
     msg =
       role === "supporter"
-        ? `${icon} You are LIVE — A + C hear you`
-        : `${icon} Supporter is LIVE to A + C`;
+        ? `${icon} You are live: they and the meeting hear you.`
+        : `${icon} The supporter is live in the meeting.`;
+  updateSupporterMicButtons(mode);
   toast(msg, mode);
   log(msg, "info");
 });
@@ -5124,10 +5185,10 @@ function updateMicModeBanner(mode) {
   banner.classList.remove("mode-mute", "mode-aOnly", "mode-aAndC");
   banner.classList.add("mode-" + mode);
   icon.textContent = MIC_MODE_ICONS[mode] || "";
-  if (mode === "mute") text.textContent = "You are MUTED — nobody hears you";
+  if (mode === "mute") text.textContent = "Your mic is off. Nobody hears you.";
   else if (mode === "aOnly")
-    text.textContent = "You speak to A only — C cannot hear you";
-  else if (mode === "aAndC") text.textContent = "You are LIVE — A + C hear you";
+    text.textContent = "They hear you. The meeting does not.";
+  else if (mode === "aAndC") text.textContent = "You are live: they and the meeting hear you.";
 }
 
 async function refreshMicPill() {
@@ -5659,7 +5720,7 @@ function syncProjectMode() {
       ? "Ask about the project open in VS Code (" + (vscodeState.name || "project") + ")"
       : "VS Code is not connected (Settings → VS Code)";
   }
-  if (composerInput) {
+  if (composerInput && !document.body.classList.contains("role-supporter")) {
     composerInput.placeholder = manualMode === "PROJECT"
       ? (vscodeState.connected ? "Ask about the project, or leave empty for the status and what changed…" : "VS Code is not connected (Settings → VS Code)")
       : "Your question (from your knowledge base)…";
@@ -5718,7 +5779,7 @@ async function captureScreenForSupporter() {
   const video = { frameRate: { ideal: SCREEN_FPS, max: SCREEN_FPS }, width: { max: 1920 }, height: { max: 1080 } };
   let s = null;
   // Windows: getDisplayMedia gets a capturer of its own (see recorder.js); the
-  // main process answers it with the primary screen, no picker.
+  // main process answers it with the screen chosen for recording, no picker.
   if (!IS_MAC && navigator.mediaDevices.getDisplayMedia) {
     try { s = await navigator.mediaDevices.getDisplayMedia({ video, audio: false }); }
     catch (e) { log("Screen for supporter: display capture unavailable (" + e.message + "), using desktop capture", "info"); }
@@ -5791,10 +5852,13 @@ async function refreshSupporterSettings() {
     const cfg = await window.api.getNetworkConfig();
     if (shareScreenEl) shareScreenEl.checked = cfg.shareScreen !== false;
     if (supporterJoinAddrEl) {
-      const port = cfg.speakerPort || 2000;
-      let ips = [];
-      try { ips = (window.api.getLocalIps && await window.api.getLocalIps()) || []; } catch {}
-      supporterJoinAddrEl.textContent = (ips.length ? ips.map((ip) => ip + ":" + port).join("  or  ") : "<this computer's IP>:" + port);
+      // The same address the headset panel shows: the real network first.
+      let port = cfg.speakerPort || 2000, addrs = [];
+      try {
+        const inv = window.api.getSupporterInvite && await window.api.getSupporterInvite();
+        if (inv) { port = inv.port || port; addrs = inv.addresses || []; }
+      } catch {}
+      supporterJoinAddrEl.textContent = (addrs.length ? addrs[0].address : "<this computer's IP>") + ":" + port;
     }
   } catch {}
 }
@@ -5857,70 +5921,538 @@ const goFull = () => { if (screenVideoEl && screenVideoEl.srcObject && screenVid
 if (screenFullBtn) screenFullBtn.addEventListener("click", goFull);
 if (screenVideoEl) screenVideoEl.addEventListener("dblclick", goFull);
 
-// Join flow: welcome → address → connected.
-const joinOverlay = document.getElementById("joinOverlay");
-const joinAddress = document.getElementById("joinAddress");
-const joinStatus = document.getElementById("joinStatus");
-const joinBackBtn = document.getElementById("joinBackBtn");
+// ── Supporter mode ──────────────────────────────────────────────────────────
+// The welcome screen's "Join as supporter" opens the join screen (address and
+// code from the speaker's headset panel). Once let in, the window shows the
+// notes chat with the mic and volume controls; End leaves. On the speaker's
+// side the headset button in the title bar shows the address and the code.
+const joinOverlayEl = document.getElementById("joinOverlay");
+const joinAddressEl = document.getElementById("joinAddress");
+const joinCodeEl = document.getElementById("joinCode");
+const joinStatusEl = document.getElementById("joinStatus");
 const joinConnectBtn = document.getElementById("joinConnectBtn");
-const joinSettingsBtn = document.getElementById("joinSettingsBtn");
-const modeSupporterBtn = document.getElementById("modeSupporterBtn");
+const supporterBarDot = document.getElementById("supporterBarDot");
+const supporterBarText = document.getElementById("supporterBarText");
+const supporterVolumeEl = document.getElementById("supporterVolume");
+let joinPending = null;      // { address, timer } while waiting to be let in
+let supporterAddress = "";
 
-async function showJoin() {
+const JOIN_REASONS = {
+  code: "That code is wrong. Check the code in their headset panel; it changes every session.",
+  blocked: "Too many wrong codes from this computer. They need to end and start their session again for a new code.",
+  capacity: "Someone else is already supporting this call.",
+  duplicate: "This computer is already connected.",
+  timeout: "No code reached them in time. Try again.",
+  ended: "Their session ended.",
+  refused: "They refused the connection.",
+};
+function joinReasonText(reason, address) {
+  if (reason === "unreachable")
+    return `Can't reach ${address || "that address"}. Check the address, that both computers are on the same network, and that their call is started in Ace.`;
+  return JOIN_REASONS[reason] || JOIN_REASONS.refused;
+}
+
+function setJoinStatus(text, kind) {
+  if (!joinStatusEl) return;
+  joinStatusEl.textContent = text || "";
+  joinStatusEl.className = "join-status" + (kind ? " " + kind : "");
+}
+
+function showJoin(message) {
   leaveInterviewUi();
-  if (joinOverlay) joinOverlay.hidden = false;
-  if (joinStatus) joinStatus.textContent = "";
-  try {
-    const cfg = await window.api.getNetworkConfig();
-    if (joinAddress && !joinAddress.value) joinAddress.value = cfg.supporterAddress && cfg.supporterAddress !== "172.16.98.11:2000" ? cfg.supporterAddress : "";
-  } catch {}
-  if (joinAddress) joinAddress.focus();
-}
-
-async function joinAsSupporter(addr) {
-  addr = String(addr || "").trim();
-  if (!/^[^:\s]+:\d+$/.test(addr)) {
-    if (joinStatus) joinStatus.textContent = "Enter the address as host:port, for example 192.168.1.20:2000.";
-    if (joinAddress) joinAddress.focus();
-    return false;
+  if (joinOverlayEl) joinOverlayEl.hidden = false;
+  if (joinAddressEl && !joinAddressEl.value) {
+    const saved = (netCfg && netCfg.supporterAddress) || "";
+    if (saved && saved !== "172.16.98.11:2000") joinAddressEl.value = saved;
   }
-  if (joinConnectBtn) joinConnectBtn.disabled = true;
-  if (joinStatus) joinStatus.textContent = "Connecting to " + addr + "…";
-  try {
-    await window.api.setNetworkConfig({ role: "supporter", supporterAddress: addr });
-    netCfg = await window.api.getNetworkConfig();
-    await window.api.startNetwork();
-  } finally { if (joinConnectBtn) joinConnectBtn.disabled = false; }
-  enterSupporterUi();
-  log("Joined as supporter: " + addr, "info");
-  return true;
+  if (joinConnectBtn) joinConnectBtn.disabled = false;
+  setJoinStatus(message || "", message ? "err" : "");
+  setTimeout(() => {
+    const el = joinAddressEl && !joinAddressEl.value ? joinAddressEl : joinCodeEl;
+    try { el && el.focus(); } catch {}
+  }, 50);
 }
 
-function enterSupporterUi() {
-  if (settingsOverlay) settingsOverlay.hidden = true;
+function clearJoinPending() {
+  if (joinPending && joinPending.timer) clearTimeout(joinPending.timer);
+  joinPending = null;
+  if (joinConnectBtn) joinConnectBtn.disabled = false;
+}
+
+async function startJoin() {
+  if (joinPending) return;
+  const address = (joinAddressEl && joinAddressEl.value.trim()) || "";
+  const code = (joinCodeEl && joinCodeEl.value.replace(/\D/g, "")) || "";
+  if (!address) { setJoinStatus("Enter their address.", "err"); joinAddressEl && joinAddressEl.focus(); return; }
+  if (code.length !== 6) { setJoinStatus("Enter the 6-digit code.", "err"); joinCodeEl && joinCodeEl.focus(); return; }
+  netCfg = { ...(netCfg || {}), role: "supporter" };
+  teardownPeers();
+  const r = await window.api.joinAsSupporter({ address, code }).catch((e) => ({ ok: false, error: e.message }));
+  if (!r || !r.ok) { setJoinStatus((r && r.error) || "Could not connect.", "err"); return; }
+  supporterAddress = r.address;
+  if (joinConnectBtn) joinConnectBtn.disabled = true;
+  setJoinStatus(`Connecting to ${r.address}…`, "busy");
+  joinPending = {
+    address: r.address,
+    timer: setTimeout(async () => {
+      if (!joinPending) return;
+      clearJoinPending();
+      await window.api.leaveSupporter().catch(() => {});
+      setJoinStatus(joinReasonText("unreachable", r.address), "err");
+    }, 15000),
+  };
+  try { netCfg = await window.api.getNetworkConfig(); } catch {}
+}
+
+// The speaker let us in: switch to the supporter screen.
+function supporterAdmittedUi() {
+  if (!netCfg || netCfg.role !== "supporter") return;
+  const wasJoining = !!joinPending;
+  clearJoinPending();
+  if (wasJoining || !document.body.classList.contains("role-supporter")) enterSupporterView();
+  setSupporterBar(true);
+}
+
+function enterSupporterView() {
   hideAllSetupOverlays();
+  if (settingsOverlay) settingsOverlay.hidden = true;
   document.body.classList.add("in-interview");
   endBtn.classList.add("live");
+  endBtn.title = "Leave — back to the start screen";
   applyRoleClass("supporter");
-  if (answerMain) answerMain.hidden = true;
+  if (answerMain) answerMain.hidden = false;
+  clearMirroredTurns();
+  document.body.classList.add("side-pane-open");
+  if (window.api.setSidePane) window.api.setSidePane(true, 300);
+  supporterComposerUi(true);
+  setSupporterSound(supporterSoundMuted);
+  chatClearAll();
+  chatSetStatus("");
+  const v = Math.round(((netCfg && netCfg.incomingVolume != null) ? netCfg.incomingVolume : 1) * 100);
+  if (supporterVolumeEl) supporterVolumeEl.value = v;
+  updateSupporterMicButtons(currentMicMode);
+  updateMicModeBanner(currentMicMode);
   screenShareOn = null;
-  setScreenStatus("Connecting to the speaker…", true);
+  setScreenStatus("Waiting for the speaker's screen…", true);
+  setTimeout(() => { try { composerInput && composerInput.focus(); } catch {} }, 50);
+  log(`Supporting ${supporterAddress}`, "info");
 }
 
-async function leaveSupporter() {
-  try { await window.api.stopNetwork(); } catch {}
+function setSupporterBar(connected) {
+  if (supporterBarDot) supporterBarDot.classList.toggle("on", !!connected);
+  if (supporterBarText)
+    supporterBarText.textContent = connected
+      ? `Connected to ${supporterAddress || "the speaker"}`
+      : "Connection lost. Reconnecting…";
+}
+
+async function leaveSupporterView(message) {
+  clearJoinPending();
+  await window.api.leaveSupporter().catch(() => {});
   teardownPeers();
   clearScreenView("No screen.");
-  document.body.classList.remove("in-interview");
-  endBtn.classList.remove("live");
-  applyRoleClass("");
-  try { await window.api.setNetworkConfig({ role: "speaker" }); netCfg = await window.api.getNetworkConfig(); } catch {}
-  showModeSelect();
-  log("Left the supporter session", "info");
+  try { netCfg = await window.api.getNetworkConfig(); } catch {}
+  endBtn.title = "End session — back to the start screen";
+  chatClearAll();
+  clearMirroredTurns();
+  supporterComposerUi(false);
+  closeSidePane();
+  if (message) showJoin(message);
+  else showModeSelect();
 }
 
+// Dropped, refused or ended while on the supporter screen: back to joining.
+function supporterLostConnection(message) {
+  if (!document.body.classList.contains("role-supporter")) return;
+  leaveSupporterView(message);
+}
+
+function updateSupporterMicButtons(mode) {
+  document.querySelectorAll(".supporter-mic-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.mic === mode);
+  });
+}
+
+if (window.api.onJoinRejected)
+  window.api.onJoinRejected((info) => {
+    const reason = (info && info.reason) || "refused";
+    log("Supporter connection refused: " + reason, "err");
+    if (joinPending) {
+      const addr = joinPending.address;
+      clearJoinPending();
+      window.api.leaveSupporter().catch(() => {});
+      setJoinStatus(joinReasonText(reason, addr), "err");
+      return;
+    }
+    if (reason === "code") supporterLostConnection("Their session restarted with a new code. Enter the new code.");
+    else supporterLostConnection(joinReasonText(reason, supporterAddress));
+  });
+
+window.api.onNetworkStatus((status) => {
+  if (!status) return;
+  if (document.body.classList.contains("role-supporter") && status.role === "supporter") setSupporterBar(!!status.connected);
+  refreshSupporterInvite(status);
+});
+
+document.querySelectorAll(".supporter-mic-btn").forEach((b) => {
+  b.addEventListener("click", () => {
+    if (window.api.setMicMode) window.api.setMicMode(b.dataset.mic);
+  });
+});
+if (supporterVolumeEl)
+  supporterVolumeEl.addEventListener("input", () => {
+    const v = Math.min(100, parseInt(supporterVolumeEl.value, 10) || 0) / 100;
+    applyIncomingVolume(v);
+    persistNet({ incomingVolume: v });
+  });
+
+const modeSupporterBtn = document.getElementById("modeSupporterBtn");
 if (modeSupporterBtn) modeSupporterBtn.addEventListener("click", () => showJoin());
-if (joinBackBtn) joinBackBtn.addEventListener("click", () => showModeSelect());
+const joinBackBtn = document.getElementById("joinBackBtn");
+if (joinBackBtn)
+  joinBackBtn.addEventListener("click", async () => {
+    if (joinPending) { clearJoinPending(); await window.api.leaveSupporter().catch(() => {}); }
+    setJoinStatus("");
+    showModeSelect();
+  });
+const joinSettingsBtn = document.getElementById("joinSettingsBtn");
 if (joinSettingsBtn) joinSettingsBtn.addEventListener("click", () => openSettings());
-if (joinConnectBtn) joinConnectBtn.addEventListener("click", () => joinAsSupporter(joinAddress && joinAddress.value));
-if (joinAddress) joinAddress.addEventListener("keydown", (e) => { if (e.key === "Enter") joinAsSupporter(joinAddress.value); });
+if (joinConnectBtn) joinConnectBtn.addEventListener("click", () => startJoin());
+[joinAddressEl, joinCodeEl].forEach((el) => {
+  if (el) el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); startJoin(); } });
+});
+
+// Speaker: the headset button and its panel.
+const supporterInviteBtn = document.getElementById("supporterInviteBtn");
+const supporterPanel = document.getElementById("supporterPanel");
+const supporterPanelAddr = document.getElementById("supporterPanelAddr");
+const supporterPanelCode = document.getElementById("supporterPanelCode");
+const supporterPanelStatus = document.getElementById("supporterPanelStatus");
+const supporterPanelKick = document.getElementById("supporterPanelKick");
+const supporterPanelOther = document.getElementById("supporterPanelOther");
+
+async function refreshSupporterInvite(status) {
+  if (!window.api.getSupporterInvite) return;
+  let inv;
+  try { inv = await window.api.getSupporterInvite(); } catch { return; }
+  const sup = (inv.supporters || [])[0];
+  if (supporterInviteBtn) supporterInviteBtn.classList.toggle("connected", !!sup);
+  if (!supporterPanel || supporterPanel.hidden) return;
+  // The real network address first; VPN and virtual adapters are listed
+  // below it, for a supporter who is on the same VPN.
+  const all = (inv.addresses || []).map((a) => `${a.address}:${inv.port}`);
+  if (supporterPanelAddr) supporterPanelAddr.textContent = inv.hosting ? (all[0] || "No network found") : "—";
+  if (supporterPanelOther) {
+    supporterPanelOther.hidden = !inv.hosting || all.length < 2;
+    supporterPanelOther.textContent = all.length > 1 ? "Other addresses of this computer (VPN, virtual): " + all.slice(1).join(", ") : "";
+  }
+  if (supporterPanelCode) supporterPanelCode.textContent = inv.hosting && inv.code ? inv.code.slice(0, 3) + " " + inv.code.slice(3) : "—";
+  if (supporterPanelStatus) {
+    supporterPanelStatus.className = "supporter-panel-status" + (sup ? " connected" : "");
+    supporterPanelStatus.textContent = !inv.hosting
+      ? "Not open to supporters right now. Start a session first."
+      : sup ? `Connected: ${sup.ip || "a supporter"}` : "Waiting for a supporter…";
+  }
+  if (supporterPanelKick) {
+    supporterPanelKick.hidden = !sup;
+    supporterPanelKick.dataset.id = sup ? sup.id : "";
+  }
+}
+if (supporterInviteBtn)
+  supporterInviteBtn.addEventListener("click", () => {
+    if (!supporterPanel) return;
+    supporterPanel.hidden = !supporterPanel.hidden;
+    refreshSupporterInvite();
+  });
+const supporterPanelClose = document.getElementById("supporterPanelClose");
+if (supporterPanelClose) supporterPanelClose.addEventListener("click", () => { if (supporterPanel) supporterPanel.hidden = true; });
+if (supporterPanelKick)
+  supporterPanelKick.addEventListener("click", async () => {
+    const id = supporterPanelKick.dataset.id;
+    if (id) await window.api.kickSupporter(id);
+    refreshSupporterInvite();
+  });
+
+// ── Supporter mode: their answer panel, live ───────────────────────────────
+// Speaker side: every change in the answer panel (a transcript bubble growing,
+// an answer streaming in) is sent as the changed bubble's HTML, at most every
+// 16 ms, plus the whole panel when a supporter is let in. The supporter shows
+// the bubbles as they are; it runs nothing of its own.
+var mirrorState = { active: false, ids: new WeakMap(), next: 1, dirty: new Set(), removed: [], timer: null, observer: null };
+function mirrorIdOf(el) {
+  let id = mirrorState.ids.get(el);
+  if (!id) { id = "m" + mirrorState.next++; mirrorState.ids.set(el, id); }
+  return id;
+}
+function isMirrorTurn(el) {
+  return !!el && el.nodeType === 1 && el.parentElement === answerHistory &&
+    (el.classList.contains("meet-turn") || el.classList.contains("answer-turn"));
+}
+function topTurnOf(node) {
+  let n = node && node.nodeType === 1 ? node : node && node.parentElement;
+  while (n && n.parentElement !== answerHistory) n = n.parentElement;
+  return n;
+}
+function prevTurnId(el) {
+  let p = el.previousElementSibling;
+  while (p && !isMirrorTurn(p)) p = p.previousElementSibling;
+  return p ? mirrorIdOf(p) : null;
+}
+function mirrorFlush() {
+  mirrorState.timer = null;
+  if (!mirrorState.active) { mirrorState.dirty.clear(); mirrorState.removed = []; return; }
+  const ops = mirrorState.removed.map((id) => ({ op: "remove", id }));
+  mirrorState.removed = [];
+  const dirty = [...mirrorState.dirty].filter(isMirrorTurn);
+  mirrorState.dirty.clear();
+  dirty.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+  for (const el of dirty) ops.push({ op: "upsert", id: mirrorIdOf(el), after: prevTurnId(el), html: el.outerHTML });
+  if (ops.length) window.api.mirrorOut({ ops });
+}
+function mirrorSnapshot() {
+  const ops = [];
+  answerHistory.querySelectorAll(":scope > .meet-turn, :scope > .answer-turn").forEach((el) =>
+    ops.push({ op: "upsert", id: mirrorIdOf(el), after: prevTurnId(el), html: el.outerHTML }));
+  window.api.mirrorOut({ reset: true, mode: manualMode, ops });
+}
+function mirrorStart() {
+  if (!answerHistory || !window.api.mirrorOut) return;
+  mirrorState.active = true;
+  if (!mirrorState.observer) {
+    mirrorState.observer = new MutationObserver((records) => {
+      if (!mirrorState.active) return;
+      for (const r of records) {
+        if (r.type === "childList" && r.target === answerHistory) {
+          r.removedNodes.forEach((n) => {
+            if (n.nodeType !== 1) return;
+            mirrorState.dirty.delete(n);
+            if (mirrorState.ids.has(n)) mirrorState.removed.push(mirrorState.ids.get(n));
+          });
+          r.addedNodes.forEach((n) => { if (n.nodeType === 1) mirrorState.dirty.add(n); });
+          continue;
+        }
+        const top = topTurnOf(r.target);
+        if (top) mirrorState.dirty.add(top);
+      }
+      if (!mirrorState.timer) mirrorState.timer = setTimeout(mirrorFlush, 16);
+    });
+    mirrorState.observer.observe(answerHistory, { childList: true, subtree: true, characterData: true, attributes: true });
+  }
+  mirrorSnapshot();
+}
+function mirrorStop() {
+  mirrorState.active = false;
+  if (mirrorState.observer) { mirrorState.observer.disconnect(); mirrorState.observer = null; }
+  if (mirrorState.timer) { clearTimeout(mirrorState.timer); mirrorState.timer = null; }
+  mirrorState.dirty.clear();
+  mirrorState.removed = [];
+}
+
+// Speaker side: the supporter pressed "Send to the AI".
+if (window.api.onRemoteSubmit)
+  window.api.onRemoteSubmit((req) => {
+    const connId = req && req.connId;
+    let ok = false, reason = "";
+    if (!document.body.classList.contains("in-interview") || document.body.classList.contains("role-supporter")) {
+      reason = "not-in-call";
+    } else {
+      const mode = req && req.mode;
+      if (["ANSWER", "CODE", "DIAGRAM", "PROJECT"].includes(mode) && mode !== manualMode) setManualMode(mode);
+      const before = currentAnswerEl;
+      submitComposer();
+      ok = !!currentAnswerEl && currentAnswerEl !== before;
+      if (ok) toast("Your supporter asked the AI.", "info");
+      else reason = "nothing";
+    }
+    window.api.remoteSubmitResult({ connId, ok, reason });
+  });
+
+// Supporter side: show their bubbles. The HTML comes from the speaker's own
+// panel; scripts, event attributes and javascript: links are dropped anyway.
+const mirroredEls = new Map();
+function sanitizeMirrorHtml(html) {
+  const t = document.createElement("template");
+  t.innerHTML = String(html || "");
+  t.content.querySelectorAll("script, iframe, object, embed, link, meta, base, form").forEach((n) => n.remove());
+  t.content.querySelectorAll("*").forEach((n) => {
+    for (const a of Array.from(n.attributes)) {
+      const name = a.name.toLowerCase();
+      if (name.startsWith("on")) n.removeAttribute(a.name);
+      else if (/^(href|src|xlink:href|action|formaction)$/.test(name) && /^\s*javascript:/i.test(a.value)) n.removeAttribute(a.name);
+    }
+  });
+  return t.content.firstElementChild;
+}
+function clearMirroredTurns() {
+  mirroredEls.clear();
+  if (!answerHistory) return;
+  answerHistory.querySelectorAll(":scope > .meet-turn, :scope > .answer-turn").forEach((n) => n.remove());
+  if (answerEmpty) answerEmpty.hidden = false;
+}
+function lastTurnEl() {
+  const all = answerHistory.querySelectorAll(":scope > .meet-turn, :scope > .answer-turn");
+  return all.length ? all[all.length - 1] : null;
+}
+function applyMirror(msg) {
+  if (!answerHistory || !msg || !document.body.classList.contains("role-supporter")) return;
+  ensureSpacer();
+  if (msg.mode && ["ANSWER", "CODE", "DIAGRAM", "PROJECT"].includes(msg.mode) && msg.mode !== manualMode) setManualMode(msg.mode);
+  if (msg.reset) clearMirroredTurns();
+  let newAnswer = null, meetTouched = null;
+  for (const op of msg.ops || []) {
+    if (op.op === "remove") {
+      const el = mirroredEls.get(op.id);
+      if (el) el.remove();
+      mirroredEls.delete(op.id);
+      continue;
+    }
+    if (op.op !== "upsert") continue;
+    const el = sanitizeMirrorHtml(op.html);
+    if (!el) continue;
+    el.dataset.mid = op.id;
+    const old = mirroredEls.get(op.id);
+    if (old && old.parentElement === answerHistory) {
+      old.replaceWith(el);
+    } else {
+      const after = op.after ? mirroredEls.get(op.after) : null;
+      if (after && after.parentElement === answerHistory) after.after(el);
+      else if (!op.after) {
+        const first = answerHistory.querySelector(":scope > .meet-turn, :scope > .answer-turn");
+        answerHistory.insertBefore(el, first || answerSpacer);
+      } else answerHistory.insertBefore(el, answerSpacer);
+      if (!msg.reset && el.classList.contains("answer-turn")) newAnswer = el;
+    }
+    mirroredEls.set(op.id, el);
+    if (el.classList.contains("meet-turn")) meetTouched = el;
+  }
+  if (answerEmpty) answerEmpty.hidden = !!answerHistory.querySelector(".answer-turn, .meet-turn");
+  if (msg.reset) {
+    const last = lastTurnEl();
+    if (last) try { last.scrollIntoView({ block: "end" }); } catch {}
+    return;
+  }
+  // The same scrolling as on their screen: a new answer opens at its start,
+  // the live transcript keeps its newest words in view.
+  if (newAnswer) {
+    const cRect = answerHistory.getBoundingClientRect();
+    const a = newAnswer.querySelector(".answer-a") || newAnswer;
+    const top = answerHistory.scrollTop + (a.getBoundingClientRect().top - cRect.top);
+    answerHistory.scrollTop = Math.max(0, top - 72);
+  } else if (meetTouched && meetTouched === lastTurnEl()) {
+    revealMeetBubble(meetTouched);
+  }
+}
+if (window.api.onMirrorIn) window.api.onMirrorIn((msg) => applyMirror(msg));
+
+// Supporter side: the two send buttons.
+async function supporterAskAI() {
+  const sent = await window.api.remoteSubmit(manualMode).catch(() => false);
+  if (!sent) toast("Not connected to them.", "err");
+}
+async function supporterSendChat() {
+  const text = composerInput ? composerInput.value.trim() : "";
+  const imgs = typeof attachedImages !== "undefined" ? attachedImages.slice() : [];
+  if (!text && !imgs.length) return;
+  if (composerInput) composerInput.value = "";
+  if (imgs.length) clearAttachedImages();
+  if (text) {
+    const ok = await window.api.sendChatText(text).catch(() => false);
+    chatAddText(text, ok);
+  }
+  for (const im of imgs) {
+    const url = `data:${im.mime || "image/png"};base64,${im.base64}`;
+    const ok = await window.api.sendChatImage(url).catch(() => false);
+    chatAddImage(url, ok);
+  }
+}
+if (window.api.onRemoteSubmitResult)
+  window.api.onRemoteSubmitResult((r) => {
+    if (!r || r.ok) return;
+    toast(r.reason === "nothing"
+      ? "Nothing to answer yet. Wait until they hear a question."
+      : "Their Ace is not in a call right now.", "warn");
+  });
+const supporterChatBtn = document.getElementById("supporterChatBtn");
+if (supporterChatBtn) supporterChatBtn.addEventListener("click", (e) => { e.preventDefault(); supporterSendChat(); });
+if (composerInput)
+  composerInput.addEventListener("keydown", (e) => {
+    if (!document.body.classList.contains("role-supporter")) return;
+    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
+      e.preventDefault();
+      supporterSendChat();
+    }
+  });
+const chatClearBtn = document.getElementById("chatClearBtn");
+if (chatClearBtn) chatClearBtn.addEventListener("click", () => { if (window.api.clearSticky) window.api.clearSticky(); chatClearAll(); });
+
+let composerDefaults = null;
+function supporterComposerUi(on) {
+  if (!composerInput || !getAnswerBtn) return;
+  if (!composerDefaults) composerDefaults = { title: getAnswerBtn.title, html: getAnswerBtn.innerHTML };
+  if (on) {
+    composerInput.placeholder = "Message to them… (Enter)";
+    getAnswerBtn.title = "Send the current transcript to the AI on their computer (Ctrl+Enter)";
+    getAnswerBtn.textContent = "AI";
+    getAnswerBtn.disabled = false;
+  } else {
+    getAnswerBtn.title = composerDefaults.title;
+    getAnswerBtn.innerHTML = composerDefaults.html;
+    // The interviewer's own hint (syncProjectMode keeps it while not a supporter).
+    composerInput.placeholder = "Your question (from your knowledge base)…";
+    syncSendEnabled();
+  }
+}
+
+// ── The chat column ─────────────────────────────────────────────────────────
+// Both sides: when a supporter joins, the window grows to the right by a
+// "Private chat" column. The supporter types in the composer (Enter); the
+// interviewer has a message box in the column, and can close the column.
+// Runs from the start screen while the app is still loading, so it reads
+// nothing declared further down (netCfg, chatMainEl).
+function closeSidePane() {
+  const was = document.body.classList.contains("side-pane-open");
+  document.body.classList.remove("side-pane-open");
+  const chat = document.getElementById("chatMain");
+  if (chat && !document.body.classList.contains("role-supporter")) chat.hidden = true;
+  if (was && window.api.setSidePane) window.api.setSidePane(false);
+}
+function openSpeakerChatPane(status) {
+  if (!chatMainEl || document.body.classList.contains("role-supporter")) return;
+  if (!document.body.classList.contains("in-interview")) return;
+  chatMainEl.hidden = false;
+  if (!document.body.classList.contains("side-pane-open")) {
+    document.body.classList.add("side-pane-open");
+    if (window.api.setSidePane) window.api.setSidePane(true, 300);
+  }
+  if (status) {
+    chatSetStatus(status);
+    // The column's header now says who is connected.
+    const panel = document.getElementById("supporterPanel");
+    if (panel) panel.hidden = true;
+  }
+}
+if (window.api.onSupporterChatIn)
+  window.api.onSupporterChatIn((m) => {
+    if (!m) return;
+    openSpeakerChatPane();
+    if (m.type === "chat-text") chatAddText(m.text || "", true, false, m.ts);
+    else if (m.type === "chat-image") chatAddImage(m.dataUrl || "", true, false, m.ts);
+  });
+const chatPaneCloseBtn = document.getElementById("chatPaneClose");
+if (chatPaneCloseBtn) chatPaneCloseBtn.addEventListener("click", () => closeSidePane());
+// A new session starts with an empty chat.
+const _hideSetupForChat = hideSetup;
+hideSetup = function () { chatClearAll(); return _hideSetupForChat.apply(this, arguments); };
+
+// Supporter: mute or unmute the call sound.
+var supporterSoundMuted = false;
+const supporterSoundBtn = document.getElementById("supporterSoundBtn");
+function setSupporterSound(muted) {
+  supporterSoundMuted = !!muted;
+  if (remoteAudioEl) remoteAudioEl.muted = supporterSoundMuted;
+  if (supporterSoundBtn) {
+    supporterSoundBtn.classList.toggle("muted", supporterSoundMuted);
+    supporterSoundBtn.title = supporterSoundMuted ? "Unmute the call" : "Mute the call";
+  }
+}
+if (supporterSoundBtn) supporterSoundBtn.addEventListener("click", () => setSupporterSound(!supporterSoundMuted));

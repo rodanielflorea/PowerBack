@@ -19,6 +19,10 @@
       <span class="rec-dot-live"></span>
     </button>
     <span class="net-status-pill iv-btn" id="netStatusPill" hidden>--</span>
+    <button class="btn supporter-invite-btn iv-btn" id="supporterInviteBtn" title="Supporter: let someone join from another computer">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>
+      <span class="supporter-invite-dot"></span>
+    </button>
     <div class="drag"></div>
     <div class="slider" id="slider" title="Click and drag horizontally to change opacity">
       <div class="slider-fill" id="sliderFill"></div>
@@ -36,7 +40,7 @@
         <path class="cursor-through" d="M15 5 h6 M15 8.5 h6" />
       </svg>
     </button>
-    <!-- The "To A" mic-mode pill is retired (supporter mode is not offered); kept hidden for renderer bindings. -->
+    <!-- The "To A" mic-mode pill is retired (supporters change their mic on their own screen); kept hidden for renderer bindings. -->
     <button class="btn mic-pill iv-btn" id="micPill" hidden>
       <span class="mic-pill-icon" id="micPillIcon">🔒</span><span class="mic-pill-label" id="micPillLabel">TO A</span>
     </button>
@@ -46,6 +50,20 @@
     <button class="btn" id="hideBtn" title="Hide (Ctrl+Alt+H)">&minus;</button>
     <button class="btn" id="quitBtn" title="Quit">&times;</button>
   </header>
+
+  <div class="supporter-panel" id="supporterPanel" hidden>
+    <div class="supporter-panel-head">
+      <span>Supporter</span>
+      <button class="btn" id="supporterPanelClose" title="Close">&times;</button>
+    </div>
+    <p class="supporter-panel-lead">On the other computer, open Ace, choose <b>Join as supporter</b> and enter:</p>
+    <div class="supporter-panel-row"><span class="supporter-panel-key">Address</span><span class="supporter-panel-val" id="supporterPanelAddr">&nbsp;</span></div>
+    <p class="supporter-panel-other" id="supporterPanelOther" hidden></p>
+    <div class="supporter-panel-row"><span class="supporter-panel-key">Code</span><span class="supporter-panel-val supporter-code" id="supporterPanelCode">&nbsp;</span></div>
+    <p class="supporter-panel-status" id="supporterPanelStatus">&nbsp;</p>
+    <button class="action-btn-secondary" id="supporterPanelKick" hidden>Disconnect the supporter</button>
+    <p class="supporter-panel-hint">Both computers must be on the same network. The supporter hears your microphone and the call, sees your answer panel, and can press Send for you. Your chat with them opens on the right. Their microphone starts off.</p>
+  </div>
 
   <aside class="right-rail iv-btn" id="rightRail">
     <button class="rail-btn" id="settingsBtn" title="Settings &amp; user guide">&#9881;</button>
@@ -93,7 +111,7 @@
           <h3 class="settings-subhead">Answering</h3>
           <p class="hint">Answers are sent only when you press Send / Ctrl+Enter.</p>
           <h3 class="settings-subhead">Supporter</h3>
-          <p class="hint">Someone on another computer can join your call with this app (welcome screen &rarr; <b>Join as supporter</b>) using this address: <code id="supporterJoinAddr">&hellip;</code>. They hear the call, and their notes appear on your screen.</p>
+          <p class="hint">Someone on another computer can join your call with this app (welcome screen &rarr; <b>Join as supporter</b>) using this address: <code id="supporterJoinAddr">&hellip;</code> and the session's code, which the headset button at the top shows once a session is started. They hear the call, see your answer panel, and their messages appear in the Private chat column.</p>
           <div class="field-row">
             <label class="checkbox"><input type="checkbox" id="shareScreen" /> Share my screen with the supporter</label>
           </div>
@@ -101,6 +119,11 @@
           <div class="field">
             <label class="checkbox"><input type="checkbox" id="recordSession" /> Record the session (screen + audio) and save it when the interview ends</label>
             <p class="hint">The video, transcript, CV, job description and every uploaded document are saved to one folder in your Documents, named date-time-company-role, and the folder opens when you press End. On macOS this needs Screen &amp; System Audio Recording permission.</p>
+          </div>
+          <div class="field" id="recordDisplayField" hidden>
+            <label for="recordDisplaySelect">Screen to record</label>
+            <select id="recordDisplaySelect"></select>
+            <p class="hint">Shown when more than one display is connected. Changing it during a recording carries on with the new screen in a second video file; both are saved with the session.</p>
           </div>
           <div class="field">
             <label class="checkbox"><input type="checkbox" id="uploadSession" /> Upload the saved session folder to gofile.io and show the share link</label>
@@ -310,11 +333,25 @@
           <h3>Starting an interview (3 steps)</h3>
           <p>On the welcome screen click <b>Interview mode</b>.</p>
           <ol class="help-steps">
-            <li><b>Meeting type</b> — pick what kind of meeting it is. <i>Hiring interviews</i>: Recruiter / HR screen, Technical interview, Live coding / system design, CTO / CEO / founder round, AI interview (a bot asks and scores). <i>Team meetings</i>: Engineering standup, 1:1 with manager, Sprint review + retro + preview, Sprint planning, Design / technical review, Wider team / stakeholder update. Each type has its own answer logic (for example a standup update goes ticket by ticket and ends with "That's all for me."). For team meetings, put your current tickets, PRs, numbers and blockers in <i>Support material</i>.</li>
+            <li><b>Meeting type</b> — pick what kind of meeting it is. <i>Hiring interviews</i>: Recruiter / HR screen, Technical interview, Live coding / system design, CTO / CEO / founder round, AI interview (a bot asks and scores). <i>Team meetings</i>: Standup / status update, Sprint review &amp; planning, 1:1 / technical discussion. Each type has its own answer logic (for example a standup update goes ticket by ticket and ends with "That's all for me."). For team meetings, put your current tickets, PRs, numbers and blockers in <i>Support material</i>.</li>
             <li><b>Your profile</b> — your name, country, city and timezone. Pick a city and the timezone fills in by itself. Click <b>＋</b> to save the profile so next time you just pick it from the list.</li>
             <li><b>Materials</b> — drag in your <b>CV</b> and the <b>job description</b> (PDF, Word or text). Add any extra notes as <i>Support material</i>, and earlier interview notes as <i>Previous meeting records</i>. Optionally enter your <b>salary expectation</b> (amount, currency, per month / year / hour) so the app can answer that question the way you want.</li>
           </ol>
           <p>Click <b>Start interview</b>. Listening starts automatically.</p>
+        </section>
+
+        <section class="settings-section help-section">
+          <h3>Supporter mode (a helper on another computer)</h3>
+          <ol class="help-steps">
+            <li>Start your call in Ace as usual. Then click the <b>headset button</b> at the top. It shows this computer's address and a 6-digit code.</li>
+            <li>On the helper's computer, open Ace and choose <b>Join as supporter</b>. Enter the address and the code, then click <b>Connect</b>.</li>
+            <li>The helper hears your microphone and the call, and sees your answer panel as it changes: the transcript bubbles and every answer.</li>
+            <li>The helper's <b>AI</b> button (or Ctrl+Enter) presses Send on your Ace for you: your AI answers the current transcript, in the mode the helper picked, and the answer shows on both screens.</li>
+            <li>When the helper joins, your window and theirs widen by a <b>Private chat</b> column. What they send shows there, and you reply in its message box. The <b>&times;</b> closes it again; the trash button clears it on both sides.</li>
+            <li>The helper's speaker button mutes and unmutes the call sound on their side.</li>
+            <li>The helper's microphone starts off. With <b>Talk to them</b>, only you hear them; the meeting does not.</li>
+          </ol>
+          <p>Both computers must be on the same network. The code changes every session, and one supporter can join at a time. On Windows, allow the firewall prompt the first time. To stop, click <b>Disconnect the supporter</b> in the headset panel, or <b>End</b> on the helper's side.</p>
         </section>
 
         <section class="settings-section help-section">
@@ -396,7 +433,7 @@
           <h3>Tips for better answers</h3>
           <ul>
             <li>Always upload your CV and the job description — answers are only as good as what the app knows about you.</li>
-            <li>Pick the right meeting type. A technical answer in a recruiter call sounds odd, and a full standup update in a design review is too long.</li>
+            <li>Pick the right meeting type. A technical answer in a recruiter call sounds odd, and a full standup update in a technical discussion is too long.</li>
             <li>If a transcript came out wrong, click <b>✎</b>, fix the words, and answer again.</li>
             <li>Read the answer and say it naturally; you do not have to use every word.</li>
           </ul>
@@ -450,7 +487,7 @@
           <span class="mode-choice-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg></span>
           <span class="mode-choice-text">
             <span class="mode-choice-name">Join as supporter</span>
-            <span class="mode-choice-desc">Hear their call, watch their screen, send them notes</span>
+            <span class="mode-choice-desc">Help someone in their call: hear it, watch their screen, send them notes</span>
           </span>
           <span class="mode-choice-arrow" aria-hidden="true">&#8250;</span>
         </button>
@@ -459,7 +496,7 @@
     </div>
   </section>
 
-  <!-- Supporter: where is the speaker? -->
+  <!-- Supporter mode: join someone else's call -->
   <section class="setup-overlay" id="joinOverlay" hidden>
     <div class="setup-card">
       <div class="setup-topbar">
@@ -467,14 +504,16 @@
         <h2 class="setup-title">Join as supporter</h2>
         <button class="setup-gear-btn" id="joinSettingsBtn" title="Settings &amp; user guide">&#9881;</button>
       </div>
-      <p class="setup-intro">Enter the address the speaker's app shows under Settings &rarr; Providers &rarr; Supporter. You will hear their call, see their screen, and your notes appear on their screen.</p>
-      <div class="field">
-        <label class="field-label" for="joinAddress">Speaker address (host:port)</label>
-        <input type="text" id="joinAddress" class="profile-input" placeholder="192.168.1.20:2000" spellcheck="false" />
+      <p class="setup-intro">You hear their call, see their screen and their answer panel live, can ask their AI for an answer, and can chat with them. Both computers must be on the same network. In their Ace, the headset button at the top shows the address and the code.</p>
+      <div class="profile-inputs profile-inputs--vertical">
+        <label class="field-label" for="joinAddress">Their address</label>
+        <input type="text" id="joinAddress" class="profile-input" placeholder="192.168.1.20:2000" spellcheck="false" autocomplete="off" />
+        <label class="field-label" for="joinCode">Code</label>
+        <input type="text" id="joinCode" class="profile-input join-code-input" placeholder="6 digits" inputmode="numeric" maxlength="7" spellcheck="false" autocomplete="off" />
       </div>
-      <p class="hint" id="joinStatus"></p>
+      <p class="join-status" id="joinStatus" role="status"></p>
       <div class="wizard-nav">
-        <span class="wizard-steps">Supporter</span>
+        <span class="wizard-steps"></span>
         <button class="wizard-next" id="joinConnectBtn"><span>Connect</span><span class="wizard-next-ico"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></span></button>
       </div>
     </div>
@@ -520,37 +559,22 @@
       </div>
       </details>
       <details class="stage-group" name="meetingGroup" data-kind="team">
-        <summary class="stage-group-head"><span class="stage-group-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M9 7h1"/><path d="M14 7h1"/><path d="M9 11h1"/><path d="M14 11h1"/><path d="M9 15h1"/><path d="M14 15h1"/><path d="M10 21v-3h4v3"/></svg></span><span class="stage-group-text"><span class="stage-group-label">Team meetings</span><span class="stage-group-sub">You already work there</span></span><span class="stage-group-count">6</span></summary>
+        <summary class="stage-group-head"><span class="stage-group-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M9 7h1"/><path d="M14 7h1"/><path d="M9 11h1"/><path d="M14 11h1"/><path d="M9 15h1"/><path d="M14 15h1"/><path d="M10 21v-3h4v3"/></svg></span><span class="stage-group-text"><span class="stage-group-label">Team meetings</span><span class="stage-group-sub">You already work there</span></span><span class="stage-group-count">3</span></summary>
       <div class="stage-cards">
         <label class="stage-card">
           <input type="radio" name="setupMeetingType" value="standup" hidden />
           <span class="stage-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 6 1.5 1.5L7 5"/><path d="m3 12 1.5 1.5L7 11"/><path d="m3 18 1.5 1.5L7 17"/><path d="M11 6h10"/><path d="M11 12h10"/><path d="M11 18h10"/></svg></span>
-          <span class="stage-text"><span class="stage-name">Engineering standup</span><span class="stage-desc">The quick daily round: what you did, what you are waiting on, what is next.</span></span>
+          <span class="stage-text"><span class="stage-name">Standup / status update</span><span class="stage-desc">Daily standup, end-of-day or client update: what you did, what you are waiting on, what is next.</span></span>
         </label>
         <label class="stage-card">
-          <input type="radio" name="setupMeetingType" value="one_on_one" hidden />
-          <span class="stage-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H8l-4 3v-3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M18 8h2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1v3l-4-3h-4a1 1 0 0 1-1-1v-1"/></svg></span>
-          <span class="stage-text"><span class="stage-name">1:1 with manager</span><span class="stage-desc">Just you and your manager: progress, where your numbers come from, what to decide.</span></span>
-        </label>
-        <label class="stage-card">
-          <input type="radio" name="setupMeetingType" value="sprint_review" hidden />
-          <span class="stage-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><path d="M8 17v-5"/><path d="M13 17V8"/><path d="M18 17v-8"/></svg></span>
-          <span class="stage-text"><span class="stage-name">Sprint review + retro + preview</span><span class="stage-desc">You show what you finished, then say what went well, what to fix, and what is next.</span></span>
-        </label>
-        <label class="stage-card">
-          <input type="radio" name="setupMeetingType" value="sprint_planning" hidden />
+          <input type="radio" name="setupMeetingType" value="sprint" hidden />
           <span class="stage-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M8 3v4"/><path d="M16 3v4"/><path d="M7 14h3"/><path d="M7 17h6"/></svg></span>
-          <span class="stage-text"><span class="stage-name">Sprint planning (plus prod deploy)</span><span class="stage-desc">Planning the next week or two: your tasks, in what order, and when they will be done.</span></span>
+          <span class="stage-text"><span class="stage-name">Sprint review &amp; planning</span><span class="stage-desc">Show what you finished, the retro, then your next tasks in order with dates and the prod deploy.</span></span>
         </label>
         <label class="stage-card">
-          <input type="radio" name="setupMeetingType" value="design_review" hidden />
-          <span class="stage-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v6"/><path d="M6 16v-2h12v2"/></svg></span>
-          <span class="stage-text"><span class="stage-name">Design / technical review</span><span class="stage-desc">The team discusses one technical idea in depth. You agree or disagree and say why.</span></span>
-        </label>
-        <label class="stage-card">
-          <input type="radio" name="setupMeetingType" value="stakeholder_update" hidden />
-          <span class="stage-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10v4a1 1 0 0 0 1 1h3l6 4V5L7 9H4a1 1 0 0 0-1 1z"/><path d="M17 9a4 4 0 0 1 0 6"/><path d="M19.5 6.5a7.5 7.5 0 0 1 0 11"/></svg></span>
-          <span class="stage-text"><span class="stage-name">Wider team / stakeholder update</span><span class="stage-desc">An update for managers, clients or product people. Results in plain words, no jargon.</span></span>
+          <input type="radio" name="setupMeetingType" value="discussion" hidden />
+          <span class="stage-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H8l-4 3v-3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M18 8h2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1v3l-4-3h-4a1 1 0 0 1-1-1v-1"/></svg></span>
+          <span class="stage-text"><span class="stage-name">1:1 / technical discussion</span><span class="stage-desc">Your manager, a product check-in or a design review: one topic in depth, agree or disagree and say why.</span></span>
         </label>
       </div>
       </details>
@@ -744,12 +768,9 @@
           <option value="ai_interview">AI interview</option>
         </optgroup>
         <optgroup label="Team meetings">
-          <option value="standup">Standup</option>
-          <option value="one_on_one">1:1 manager</option>
-          <option value="sprint_review">Sprint review / retro</option>
-          <option value="sprint_planning">Sprint planning</option>
-          <option value="design_review">Design review</option>
-          <option value="stakeholder_update">Stakeholder update</option>
+          <option value="standup">Standup / status</option>
+          <option value="sprint">Sprint review / planning</option>
+          <option value="discussion">1:1 / tech discussion</option>
         </optgroup>
       </select>
       <div hidden>
@@ -776,14 +797,32 @@
       <div class="composer-row">
         <textarea id="composerInput" rows="2" spellcheck="false" placeholder="Your question (from your knowledge base)…"></textarea>
         <button id="getAnswerBtn" class="answer-send-btn" title="Get answer (Ctrl+Enter)" disabled>&#10148;</button>
+        <button id="supporterChatBtn" class="answer-send-btn supporter-chat-send" type="button" title="Send to them (Enter)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg>
+        </button>
       </div>
     </div>
   </section>
 
   <section class="chat-main" id="chatMain" hidden>
-    <div class="mic-mode-banner mode-aOnly" id="micModeBanner">
-      <span class="mic-mode-banner-icon" id="micModeBannerIcon">&#128274;</span>
-      <span class="mic-mode-banner-text" id="micModeBannerText">You speak to A only — C cannot hear you</span>
+    <div class="supporter-bar">
+      <span class="supporter-bar-dot" id="supporterBarDot"></span>
+      <span class="supporter-bar-text" id="supporterBarText">Connecting…</span>
+      <div class="supporter-mic-seg" role="group" aria-label="Your microphone">
+        <button class="supporter-mic-btn" data-mic="mute" type="button" title="Nobody hears you">Mic off</button>
+        <button class="supporter-mic-btn" data-mic="aOnly" type="button" title="Only the person you support hears you, not the meeting">Talk to them</button>
+      </div>
+      <button class="supporter-sound-btn" id="supporterSoundBtn" type="button" title="Mute the call">
+        <svg class="snd-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10v4a1 1 0 0 0 1 1h3l5 4V5L7 9H4a1 1 0 0 0-1 1z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M18.5 6.5a7.5 7.5 0 0 1 0 11"/></svg>
+        <svg class="snd-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10v4a1 1 0 0 0 1 1h3l5 4V5L7 9H4a1 1 0 0 0-1 1z"/><path d="m16 9 6 6"/><path d="m22 9-6 6"/></svg>
+      </button>
+      <label class="supporter-vol" title="Call volume">
+        <input type="range" id="supporterVolume" min="0" max="100" step="5" />
+      </label>
+    </div>
+    <div class="mic-mode-banner mode-mute" id="micModeBanner">
+      <span class="mic-mode-banner-icon" id="micModeBannerIcon">&#128263;</span>
+      <span class="mic-mode-banner-text" id="micModeBannerText">Your mic is off. Nobody hears you.</span>
     </div>
     <div class="screen-view" id="screenView">
       <div class="screen-view-bar">
@@ -796,11 +835,16 @@
       <video id="screenVideo" autoplay muted playsinline></video>
     </div>
     <div class="chat-header">
-      <span class="chat-header-title">&#128172; Chat &rarr; A</span>
-      <span class="chat-header-status" id="chatHeaderStatus">Drop image, paste, or type</span>
+      <svg class="chat-header-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg>
+      <span class="chat-header-title">Private chat</span>
+      <span class="chat-header-status" id="chatHeaderStatus">&nbsp;</span>
+      <button class="chat-clear-btn" id="chatClearBtn" type="button" title="Clear the chat on both sides">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="m6 7 1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>
+      </button>
+      <button class="chat-pane-close" id="chatPaneClose" type="button" title="Close the chat (the window gets narrower again)">&times;</button>
     </div>
     <div class="chat-history" id="chatHistory">
-      <div class="chat-empty" id="chatEmpty">No messages yet. Type below or drop an image anywhere.</div>
+      <div class="chat-empty" id="chatEmpty">No messages yet</div>
     </div>
     <div class="chat-input-area">
       <textarea id="chatInput" rows="2" placeholder="Type a message and press Enter to send (Shift+Enter for newline)" spellcheck="false"></textarea>

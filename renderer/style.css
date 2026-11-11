@@ -2850,3 +2850,100 @@ body.role-supporter .rec-btn { display: none !important; }
 .rec-dot-live { width: 7px; height: 7px; border-radius: 50%; background: var(--rec-on); box-shadow: 0 0 5px rgba(220,38,38,.8); opacity: 0; }
 .rec-indicator.recording .rec-dot-live { animation: recBlink 1s steps(1, end) infinite; }
 @keyframes recBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+/* ── Supporter mode ─────────────────────────────────────────── */
+/* Join screen */
+.join-code-input { font-variant-numeric: tabular-nums; letter-spacing: 3px; font-size: 16px; }
+.join-status { min-height: 18px; margin: 4px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.join-status.err { color: var(--rec-on); }
+.join-status.busy { color: var(--accent); }
+
+/* Speaker: invite button and panel */
+.supporter-invite-btn { position: relative; }
+.supporter-invite-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.supporter-invite-dot { position: absolute; right: 3px; top: 4px; width: 6px; height: 6px; border-radius: 50%; background: transparent; }
+.supporter-invite-btn.connected { color: var(--green); }
+.supporter-invite-btn.connected .supporter-invite-dot { background: var(--green); box-shadow: 0 0 0 2px var(--header-bg); }
+body.role-supporter .supporter-invite-btn { display: none !important; }
+.supporter-panel {
+  position: fixed; top: calc(var(--header-h) + 6px); right: calc(var(--rail-w) + 8px);
+  width: 280px; max-width: calc(100vw - var(--rail-w) - 16px);
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-lg); padding: 10px 12px 12px; z-index: 60;
+  display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; color: var(--text);
+}
+.supporter-panel[hidden] { display: none !important; }
+.supporter-panel-head { display: flex; align-items: center; justify-content: space-between; font-weight: 700; font-size: 13px; }
+.supporter-panel-lead, .supporter-panel-hint { margin: 0; line-height: 1.45; color: var(--muted); }
+.supporter-panel-hint { font-size: 11.5px; }
+.supporter-panel-row { display: flex; align-items: baseline; gap: 10px; }
+.supporter-panel-key { width: 56px; flex: none; color: var(--muted); font-size: 11.5px; font-weight: 600; }
+.supporter-panel-val { flex: 1; white-space: pre-line; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 13px; user-select: text; word-break: break-all; }
+.supporter-code { font-size: 20px; font-weight: 700; letter-spacing: 3px; color: var(--accent); }
+.supporter-panel-other { margin: -4px 0 0 66px; font-size: 11px; line-height: 1.4; color: var(--muted); word-break: break-word; }
+.supporter-panel-other[hidden] { display: none; }
+.supporter-panel-status { margin: 0; font-weight: 600; }
+.supporter-panel-status.connected { color: var(--green); }
+
+/* Supporter: the bar above the chat */
+body.role-supporter #recIndicator,
+body.role-supporter .rail-model-btn,
+body.role-supporter .rail-speed-wrap { display: none !important; }
+.supporter-bar {
+  display: flex; align-items: center; gap: 6px 10px; padding: 7px 12px;
+  background: var(--surface); border-bottom: 1px solid var(--border); font-size: 12px; flex-wrap: wrap;
+}
+.supporter-bar-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); flex: none; }
+.supporter-bar-dot.on { background: var(--green); }
+.supporter-bar-text { flex: 1 1 calc(100% - 20px); min-width: 0; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.supporter-mic-seg { display: inline-flex; border: 1px solid var(--border-hi); border-radius: 99px; overflow: hidden; }
+.supporter-mic-btn { border: 0; background: var(--bg); color: var(--muted); font: inherit; font-size: 11.5px; font-weight: 600; padding: 4px 10px; cursor: pointer; }
+.supporter-mic-btn + .supporter-mic-btn { border-left: 1px solid var(--border-hi); }
+.supporter-mic-btn.active[data-mic="mute"] { background: #f3f4f6; color: #374151; }
+.supporter-mic-btn.active[data-mic="aOnly"] { background: #dcfce7; color: #15803d; }
+.supporter-vol { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+.supporter-vol svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.supporter-vol { flex: 1; min-width: 90px; }
+.supporter-vol input { flex: 1; min-width: 60px; }
+
+/* Supporter: their answer panel on the left, the chat column on the right */
+:root { --sup-pane-w: 300px; }
+body.side-pane-open .answer-main { right: calc(var(--rail-w) + var(--sup-pane-w)); }
+body.side-pane-open .chat-main { left: auto; right: var(--rail-w); width: var(--sup-pane-w); border-left: 1px solid var(--border); }
+body.side-pane-open .cable-nudge { right: calc(var(--rail-w) + var(--sup-pane-w)); }
+body.role-supporter .chat-input-area { display: none !important; }
+/* The interviewer's column: just the chat, with its own message box. */
+body.role-speaker .chat-main .supporter-bar,
+body.role-speaker .chat-main .mic-mode-banner,
+body:not(.role-supporter) .chat-main .screen-view { display: none !important; }
+body.role-supporter .answer-presetbar .csel:has(#meetingTypeSelect),
+body.role-supporter #answerClearBtn,
+body.role-supporter #answerHistory .meet-actions,
+body.role-supporter #answerHistory .answer-q-actions { display: none !important; }
+.supporter-chat-send { display: none; }
+body.role-supporter .supporter-chat-send { display: inline-flex; align-items: center; justify-content: center; }
+.supporter-chat-send svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+body.role-supporter #getAnswerBtn { font-size: 12px; font-weight: 800; letter-spacing: .3px; }
+.chat-header { position: relative; }
+body.side-pane-open .chat-header { justify-content: flex-start; gap: 6px; padding: 0 64px 0 12px; height: 34px; }
+.chat-header-ico { width: 14px; height: 14px; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linejoin: round; flex: none; }
+body.side-pane-open .chat-header-title { font-weight: 700; white-space: nowrap; flex: none; }
+body.side-pane-open .chat-header-status { flex: 1 1 auto; min-width: 0; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-clear-btn, .chat-pane-close { display: none; }
+body.side-pane-open .chat-clear-btn, body.role-speaker.side-pane-open .chat-pane-close {
+  display: inline-flex; align-items: center; justify-content: center; position: absolute; top: 50%; transform: translateY(-50%);
+  border: 0; background: transparent; color: var(--muted); padding: 3px; border-radius: 4px; cursor: pointer;
+}
+body.side-pane-open .chat-clear-btn { right: 36px; }
+body.role-supporter.side-pane-open .chat-clear-btn { right: 8px; }
+body.role-speaker.side-pane-open .chat-pane-close { right: 8px; font-size: 18px; line-height: 1; width: 22px; height: 22px; }
+body.side-pane-open .chat-clear-btn:hover { background: var(--surface-2); color: var(--rec-on); }
+body.side-pane-open .chat-pane-close:hover { background: var(--surface-2); color: var(--text); }
+body.side-pane-open .chat-empty { margin: auto; text-align: center; color: var(--muted); }
+.supporter-sound-btn { border: 1px solid var(--border-hi); background: var(--bg); color: var(--text); border-radius: 99px; width: 28px; height: 24px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.supporter-sound-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.supporter-sound-btn .snd-off { display: none; }
+.supporter-sound-btn.muted { background: #fee2e2; border-color: #fca5a5; color: var(--rec-on); }
+.supporter-sound-btn.muted .snd-on { display: none; }
+.supporter-sound-btn.muted .snd-off { display: inline; }
+.chat-clear-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }

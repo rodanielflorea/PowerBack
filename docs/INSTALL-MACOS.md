@@ -57,8 +57,8 @@ Closing that window quits the app.
 ## 7. Allow permissions when asked
 
 - **Microphone**
-- **Accessibility** (typing into other apps)
-- **Screen Recording** (OCR)
+- **Accessibility**
+- **Screen Recording**
 
 **System Settings → Privacy & Security**.
 
@@ -73,5 +73,3 @@ Closing that window quits the app.
 | `OPEN.command` does nothing | Right-click it → **Open**. Keep it in the **same folder** as `Ace.app` |
 | No app in Applications | Drag `Ace.app` there (step 3) |
 | App opens then disappears | The **Activate this computer** window was closed — open the app again and enter the license |
-
-The app has no normal Dock/taskbar icon after activation. If it is running, look for the always-on-top window or the small round floating button.
