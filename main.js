@@ -186,6 +186,7 @@ const DEFAULT_STATE = {
     virtualCableId: '',
     listenDeviceId: '',
     maxSupporters: 5,
+    shareScreen: true,       // the speaker's screen is streamed to the supporter
   },
   welcomeSeen: false,
   // Uploaded base-knowledge documents (extracted text), per category.

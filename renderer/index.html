@@ -110,6 +110,12 @@
           </div>
           <h3 class="settings-subhead">Answering</h3>
           <p class="hint">Answers are sent only when you press Send / Ctrl+Enter.</p>
+          <h3 class="settings-subhead">Supporter</h3>
+          <p class="hint">Someone on another computer can join your call with this app (welcome screen &rarr; <b>Join as supporter</b>) using this address: <code id="supporterJoinAddr">&hellip;</code> and the session's code, which the headset button at the top shows once a session is started. They hear the call, see your answer panel, and their messages appear in the Private chat column.</p>
+          <div class="field-row">
+            <label class="checkbox"><input type="checkbox" id="shareScreen" /> Share my screen with the supporter</label>
+          </div>
+          <p class="hint">Your whole screen as the call sees it (this app and its notes are not in the picture). Changes apply at once, also during a call.</p>
           <div class="field">
             <label class="checkbox"><input type="checkbox" id="recordSession" /> Record the session (screen + audio) and save it when the interview ends</label>
             <p class="hint">The video, transcript, CV, job description and every uploaded document are saved to one folder in your Documents, named date-time-company-role, and the folder opens when you press End. On macOS this needs Screen &amp; System Audio Recording permission.</p>
@@ -481,7 +487,7 @@
           <span class="mode-choice-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg></span>
           <span class="mode-choice-text">
             <span class="mode-choice-name">Join as supporter</span>
-            <span class="mode-choice-desc">Help someone in their call: hear it and send them notes</span>
+            <span class="mode-choice-desc">Help someone in their call: hear it, watch their screen, send them notes</span>
           </span>
           <span class="mode-choice-arrow" aria-hidden="true">&#8250;</span>
         </button>
@@ -498,7 +504,7 @@
         <h2 class="setup-title">Join as supporter</h2>
         <button class="setup-gear-btn" id="joinSettingsBtn" title="Settings &amp; user guide">&#9881;</button>
       </div>
-      <p class="setup-intro">You hear their call, see their answer panel live, can ask their AI for an answer, and can chat with them. Both computers must be on the same network. In their Ace, the headset button at the top shows the address and the code.</p>
+      <p class="setup-intro">You hear their call, see their screen and their answer panel live, can ask their AI for an answer, and can chat with them. Both computers must be on the same network. In their Ace, the headset button at the top shows the address and the code.</p>
       <div class="profile-inputs profile-inputs--vertical">
         <label class="field-label" for="joinAddress">Their address</label>
         <input type="text" id="joinAddress" class="profile-input" placeholder="192.168.1.20:2000" spellcheck="false" autocomplete="off" />
@@ -817,6 +823,16 @@
     <div class="mic-mode-banner mode-mute" id="micModeBanner">
       <span class="mic-mode-banner-icon" id="micModeBannerIcon">&#128263;</span>
       <span class="mic-mode-banner-text" id="micModeBannerText">Your mic is off. Nobody hears you.</span>
+    </div>
+    <div class="screen-view" id="screenView">
+      <div class="screen-view-bar">
+        <span class="screen-view-title" id="screenStatus">Waiting for the speaker's screen&hellip;</span>
+        <span class="screen-view-actions">
+          <button class="screen-view-btn" id="screenFullBtn" title="Full screen (Esc to leave)">&#x26F6;</button>
+          <button class="screen-view-btn" id="screenToggleBtn" title="Hide / show the screen">&#x25B4;</button>
+        </span>
+      </div>
+      <video id="screenVideo" autoplay muted playsinline></video>
     </div>
     <div class="chat-header">
       <svg class="chat-header-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg>
