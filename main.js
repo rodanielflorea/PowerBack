@@ -2462,15 +2462,18 @@ const MEETING_TYPES = {
   live_coding:        { kind: 'hiring', label: 'Live coding / system design' },
   leader_round:       { kind: 'hiring', label: 'CTO / CEO / founder round' },
   ai_interview:       { kind: 'hiring', label: 'AI interview' },
-  standup:            { kind: 'team',   label: 'Engineering standup' },
-  one_on_one:         { kind: 'team',   label: '1:1 with manager' },
-  sprint_review:      { kind: 'team',   label: 'Sprint review + retro + preview' },
-  sprint_planning:    { kind: 'team',   label: 'Sprint planning' },
-  design_review:      { kind: 'team',   label: 'Design / technical review' },
-  stakeholder_update: { kind: 'team',   label: 'Wider team / stakeholder update' },
+  standup:            { kind: 'team',   label: 'Standup / status update' },
+  sprint:             { kind: 'team',   label: 'Sprint review & planning' },
+  discussion:         { kind: 'team',   label: '1:1 / technical discussion' },
 };
-// Stage names saved by older versions.
-const LEGACY_MEETING_TYPES = { intro: 'recruiter_screen', hr: 'recruiter_screen', technical: 'technical_interview', ceo: 'leader_round' };
+// Type names saved by older versions. The six team types of 2.7.4 were merged
+// into three.
+const LEGACY_MEETING_TYPES = {
+  intro: 'recruiter_screen', hr: 'recruiter_screen', technical: 'technical_interview', ceo: 'leader_round',
+  stakeholder_update: 'standup',
+  sprint_review: 'sprint', sprint_planning: 'sprint',
+  one_on_one: 'discussion', design_review: 'discussion',
+};
 function normalizeMeetingType(t) {
   t = String(t || '');
   if (MEETING_TYPES[t]) return t;
@@ -3943,44 +3946,25 @@ const MEETING_GUIDANCE = {
 - Behavioral questions: one real story from the knowledge base, in situation, action, result order.`,
 
   // ── Team meetings ──
-  standup: `TYPE: ENGINEERING STANDUP / DAILY STATUS UPDATE. The chair calls names in turn, each person gives an update, then short follow-ups.
-- Your update when called (about 80 to 180 words): open with "Okay. So for me..." or "Yes, so yesterday...". Then per ticket, most important first: ticket ID, what was done (merged, PR opened, deployed to dev, staging or main, dry run), the key number (rows processed, matched vs unmatched, cost), and any gap or bug you found and what you did about it. Then what you're waiting on: whose review or which decision, by name. Then which ticket you move to next. Close with "That's all for me."
+  standup: `TYPE: STANDUP / STATUS UPDATE (daily engineering standup, end-of-day or team status update, client or stakeholder update). The chair calls names in turn, each person gives an update, then short follow-ups.
+- Your update when called (about 80 to 180 words): open with "Okay. So for me..." or "Yes, so yesterday...". Then per ticket, most important first: ticket ID, what was done (merged, PR opened, deployed to dev, staging or prod, dry run), the key number (rows processed, matched vs unmatched, cost), and any gap or bug you found and what you did about it. Then what you're waiting on, and from whom by name. Then what you move to next. Close with "That's all for me."
+- Non-engineers listening (client, product, managers): lead with the main result or problem of the week and its metric, in plain words, with no lists of ticket numbers.
 - "Are you blocked?": yes or no, what exactly, and what you'll work on in the meantime.
-- "Did you tell X what they need?": "Yes, I sent the runbook and they'll run it." or say when you will.
-- Asked to hand something to someone else: agree, and thank them for the pointer.
-- You need something from a teammate: name the ticket, what you need, and offer to send the exact steps.`,
+- Asked to hand something over, or whether you told someone what they need: agree or confirm, say when, and offer to send the exact steps.`,
 
-  one_on_one: `TYPE: 1:1 WITH YOUR MANAGER. Two people from the same team, usually looking at results on screen.
-- Greeting: warm and short ("I'm fine, thanks. Good afternoon.").
-- "Where does this number come from?": explain where the data comes from, the root cause (timing gap, failed scheduled run, missing field), and whether data is lost or safe.
-- Walking through results on screen: step by step, the input, the top candidate, the decision (auto-apply, create new, manual review), and why.
-- Bring one question or decision you need from them (priorities, how to handle a big review backlog, which option to take).
-- If you have no clear plan yet, say what you'll look into first.
-- Agree on next steps and confirm the follow-up ("Okay, I'll Slack you the steps before production.").
-- Asked for feedback on a process (like specs): an honest answer with a reason.`,
-
-  sprint_review: `TYPE: SPRINT REVIEW, THEN RETRO AND PREVIEW.
-- Your demo in the review (about 120 to 200 words): status in one line (which environment it runs in, test, staging or prod, and whether it works end to end). What it does as a pipeline: ingest, resolve, create or update, write to the DB. Walk through one or two concrete examples on screen ("Here the name and domain are a strong match, so it's auto-applied. Here two candidates match, so it goes to manual review."). The key numbers (auto-applied vs manual review, rows processed). What's left, and when it goes to production.
+  sprint: `TYPE: SPRINT REVIEW AND PLANNING (review, retro and preview at the end of a sprint; planning and the prod deploy plan at the start of the next).
+- Your review demo (about 120 to 200 words): status in one line (which environment, test, staging or prod, and whether it works end to end). What it does as a pipeline: ingest, resolve, create or update, write to the DB. One or two concrete examples on screen and why each was decided that way. The key numbers. What's left, and when it goes to production.
 - Retro: one thing that went well, giving credit by name, and one thing to improve with a concrete suggestion.
-- Preview: what you'll pick up next sprint.
-- When someone clarifies something: thank them and say how it changes your work.`,
+- Preview or planning priorities (about 60 to 150 words): the primary task, then the secondary one. For each, the order of steps (address PR comments, test against real data, request review, merge, staging, production dry run, import) and a realistic ETA ("by Wednesday").
+- Weekend round: one or two friendly sentences about your weekend, then pass it on.
+- "Do you mean the migration or the full job?": say exactly which one, and where the code is now (branch, PR, merged). Commitments: say when you'll request review or push.`,
 
-  sprint_planning: `TYPE: SPRINT PLANNING (plus the prod deploy plan).
-- Weekend round: one or two friendly sentences about your weekend, then pass it on (don't ask back). If you missed the question, ask what the round is about.
-- Your priorities (about 60 to 150 words): the primary task first, then the secondary one. For each, the order of steps (address PR comments, test locally against real data, request review, merge to development, staging, production dry run, import) and a realistic ETA ("by Wednesday").
-- Terminology questions ("do you mean the DB migration or the full job?"): say exactly which one, and where the code is right now (branch, PR, merged).
-- Commitments: say when you'll request review or push ("I'll request the review right after this meeting.").`,
-
-  design_review: `TYPE: DESIGN / TECHNICAL REVIEW (architecture sessions, algorithm reviews, adapter reviews). One topic debated in depth. This is a discussion, not a presentation: keep each turn under 100 words.
-- "Do you agree?": agree or disagree first, then the reason in 1 to 3 sentences (cost, consistency, keeping labeled data, fewer moving parts).
-- Proposals: describe them as components and configuration (for example a shared flow with a per-caller policy: allowed granularity, distance and ambiguity thresholds, and a fallback when nothing is safe).
-- Data and ML choices: favor approaches that keep labeled data for later model training. Mention defaults for missing values and how they get replaced later.
-- If you haven't tested with real or full data yet, say so plainly and say when you will.`,
-
-  stakeholder_update: `TYPE: WIDER TEAM / STAKEHOLDER UPDATE (weekly client update, product check-in). The audience includes non-engineers: less jargon than in the engineering standup, and no lists of ticket numbers.
-- Taking your turn: "Okay, I'll go next."
-- Your update (about 100 to 180 words): lead with the main problem or result of the week and its metric ("about 90 percent of rows were going to manual review, which isn't sustainable"). Then in plain words what you tried, what worked and what didn't. Then what's next and what you need from anyone.
-- Product check-in with the manager: show where to see the results on the platform, say whether a run was a dry run (no effect on the DB), give the headline numbers, and say when the PR will be ready for deploy.`,
+  discussion: `TYPE: 1:1 OR TECHNICAL DISCUSSION (1:1 with your manager, product check-in, design, architecture or algorithm review). A few people on one topic in depth, often looking at results on screen. A conversation, not a presentation: keep each turn under about 100 words unless asked to walk through something.
+- "Where does this number come from?": the data source, the root cause (timing gap, failed scheduled run, missing field), and whether data is lost or safe.
+- Walking through results on screen: the input, the top candidate, the decision (auto-apply, create new, manual review), and why. Say whether a run was a dry run, and when the PR will be ready to deploy.
+- "Do you agree?": agree or disagree first, then the reason in 1 to 3 sentences (cost, consistency, keeping labeled data, fewer moving parts). Describe proposals as components and configuration.
+- Not tested with real or full data yet: say so plainly, and when you will.
+- In a 1:1: bring one decision you need from them, answer feedback questions honestly with a reason, and close by confirming the next step ("I'll Slack you the steps before production.").`,
 };
 
 // Shared by every meeting type.
