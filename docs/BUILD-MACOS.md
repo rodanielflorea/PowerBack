@@ -83,8 +83,7 @@ secret:
 3. Build again. The workflow writes the secret into `defaults/api-keys.json`
    before packaging, so every installer (Windows, Linux, macOS) has the keys.
 
-Without the secret the app starts, but answers and transcription report
-"no key is built into this copy of the app".
+Without the secret the app starts, but has no built-in API keys.
 
 ## Route 2: unsigned `.zip` from WSL2 / Ubuntu (dev only)
 
@@ -119,16 +118,12 @@ quits the app.
 Allow **Microphone**, **Accessibility**, and **Screen Recording** when macOS
 asks. System audio needs a virtual device such as **BlackHole**.
 
-Known limit: recent Zoom / Teams using ScreenCaptureKit may still see the
-window — hide it (Ctrl+Alt+H) while sharing.
-
 ---
 
 ## Building directly on a Mac (M1 / M2 / M3 / M4 or Intel)
 
 The result is the same universal app the CI produces, so a build made on an
-M4 runs on an M1 (and on Intel Macs). Requirements: macOS 13 or newer to run
-the system-audio capture.
+M4 runs on an M1 (and on Intel Macs). Requirements: macOS 13 or newer.
 
 One-time setup on the Mac:
 

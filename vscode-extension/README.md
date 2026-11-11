@@ -1,17 +1,5 @@
 # Ace for VS Code
 
-Keeps the Ace desktop app in step with the project open in VS Code, so Ace can explain the project and what you are changing. Nothing is generated on its own: Ace answers when you press Send there.
-
-## What it sends to Ace
-- The list of files in the workspace (not their contents), excluding `node_modules`, `.git`, build output and the like.
-- The file you are editing, with the text around the cursor and the selection.
-- Every edit as it happens (batched every 0.3 s), and the full text of a file when you save it (files up to 200 KB).
-- Errors and warnings VS Code reports for a file.
-- The git branch, changed files and the diff of uncommitted changes, after each save.
-- The text of another file only when Ace asks for it (for a question that needs it).
-
-Everything goes over a local socket to Ace on this computer (`127.0.0.1:2010` by default) as one JSON object per line. Nothing goes anywhere else from the extension.
-
 ## Install
 1. In this folder: `npm run package` → produces `ace-vscode-0.1.0.vsix`.
 2. In VS Code: Extensions → `…` → **Install from VSIX…** → pick the file.
