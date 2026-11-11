@@ -125,6 +125,8 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 })();
 
 const STATE_FILE = path.join(app.getPath('userData'), 'state.json');
+// Pixels a supporter's chat column added to the window (left out when saved).
+let sidePaneExtra = 0;
 const LOG_FILE = path.join(app.getPath('userData'), 'activity.log');
 const LOG_MAX_LINES_RETURNED = 500;
 
@@ -412,7 +414,7 @@ function saveState() {
     const [x, y] = win.getPosition();
     const [width, height] = win.getSize();
     state.x = x; state.y = y;
-    state.width = width; state.height = height;
+    state.width = Math.max(200, width - sidePaneExtra); state.height = height;
     if (!LINUX_CSS_OPACITY) state.opacity = win.getOpacity();
   }
   try {
@@ -1438,7 +1440,21 @@ let wsClient = null;
 let wsReconnectTimer = null;
 let nextConnId = 1;
 const supporterConns = new Map();
-let supporterOwnMicMode = 'aOnly';
+let supporterOwnMicMode = 'mute';
+// Speaker: a fresh 6-digit code per hosting session. A supporter must send it
+// first, or the connection is refused: without it anyone on the network who
+// found the port could listen to the call. Wrong codes are counted per
+// address, and an address with 5 is refused for the rest of the session.
+let supporterJoinCode = '';
+const joinFailures = new Map();
+const JOIN_MAX_FAILURES = 5;
+const JOIN_TIMEOUT_MS = 10000;
+function newJoinCode() { return String(require('crypto').randomInt(0, 1000000)).padStart(6, '0'); }
+// Supporter: the code to send, and whether this connection was let in. Only a
+// connection that was let in reconnects by itself after a drop.
+let joinCodeOut = '';
+let supporterAdmitted = false;
+let supporterRefused = '';
 const MIC_MODES = ['mute', 'aOnly', 'aAndC'];
 function nextMicMode(m) { const i = MIC_MODES.indexOf(m); return MIC_MODES[(i + 1) % MIC_MODES.length] || 'aOnly'; }
 
@@ -1485,8 +1501,10 @@ function parseAddress(addr) {
 }
 
 function stopSignalingServer() {
+  // Tell the supporter the session is over, so it does not keep reconnecting.
   for (const entry of supporterConns.values()) {
-    try { entry.ws.close(); } catch {}
+    try { entry.ws.send(JSON.stringify({ type: 'reject', reason: 'ended' })); } catch {}
+    try { entry.ws.close(4006, 'ended'); } catch {}
   }
   supporterConns.clear();
   if (wsServer) {
@@ -1549,6 +1567,8 @@ function startSignalingServer() {
     return;
   }
   ensureFirewallRule(addr.port, false);
+  supporterJoinCode = newJoinCode();
+  joinFailures.clear();
   try {
     wsServer = new WebSocket.Server({ port: addr.port, host: '0.0.0.0' });
   } catch (e) {
@@ -1562,53 +1582,73 @@ function startSignalingServer() {
     if (ip.startsWith('::ffff:')) ip = ip.slice(7);
     if (ip === '::1') ip = '127.0.0.1';
     const port = (req && req.socket && req.socket.remotePort) || 0;
-    if (supporterConns.size >= 1) {
-      try {
-        ws.send(JSON.stringify({ type: 'reject', reason: 'capacity' }));
-        ws.close(4002, 'capacity');
-      } catch {}
-      return;
-    }
-    for (const e of supporterConns.values()) {
-      if (e && e.ip === ip && e.port === port) {
+    const refuse = (reason, code) => {
+      try { ws.send(JSON.stringify({ type: 'reject', reason })); } catch {}
+      try { ws.close(code, reason); } catch {}
+    };
+    if (supporterConns.size >= 1) return refuse('capacity', 4002);
+    if ((joinFailures.get(ip) || 0) >= JOIN_MAX_FAILURES) return refuse('blocked', 4004);
+    let id = null;
+    const joinTimer = setTimeout(() => { if (!id) refuse('timeout', 4005); }, JOIN_TIMEOUT_MS);
+    const admit = () => {
+      id = String(nextConnId++);
+      const initialMicMode = 'mute';
+      supporterConns.set(id, { ws, ip, port, micMode: initialMicMode });
+      appendLogLine(`[supporter] #${id} joined from ${ip}`);
+      try { ws.send(JSON.stringify({ type: 'hello', id, micMode: initialMicMode })); } catch {}
+      for (const m of chatHistory) {
+        if (!m || (m.type !== 'chat-text' && m.type !== 'chat-image')) continue;
         try {
-          ws.send(JSON.stringify({ type: 'reject', reason: 'duplicate' }));
-          ws.close(4003, 'duplicate');
+          const payload = m.type === 'chat-text'
+            ? { type: 'chat-text', text: m.text, ts: m.ts, fromSupporter: !m.fromMe }
+            : { type: 'chat-image', dataUrl: m.dataUrl, ts: m.ts, fromSupporter: !m.fromMe };
+          ws.send(JSON.stringify(payload));
         } catch {}
-        return;
       }
-    }
-    const id = String(nextConnId++);
-    const initialMicMode = 'aOnly';
-    supporterConns.set(id, { ws, ip, port, micMode: initialMicMode });
-    try { ws.send(JSON.stringify({ type: 'hello', id, micMode: initialMicMode })); } catch {}
-    for (const m of chatHistory) {
-      if (!m || !m.fromMe) continue;
-      if (m.type !== 'chat-text' && m.type !== 'chat-image') continue;
-      try {
-        const payload = m.type === 'chat-text'
-          ? { type: 'chat-text', text: m.text, ts: m.ts }
-          : { type: 'chat-image', dataUrl: m.dataUrl, ts: m.ts };
-        ws.send(JSON.stringify(payload));
-      } catch {}
-    }
-    if (win) win.webContents.send('signaling-in', { connId: id, type: 'opened', ip });
-    broadcastNetworkStatus();
+      if (win) win.webContents.send('signaling-in', { connId: id, type: 'opened', ip });
+      broadcastNetworkStatus();
+    };
     ws.on('message', (data) => {
       let msg;
       try { msg = JSON.parse(data.toString()); } catch { return; }
+      if (!id) {
+        // Nothing but the join code is accepted before the supporter is let in.
+        if (!msg || msg.type !== 'join') return;
+        clearTimeout(joinTimer);
+        if (String(msg.code || '').replace(/\D/g, '') !== supporterJoinCode) {
+          const n = (joinFailures.get(ip) || 0) + 1;
+          joinFailures.set(ip, n);
+          appendLogLine(`[supporter] wrong join code from ${ip} (${n}/${JOIN_MAX_FAILURES})`);
+          return refuse(n >= JOIN_MAX_FAILURES ? 'blocked' : 'code', 4001);
+        }
+        if (supporterConns.size >= 1) return refuse('capacity', 4002);
+        for (const e of supporterConns.values()) {
+          if (e && e.ip === ip && e.port === port) return refuse('duplicate', 4003);
+        }
+        admit();
+        return;
+      }
       if (msg && msg.type === 'request-mic-mode') {
         setSupporterMicMode(id, msg.mode);
         return;
       }
+      if (msg && msg.type === 'remote-submit') {
+        if (win) win.webContents.send('remote-submit', { connId: id, mode: msg.mode });
+        return;
+      }
       if (msg && (msg.type === 'chat-text' || msg.type === 'chat-image')) {
-        if (win) win.webContents.send('capture-text', `[chat received from #${id}: ${msg.type}${msg.text ? ' "' + msg.text.slice(0,40) + '"' : ''}]`);
-        pushChatToSticky({ ...msg, fromId: id, fromMe: false, ts: msg.ts || Date.now() });
+        const entry = msg.type === 'chat-text'
+          ? { type: 'chat-text', text: String(msg.text || ''), ts: msg.ts || Date.now(), fromId: id, fromMe: false }
+          : { type: 'chat-image', dataUrl: String(msg.dataUrl || ''), ts: msg.ts || Date.now(), fromId: id, fromMe: false };
+        chatHistory.push(entry);
+        if (chatHistory.length > CHAT_HISTORY_MAX) chatHistory.shift();
+        if (win) win.webContents.send('supporter-chat-in', entry);
         return;
       }
       if (msg && msg.type === 'chat-clear') {
         chatHistory = [];
         pushHistoryToStickyDom();
+        if (win) win.webContents.send('chat-clear');
         for (const e2 of supporterConns.values()) {
           if (e2 && e2.ws && e2.ws.readyState === WebSocket.OPEN) {
             try { e2.ws.send(JSON.stringify({ type: 'chat-clear', ts: Date.now() })); } catch {}
@@ -1619,7 +1659,11 @@ function startSignalingServer() {
       if (win) win.webContents.send('signaling-in', { connId: id, ...msg });
     });
     ws.on('close', () => {
-      supporterConns.delete(id);
+      clearTimeout(joinTimer);
+      if (!id) return;
+      const cur = supporterConns.get(id);
+      if (cur && cur.ws === ws) supporterConns.delete(id);
+      appendLogLine(`[supporter] #${id} left`);
       if (win) win.webContents.send('signaling-in', { connId: id, type: 'closed' });
       broadcastNetworkStatus();
     });
@@ -1634,6 +1678,7 @@ function startSignalingServer() {
 function disconnectSignalingClient() {
   if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
   if (wsClient) {
+    wsClient._closedByUs = true; // a leave or a fresh connect, not a drop
     try { wsClient.close(); } catch {}
     wsClient = null;
   }
@@ -1656,13 +1701,34 @@ function connectSignalingClient() {
     return;
   }
   wsClient = ws;
+  supporterRefused = '';
   ws.on('open', () => {
+    try { ws.send(JSON.stringify({ type: 'join', code: joinCodeOut })); } catch {}
     if (win) win.webContents.send('signaling-in', { type: 'opened' });
     broadcastNetworkStatus();
   });
   ws.on('message', (data) => {
     let msg;
     try { msg = JSON.parse(data.toString()); } catch { return; }
+    if (msg && msg.type === 'reject') {
+      supporterRefused = String(msg.reason || 'refused');
+      if (win) win.webContents.send('join-rejected', { reason: supporterRefused });
+      return;
+    }
+    if (msg && msg.type === 'hello') {
+      supporterAdmitted = true;
+      // The speaker decides the starting mic mode; show it even when unchanged.
+      supporterOwnMicMode = MIC_MODES.includes(msg.micMode) ? msg.micMode : 'mute';
+      if (win) win.webContents.send('mic-mode-changed', { mode: supporterOwnMicMode, source: 'speaker' });
+    }
+    if (msg && msg.type === 'mirror') {
+      if (win) win.webContents.send('mirror-in', msg);
+      return;
+    }
+    if (msg && msg.type === 'remote-submit-result') {
+      if (win) win.webContents.send('remote-submit-result', msg);
+      return;
+    }
     if (msg && msg.type === 'help-request') {
       if (win) win.webContents.send('help-request-received', msg);
       return;
@@ -1688,8 +1754,20 @@ function connectSignalingClient() {
     if (win) win.webContents.send('signaling-in', { type: 'closed', code, reason: reason ? reason.toString() : '' });
     if (wsClient === ws) wsClient = null;
     broadcastNetworkStatus();
+    if (ws._closedByUs) return;
     if (code === 4000) {
+      supporterAdmitted = false;
       if (win) win.webContents.send('kicked-by-speaker');
+      return;
+    }
+    if (supporterRefused || (code >= 4001 && code <= 4006)) {
+      if (!supporterRefused && win) win.webContents.send('join-rejected', { reason: 'refused' });
+      supporterAdmitted = false;
+      return;
+    }
+    // Never let in: the address is wrong, or the speaker is not hosting.
+    if (!supporterAdmitted) {
+      if (win) win.webContents.send('join-rejected', { reason: 'unreachable' });
       return;
     }
     if (state.network.role === 'supporter') {
@@ -4934,7 +5012,7 @@ ipcMain.handle('chat-send-image', (_e, dataUrl) => {
 ipcMain.handle('get-network-config', () => ({ ...state.network }));
 ipcMain.handle('set-network-config', (_e, cfg) => {
   state.network = { ...state.network, ...(cfg || {}) };
-  state.network.role = 'speaker'; // supporter mode is not offered in this build
+  if (state.network.role !== 'supporter') state.network.role = 'speaker';
   if (state.network.role === 'speaker') {
     state.network.address = `0.0.0.0:${state.network.speakerPort || 2000}`;
   } else if (state.network.role === 'supporter') {
@@ -4944,6 +5022,121 @@ ipcMain.handle('set-network-config', (_e, cfg) => {
   broadcastNetworkStatus();
 });
 ipcMain.handle('start-network', () => { startNetwork(); });
+
+// Supporter mode: join the speaker at host[:port] with the code their Ace shows.
+function normalizeSpeakerAddress(addr) {
+  const a = String(addr || '').trim().replace(/^wss?:\/\//i, '').replace(/\/+$/, '');
+  if (!a) return null;
+  const m = a.match(/^([^\s:]+)(?::(\d{1,5}))?$/);
+  if (!m) return null;
+  const port = m[2] ? parseInt(m[2], 10) : 2000;
+  if (!(port >= 1 && port <= 65535)) return null;
+  return `${m[1]}:${port}`;
+}
+ipcMain.handle('join-as-supporter', (_e, { address, code } = {}) => {
+  const addr = normalizeSpeakerAddress(address);
+  if (!addr) return { ok: false, error: 'Enter the address as shown in their Ace, for example 192.168.1.20:2000.' };
+  const digits = String(code || '').replace(/\D/g, '');
+  if (digits.length !== 6) return { ok: false, error: 'The code has 6 digits.' };
+  stopSignalingServer();
+  state.network = { ...state.network, role: 'supporter', supporterAddress: addr, address: addr };
+  saveState();
+  joinCodeOut = digits;
+  supporterAdmitted = false;
+  supporterOwnMicMode = 'mute';
+  connectSignalingClient();
+  return { ok: true, address: addr };
+});
+// Speaker: the answer panel, as changed bubbles, to every supporter.
+ipcMain.on('mirror-out', (_e, payload) => {
+  if (state.network.role !== 'speaker' || !payload) return;
+  let data = null;
+  for (const entry of supporterConns.values()) {
+    if (!entry || !entry.ws || entry.ws.readyState !== WebSocket.OPEN) continue;
+    if (!data) data = JSON.stringify({ type: 'mirror', reset: !!payload.reset, mode: payload.mode || null, ops: Array.isArray(payload.ops) ? payload.ops : [] });
+    try { entry.ws.send(data); } catch {}
+  }
+});
+ipcMain.on('remote-submit-result', (_e, r) => {
+  const entry = r && supporterConns.get(String(r.connId));
+  if (!entry || !entry.ws || entry.ws.readyState !== WebSocket.OPEN) return;
+  try { entry.ws.send(JSON.stringify({ type: 'remote-submit-result', ok: !!r.ok, reason: String(r.reason || '') })); } catch {}
+});
+// Supporter: ask the speaker's Ace to answer, as if they had pressed Send.
+// Speaker: a message from the chat column to the supporter.
+ipcMain.handle('speaker-chat-send', (_e, m) => {
+  if (state.network.role !== 'speaker' || !m) return false;
+  const entry = m.dataUrl
+    ? { type: 'chat-image', dataUrl: String(m.dataUrl), ts: Date.now(), fromMe: true }
+    : { type: 'chat-text', text: String(m.text || '').trim(), ts: Date.now(), fromMe: true };
+  if (entry.type === 'chat-text' && !entry.text) return false;
+  chatHistory.push(entry);
+  if (chatHistory.length > CHAT_HISTORY_MAX) chatHistory.shift();
+  const data = JSON.stringify(entry.type === 'chat-text'
+    ? { type: 'chat-text', text: entry.text, ts: entry.ts }
+    : { type: 'chat-image', dataUrl: entry.dataUrl, ts: entry.ts });
+  let sent = 0;
+  for (const c of supporterConns.values()) {
+    if (c && c.ws && c.ws.readyState === WebSocket.OPEN) { try { c.ws.send(data); sent++; } catch {} }
+  }
+  return sent > 0;
+});
+ipcMain.handle('remote-submit', (_e, mode) => {
+  if (state.network.role !== 'supporter' || !wsClient || wsClient.readyState !== WebSocket.OPEN) return false;
+  try { wsClient.send(JSON.stringify({ type: 'remote-submit', mode: String(mode || '') })); return true; } catch { return false; }
+});
+// Supporter: the window grows to the right by the chat column, and back.
+ipcMain.handle('set-side-pane', (_e, open, width) => {
+  if (!win || win.isDestroyed()) return false;
+  const b = win.getBounds();
+  if (open && !sidePaneExtra) {
+    const extra = Math.max(200, Math.min(600, parseInt(width, 10) || 300));
+    const wa = screen.getDisplayMatching(b).workArea;
+    const w = b.width + extra;
+    const x = b.x + w > wa.x + wa.width ? Math.max(wa.x, wa.x + wa.width - w) : b.x;
+    sidePaneExtra = extra;
+    win.setBounds({ x, y: b.y, width: w, height: b.height });
+  } else if (!open && sidePaneExtra) {
+    const w = Math.max(200, b.width - sidePaneExtra);
+    sidePaneExtra = 0;
+    win.setBounds({ x: b.x, y: b.y, width: w, height: b.height });
+  }
+  return true;
+});
+ipcMain.handle('leave-supporter', () => {
+  disconnectSignalingClient();
+  joinCodeOut = '';
+  supporterAdmitted = false;
+  state.network.role = 'speaker';
+  state.network.address = `0.0.0.0:${state.network.speakerPort || 2000}`;
+  saveState();
+  broadcastNetworkStatus();
+  return true;
+});
+// What the speaker reads out to a supporter: this computer's network
+// addresses with the port, and the code.
+function lanAddresses() {
+  const out = [];
+  for (const [name, list] of Object.entries(os.networkInterfaces() || {})) {
+    for (const a of list || []) {
+      if (a.internal || a.family !== 'IPv4' && a.family !== 4) continue;
+      if (/^169\.254\./.test(a.address)) continue; // no network handed out an address
+      const virtual = /vEthernet|VirtualBox|VMware|Hyper-V|WSL|docker|Loopback|VPN|TAP-|Wintun|WireGuard|Tailscale|ZeroTier|Hamachi|Radmin/i.test(name) || /^198\.1[89]\./.test(a.address);
+      out.push({ address: a.address, name, virtual });
+    }
+  }
+  return out.sort((x, y) => (x.virtual - y.virtual));
+}
+ipcMain.handle('get-supporter-invite', () => {
+  const port = (parseAddress(state.network.address) || {}).port || state.network.speakerPort || 2000;
+  return {
+    hosting: !!wsServer && state.network.role === 'speaker',
+    code: wsServer ? supporterJoinCode : '',
+    port,
+    addresses: lanAddresses(),
+    supporters: supporterListSnapshot(),
+  };
+});
 ipcMain.handle('stop-network', () => { stopNetwork(); });
 ipcMain.handle('configure-firewall', () => {
   const port = (parseAddress(state.network.address) || {}).port || state.network.speakerPort || 2000;
