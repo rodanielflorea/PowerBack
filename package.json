@@ -1,6 +1,6 @@
 {
   "name": "ace",
-  "version": "2.7.12",
+  "version": "2.7.13",
   "description": "Answer Coaching Engine",
   "main": "main.js",
   "scripts": {
@@ -28,6 +28,7 @@
       "speaker-tracker.js",
       "vscode-bridge.js",
       "defaults/api-keys.json",
+      "defaults/ai-usage.md",
       "defaults/avoid.txt",
       "preload*.js",
       "renderer/**/*",

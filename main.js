@@ -306,6 +306,16 @@ let state = { ...DEFAULT_STATE };
 // provider user-configurable. (Anything shipped in the app can be extracted by
 // a user — rotate at the provider if a key leaks.)
 const BUILTIN_KEYS_FILE = path.join(__dirname, 'defaults', 'api-keys.json');
+
+// Bundled interview notes for "how do you use AI in your work" questions. Shipped
+// in the build (not committed). When present, answers follow it in detail.
+let aiUsageScript = null;
+function getAiUsageScript() {
+  if (aiUsageScript !== null) return aiUsageScript;
+  try { aiUsageScript = fs.readFileSync(path.join(__dirname, 'defaults', 'ai-usage.md'), 'utf8').trim(); }
+  catch { aiUsageScript = ''; }
+  return aiUsageScript;
+}
 let builtinKeys = null;
 function getBuiltinKeys() {
   if (builtinKeys) return builtinKeys;
@@ -3426,6 +3436,26 @@ ipcMain.handle('get-cursor-display-id', () => {
   catch { return ''; }
 });
 
+// A full-resolution picture of one display (the cursor's when no id is given),
+// as a PNG data URL, via desktopCapturer. The full screenshot uses this instead
+// of a getUserMedia desktop capture, which returned a solid green frame on one
+// of two monitors on some GPUs; desktopCapturer is correct on every display.
+ipcMain.handle('capture-display-image', async (_e, displayId) => {
+  try {
+    const all = screen.getAllDisplays();
+    const d = all.find((x) => String(x.id) === String(displayId))
+      || screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    const sf = d.scaleFactor || 1;
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: Math.round(d.size.width * sf), height: Math.round(d.size.height * sf) },
+    });
+    const src = sources.find((s) => String(s.display_id) === String(d.id)) || sources[0];
+    if (!src || !src.thumbnail || src.thumbnail.isEmpty()) return null;
+    return src.thumbnail.toDataURL();
+  } catch (e) { appendLogLine('[screenshot] capture failed: ' + e.message); return null; }
+});
+
 // Returns all screen source IDs sorted by name (Screen 1, Screen 2 …).
 ipcMain.handle('get-all-screen-source-ids', async () => {
   try {
@@ -5425,7 +5455,10 @@ function assembleStaticSystem(mode) {
 
   if (mode === 'ANSWER') {
     staticParts.push('SPOKEN OUTPUT: Talk like a native American engineer in a real standup or 1:1. Short sentences. Contractions. Start naturally with So or Yeah so when it fits. Never output an em dash, en dash, or --. Use a new sentence, a comma, or the words so / and / which instead. No resume voice. No blog voice. Only paragraphs someone can say out loud.');
-    staticParts.push('AI TOOLS QUESTION: when they ask how you or your team use AI in development, AI coding agents, Claude, GPT, Grok, Cursor, Copilot, "AI in your everyday work", "which AI tools", "do you use AI", answer from your own notes in the support material when they are there (a tool-usage script). Lead with the short version, about 30 seconds: several tools, each with its own role, a person approves every merge, and every claim needs evidence. Go into the detail (per tool, the rules file in the repo, the review gate, sub-agents, the model policy) only if they ask you to go further. Speak it as your own practice in the first person; never read out the section labels or say "section 1".');
+    const aiScript = getAiUsageScript();
+    if (aiScript) {
+      staticParts.push('HOW YOU USE AI TOOLS. When they ask how you or your team use AI in your work, AI coding agents, Claude, GPT, Grok, Cursor, Copilot, "AI in your everyday development", "which AI tools do you use", "do you use AI", answer from the script below, which is your own real practice. Follow its substance closely, in the first person ("I run Claude as...", "I use Grok for..."), naming the tools and what each one does; this is a prepared answer, so stay faithful to its content and do not water it down into generic lines. Lead with the short version (about 30 seconds). Go into the detail (per tool, the rules file in the repo, the review gate, sub-agents, the model policy) only when they ask you to go further. Spoken American English, short sentences, contractions, no markdown, never read out the section labels or say "section 1".\n\nYOUR AI-TOOLS SCRIPT:\n' + aiScript);
+    }
     staticParts.push(meetingStanceBlock());
   }
 
