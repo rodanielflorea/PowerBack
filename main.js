@@ -592,7 +592,7 @@ function createWindow() {
     });
   }
   win.setMenuBarVisibility(false);
-  if (state.clickThrough) try { win.setIgnoreMouseEvents(true, { forward: true }); } catch {}
+  if (clickThroughActive()) try { win.setIgnoreMouseEvents(true, { forward: true }); } catch {}
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   // The supporter's window for the speaker's screen (renderer.js opens it with
@@ -1273,7 +1273,7 @@ function createStickyWindow() {
   stickyWin.setContentProtection(state.stealth);
   stickyWin.setAlwaysOnTop(true, 'screen-saver');
   stickyWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  if (state.clickThrough) try { stickyWin.setIgnoreMouseEvents(true, { forward: true }); } catch {}
+  if (clickThroughActive()) try { stickyWin.setIgnoreMouseEvents(true, { forward: true }); } catch {}
   try { stickyWin.setOpacity(win.getOpacity()); } catch {}
   stickyWin.setMenuBarVisibility(false);
   stickyReady = false;
@@ -1397,7 +1397,7 @@ function createNoteWindow(content) {
   // The main window's transparency (left alone when fully opaque: see createWindow).
   const op = win.getOpacity();
   if (op < 1 && !LINUX_CSS_OPACITY) try { w.setOpacity(op); } catch {}
-  if (state.clickThrough) try { w.setIgnoreMouseEvents(true, { forward: true }); } catch {}
+  if (clickThroughActive()) try { w.setIgnoreMouseEvents(true, { forward: true }); } catch {}
   const wc = w.webContents;
   const id = wc.id;
   noteContent.set(id, content);
@@ -2033,15 +2033,25 @@ const HOTKEY_HANDLERS = {
   stopRemoteControl: () => controlStop('the speaker took it back'),
 };
 
+// Ace's own windows float on top of the speaker's screen and are hidden from
+// the capture, so to the supporter they are invisible holes that still catch
+// the mouse: a click there hits Ace, not the app behind it. So while the
+// supporter is controlling, every Ace window is made click-through — the
+// supporter's clicks pass straight through to whatever is behind — on top of
+// the speaker's own click-through setting. (The speaker stops with the hotkey.)
+function clickThroughWindows() {
+  return [win, stickyWin, infoWin, floatWin, ...liveNotes()].filter((w) => w && !w.isDestroyed());
+}
+function clickThroughActive() {
+  return state.clickThrough || (typeof control !== 'undefined' && control.state === 'on');
+}
+function syncClickThrough() {
+  const on = clickThroughActive();
+  for (const w of clickThroughWindows()) { try { w.setIgnoreMouseEvents(on, { forward: true }); } catch {} }
+}
 function setClickThrough(value) {
   state.clickThrough = !!value;
-  if (win) {
-    try { win.setIgnoreMouseEvents(state.clickThrough, { forward: true }); } catch {}
-  }
-  if (stickyWin && !stickyWin.isDestroyed()) {
-    try { stickyWin.setIgnoreMouseEvents(state.clickThrough, { forward: true }); } catch {}
-  }
-  for (const w of liveNotes()) { try { w.setIgnoreMouseEvents(state.clickThrough, { forward: true }); } catch {} }
+  syncClickThrough();
   saveState();
   if (win) win.webContents.send('click-through-changed', state.clickThrough);
 }
@@ -2050,7 +2060,10 @@ function setClickThrough(value) {
 // reports when the pointer is over it (mouse moves are still forwarded to the
 // page) and mouse events are re-enabled just for that time.
 ipcMain.handle('click-through-hover', (_e, overHeader) => {
-  if (!win || win.isDestroyed() || !state.clickThrough) return;
+  // Active for manual click-through and while the supporter is controlling, so
+  // the speaker can reach Ace's title bar and the Stop banner (reclaim clicks
+  // over them) without ending control; moving away passes clicks through again.
+  if (!win || win.isDestroyed() || !clickThroughActive()) return;
   try { win.setIgnoreMouseEvents(!overHeader, { forward: true }); } catch {}
 });
 
@@ -2281,6 +2294,9 @@ function startSignalingServer() {
         chatHistory.push(entry);
         if (chatHistory.length > CHAT_HISTORY_MAX) chatHistory.shift();
         if (win) win.webContents.send('supporter-chat-in', entry);
+        // The speaker had put the window away: a message brings it back
+        // (without taking the keyboard from the meeting).
+        if (win && !win.isDestroyed() && !isMainShown()) showMain();
         return;
       }
       if (msg && msg.type === 'chat-clear') {
@@ -2441,8 +2457,33 @@ function connectSignalingClient() {
 // the supporter leaving and the screen no longer being shared end it too.
 // Input lands on the display being shared, and keys or buttons still held when
 // it ends are let go. Windows only (remote-input.js).
-const remoteInput = createRemoteInput((m) => appendLogLine('[control] ' + m));
-const control = { connId: null, state: 'off', keys: new Set(), buttons: new Set() };
+const remoteInput = createRemoteInput((m) => appendLogLine('[control] ' + m), controlBlockedEvent);
+const control = { connId: null, state: 'off', keys: new Set(), buttons: new Set(), blocked: '', releaseAt: 0 };
+
+// A program in front has taken the mouse and keyboard for itself and refuses
+// the supporter's input. Measured with VMware: while its guest holds the
+// "grab", Windows reports the pointer move as refused (error 203) and the
+// injected event is swallowed; it works again once the grab is released. The
+// VM engine runs at a higher privilege than this app, so synthetic input
+// cannot be pushed through and the grab cannot be released from here — the
+// speaker releases it (VMware: Ctrl+Alt). Both people are told while it lasts.
+const VM_NAMES = [{ re: /vmware|vmplayer|vmrc/i, name: 'VMware', release: 'Ctrl+Alt' },
+  { re: /virtualbox/i, name: 'VirtualBox', release: 'the host key (usually right Ctrl)' }];
+function controlBlockedEvent(kind, program) {
+  if (control.state !== 'on') return;
+  if (kind === 'unblocked') {
+    if (!control.blocked) return;
+    appendLogLine('[control] the pointer obeys again');
+    control.blocked = '';
+  } else {
+    const vm = VM_NAMES.find((v) => v.re.test(program));
+    control.blocked = vm ? vm.name : (program || 'a program');
+    control.blockedRelease = vm ? vm.release : '';
+    appendLogLine(`[control] ${control.blocked} has taken the mouse and keyboard: the supporter's input is refused until it is released`);
+  }
+  controlSendTo(control.connId, { state: 'on', blocked: control.blocked, release: control.blockedRelease });
+  controlShow();
+}
 let sharedDisplayId = '';
 
 function controlSendTo(connId, payload) {
@@ -2451,7 +2492,7 @@ function controlSendTo(connId, payload) {
   try { entry.ws.send(JSON.stringify({ type: 'control-state', ...payload })); } catch {}
 }
 function controlShow() {
-  if (win && !win.isDestroyed()) win.webContents.send('control-state', { state: control.state, hotkey: (state.hotkeys && state.hotkeys.stopRemoteControl) || '' });
+  if (win && !win.isDestroyed()) win.webContents.send('control-state', { state: control.state, blocked: control.blocked, release: control.blockedRelease || '', hotkey: (state.hotkeys && state.hotkeys.stopRemoteControl) || '' });
 }
 function controlRelease() {
   for (const vk of control.keys) remoteInput.send(`K ${vk} 0`);
@@ -2465,6 +2506,8 @@ function controlStop(reason) {
   controlRelease();
   control.state = 'off';
   control.connId = null;
+  control.blocked = '';
+  syncClickThrough(); // Ace catches clicks again, unless the speaker turned it on
   controlSendTo(connId, { state: 'off', reason: reason || '' });
   controlShow();
   appendLogLine(`[control] ended: ${reason || 'stopped'}`);
@@ -2482,6 +2525,7 @@ function controlRequest(connId) {
   control.connId = connId;
   control.state = 'on';
   remoteInput.start();
+  syncClickThrough(); // Ace stops catching clicks meant for the screen behind it
   controlSendTo(connId, { state: 'on' });
   controlShow();
   appendLogLine(`[control] supporter #${connId} took control (no prompt)`);
