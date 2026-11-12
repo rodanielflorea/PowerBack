@@ -2043,11 +2043,31 @@ function clickThroughWindows() {
   return [win, stickyWin, infoWin, floatWin, ...liveNotes()].filter((w) => w && !w.isDestroyed());
 }
 function clickThroughActive() {
-  return state.clickThrough || (typeof control !== 'undefined' && control.state === 'on');
+  return state.clickThrough;
 }
 function syncClickThrough() {
-  const on = clickThroughActive();
+  const on = clickThroughActive() || (typeof control !== 'undefined' && control.passing);
   for (const w of clickThroughWindows()) { try { w.setIgnoreMouseEvents(on, { forward: true }); } catch {} }
+}
+// While the supporter is actively using the mouse, Ace lets the clicks through
+// to the app behind it (Ace is invisible in the capture). Between bursts — and
+// whenever the supporter is idle, including just after joining — Ace catches
+// clicks again, so the speaker can use it normally. A held button keeps it
+// passing so a drag over an Ace window is not interrupted.
+function controlPassThrough(on) {
+  if (control.passing === on) return;
+  control.passing = on;
+  syncClickThrough();
+}
+function controlPassPulse() {
+  if (control.state !== 'on') return;
+  controlPassThrough(true);
+  if (control.passTimer) clearTimeout(control.passTimer);
+  control.passTimer = setTimeout(() => {
+    control.passTimer = null;
+    if (control.buttons.size) { controlPassPulse(); return; } // a button is held: keep passing
+    controlPassThrough(false);
+  }, 500);
 }
 function setClickThrough(value) {
   state.clickThrough = !!value;
@@ -2458,7 +2478,7 @@ function connectSignalingClient() {
 // Input lands on the display being shared, and keys or buttons still held when
 // it ends are let go. Windows only (remote-input.js).
 const remoteInput = createRemoteInput((m) => appendLogLine('[control] ' + m), controlBlockedEvent);
-const control = { connId: null, state: 'off', keys: new Set(), buttons: new Set(), blocked: '', releaseAt: 0 };
+const control = { connId: null, state: 'off', keys: new Set(), buttons: new Set(), blocked: '', releaseAt: 0, passing: false, passTimer: null };
 
 // A program in front has taken the mouse and keyboard for itself and refuses
 // the supporter's input. Measured with VMware: while its guest holds the
@@ -2507,7 +2527,8 @@ function controlStop(reason) {
   control.state = 'off';
   control.connId = null;
   control.blocked = '';
-  syncClickThrough(); // Ace catches clicks again, unless the speaker turned it on
+  if (control.passTimer) { clearTimeout(control.passTimer); control.passTimer = null; }
+  controlPassThrough(false); // Ace catches clicks again, unless the speaker turned it on
   controlSendTo(connId, { state: 'off', reason: reason || '' });
   controlShow();
   appendLogLine(`[control] ended: ${reason || 'stopped'}`);
@@ -2525,7 +2546,6 @@ function controlRequest(connId) {
   control.connId = connId;
   control.state = 'on';
   remoteInput.start();
-  syncClickThrough(); // Ace stops catching clicks meant for the screen behind it
   controlSendTo(connId, { state: 'on' });
   controlShow();
   appendLogLine(`[control] supporter #${connId} took control (no prompt)`);
@@ -2547,9 +2567,11 @@ function controlPoint(nx, ny) {
 // ['w', dx, dy] wheel, ['k', code, down] key, ['t', text], ['r'] let go of all.
 function controlInput(connId, events) {
   if (control.state !== 'on' || control.connId !== connId || !Array.isArray(events)) return;
+  let mouse = false;
   for (const ev of events.slice(0, 200)) {
     if (!Array.isArray(ev)) continue;
     const kind = ev[0];
+    if (kind === 'm' || kind === 'b' || kind === 'w') mouse = true;
     if (kind === 'm' || kind === 'b') {
       const x = kind === 'm' ? ev[1] : ev[3];
       const y = kind === 'm' ? ev[2] : ev[4];
@@ -2580,6 +2602,7 @@ function controlInput(connId, events) {
       controlRelease();
     }
   }
+  if (mouse) controlPassPulse(); // Ace passes clicks through while the supporter mouses
 }
 ipcMain.handle('control-stop', () => { controlStop('the speaker took it back'); return true; });
 
@@ -5402,6 +5425,7 @@ function assembleStaticSystem(mode) {
 
   if (mode === 'ANSWER') {
     staticParts.push('SPOKEN OUTPUT: Talk like a native American engineer in a real standup or 1:1. Short sentences. Contractions. Start naturally with So or Yeah so when it fits. Never output an em dash, en dash, or --. Use a new sentence, a comma, or the words so / and / which instead. No resume voice. No blog voice. Only paragraphs someone can say out loud.');
+    staticParts.push('AI TOOLS QUESTION: when they ask how you or your team use AI in development, AI coding agents, Claude, GPT, Grok, Cursor, Copilot, "AI in your everyday work", "which AI tools", "do you use AI", answer from your own notes in the support material when they are there (a tool-usage script). Lead with the short version, about 30 seconds: several tools, each with its own role, a person approves every merge, and every claim needs evidence. Go into the detail (per tool, the rules file in the repo, the review gate, sub-agents, the model policy) only if they ask you to go further. Speak it as your own practice in the first person; never read out the section labels or say "section 1".');
     staticParts.push(meetingStanceBlock());
   }
 
