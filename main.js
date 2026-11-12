@@ -175,6 +175,8 @@ const DEFAULT_STATE = {
     uploadSession: true,  // after saving, upload the bundle to gofile.io and hand back the link
   },
   antiClose: true, // Windows: relaunch the app if another program closes it
+  // Windows: clicking or typing in Ace leaves focus in the app the user was in.
+  keepOtherAppFocused: true,
   network: {
     role: '',
     address: '172.16.98.11:2000',
@@ -483,6 +485,7 @@ function createWindow() {
     alwaysOnTop: true,
     resizable: true,
     show: false,
+    focusable: !noActivate(),
     icon: path.join(__dirname, 'build', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -516,7 +519,7 @@ function createWindow() {
   const showMainWindow = () => {
     if (shown || !win || win.isDestroyed()) return;
     shown = true;
-    win.show();
+    showWindow(win);
     // Pre-warm the xAI connection so first real request skips TLS handshake.
     setTimeout(() => startWarmLoop(), 400);
   };
@@ -533,6 +536,8 @@ function createWindow() {
   win.on('minimize', () => { applyStickyState(); sendFloatState(); });
   win.on('restore', () => { applyStickyState(); sendFloatState(); });
   win.on('closed', () => {
+    typeThroughRelease();
+    selectionCopyEnd();
     if (floatWin && !floatWin.isDestroyed()) { try { floatWin.close(); } catch {} }
     stopSpeakerWatch();
     win = null;
@@ -574,6 +579,8 @@ function isMainShown() {
 }
 function hideMain() {
   if (!win || win.isDestroyed() || !isMainShown()) return;
+  typeThroughRelease();
+  selectionCopyEnd();
   hiddenBounds = win.getBounds();
   if (WAYLAND_SESSION) win.minimize();
   else win.hide();
@@ -584,10 +591,10 @@ function showMain() {
     if (win.isMinimized()) win.restore();
     if (!win.isVisible()) win.show();
   } else {
-    win.show();
+    showWindow(win);
     if (hiddenBounds) { try { win.setBounds(hiddenBounds); } catch {} }
   }
-  try { win.focus(); } catch {}
+  if (!noActivate()) { try { win.focus(); } catch {} }
 }
 function toggleVisible() {
   if (!win) return;
@@ -604,6 +611,293 @@ function setStealth(value) {
   saveState();
   win.webContents.send('stealth-changed', state.stealth);
 }
+
+// ── Keep the other app focused (Windows) ─────────────────────────────────────
+// Clicking Ace or typing into it must not take focus from the window the user
+// was in (the meeting, the browser, the IDE): that app would see its window
+// lose focus, and keys meant for it, or for an auto-typing run, would land in
+// Ace. So on Windows Ace's windows are non-activating (focusable: false sets
+// WS_EX_NOACTIVATE): a click reaches the page, but focus stays where it was.
+//
+// The keyboard still belongs to the focused app, so typing into an Ace field
+// works by taking the keys before that app gets them: when the user clicks a
+// text field, Ace registers the typing keys as global hotkeys (RegisterHotKey:
+// the other app never receives them) and passes each one to that window's
+// renderer, which edits the field itself (renderer/type-through.js). Esc,
+// sending, hiding Ace or a click on anything else in Ace gives the keys back.
+// Combos Ace's own hotkeys use keep doing what they do. Letters follow the
+// user's layout (the key code is the letter); digits and punctuation are
+// mapped as on a US keyboard.
+const NO_ACTIVATE_SUPPORTED = process.platform === 'win32';
+// Supporter mode (the join screen and the supporter's window) runs on the
+// supporter's own computer, with no meeting there to keep focused: Ace is then
+// an ordinary window and fields take typing the normal way.
+let supporterUiActive = false;
+function noActivate() {
+  return NO_ACTIVATE_SUPPORTED && state.keepOtherAppFocused !== false && !supporterUiActive;
+}
+// show() would activate a focusable window; showInactive() never does.
+function showWindow(w) {
+  if (!w || w.isDestroyed()) return;
+  if (noActivate()) w.showInactive(); else w.show();
+}
+
+const TT_PRINTABLE = [
+  ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split(''),
+  ';', '=', ',', '-', '.', '/', '`', '[', '\\', ']', "'",
+];
+const TT_NUMPAD = ['num0', 'num1', 'num2', 'num3', 'num4', 'num5', 'num6', 'num7', 'num8', 'num9',
+  'numdec', 'numadd', 'numsub', 'nummult', 'numdiv'];
+const TT_EDITING = ['Space', 'Enter', 'Backspace', 'Delete', 'Tab', 'Left', 'Right', 'Up', 'Down', 'Home', 'End'];
+let ttCombos = null;
+function typeThroughCombos() {
+  if (ttCombos) return ttCombos;
+  const out = [];
+  const add = (key, mods) => out.push({
+    acc: [...mods, key].join('+'), key,
+    shift: mods.includes('Shift'), ctrl: mods.includes('Ctrl'), alt: mods.includes('Alt'),
+  });
+  // Ctrl+letter / Ctrl+Shift+letter are taken even when Ace has no use for
+  // them, so a browser shortcut (Ctrl+W, Ctrl+T, Ctrl+Tab…) pressed while
+  // typing here cannot act on the other app; Ctrl+Alt (AltGr on many layouts)
+  // likewise, so half of a special character never reaches it.
+  for (const k of TT_PRINTABLE) {
+    add(k, []); add(k, ['Shift']); add(k, ['Ctrl']); add(k, ['Ctrl', 'Shift']); add(k, ['Ctrl', 'Alt']);
+  }
+  for (const k of TT_NUMPAD) add(k, []);
+  for (const k of TT_EDITING) {
+    add(k, []); add(k, ['Shift']); add(k, ['Ctrl']); add(k, ['Ctrl', 'Shift']);
+  }
+  add('Escape', []);
+  ttCombos = out;
+  return out;
+}
+
+let ttTarget = null;       // webContents whose field receives the keys
+let ttRegistered = [];     // accelerators the capture registered; only these are released
+let ttSelCopy = null;      // { wc, timer } while Ctrl+C copies a selection made in Ace
+
+function sendTo(wc, channel, payload) {
+  if (!wc || wc.isDestroyed()) return;
+  try { wc.send(channel, payload); } catch {}
+}
+
+// A page in a window that never activates never has focus, so a text field
+// shows no caret and no :focus style. While the keys are routed to it, the page
+// is told it is focused (the DevTools protocol's focus emulation) so the caret
+// blinks where the typing goes. It is only a visual: typing works without it.
+async function setFocusEmulation(wc, on) {
+  if (!wc || wc.isDestroyed()) return;
+  const dbg = wc.debugger;
+  try {
+    if (!dbg.isAttached()) {
+      if (!on) return;
+      dbg.attach('1.3');
+    }
+    await dbg.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: !!on });
+  } catch {}
+}
+
+function onTypeThroughKey(c) {
+  const wc = ttTarget;
+  if (!wc || wc.isDestroyed()) { typeThroughRelease(); return; }
+  sendTo(wc, 'type-through-key', { key: c.key, shift: c.shift, ctrl: c.ctrl, alt: c.alt });
+}
+
+async function typeThroughEngage(wc) {
+  if (!noActivate() || !wc || wc.isDestroyed()) return false;
+  // Auto-typing into the other app sends keys Ace would otherwise catch.
+  if (ideTypingActive) return false;
+  selectionCopyEnd();
+  if (ttTarget && ttTarget !== wc) {
+    const prev = ttTarget;
+    setFocusEmulation(prev, false);
+    sendTo(prev, 'type-through-released');
+  }
+  ttTarget = wc;
+  ensureOutsideWatch();
+  if (!ttRegistered.length) {
+    for (const c of typeThroughCombos()) {
+      try {
+        if (globalShortcut.isRegistered(c.acc)) continue; // one of Ace's own hotkeys
+        if (globalShortcut.register(c.acc, () => onTypeThroughKey(c))) ttRegistered.push(c.acc);
+      } catch {}
+    }
+  }
+  await setFocusEmulation(wc, true);
+  return ttTarget === wc;
+}
+
+function typeThroughRelease() {
+  for (const acc of ttRegistered) { try { globalShortcut.unregister(acc); } catch {} }
+  ttRegistered = [];
+  const wc = ttTarget;
+  ttTarget = null;
+  if (wc) {
+    setFocusEmulation(wc, false);
+    sendTo(wc, 'type-through-released');
+  }
+}
+
+// Text selected in Ace (an answer, a transcript line) is copied with Ctrl+C,
+// but Ctrl+C goes to the focused app. So for a short while after a selection
+// is made in Ace, one Ctrl+C is taken and copies that selection instead.
+const SELECTION_COPY_MS = 10000;
+function selectionCopyStart(wc) {
+  selectionCopyEnd();
+  if (!noActivate() || ttTarget || !wc || wc.isDestroyed()) return false;
+  try {
+    if (globalShortcut.isRegistered('Ctrl+C')) return false;
+    const ok = globalShortcut.register('Ctrl+C', () => {
+      const target = ttSelCopy && ttSelCopy.wc;
+      selectionCopyEnd();
+      sendTo(target, 'type-through-copy-selection');
+    });
+    if (!ok) return false;
+  } catch { return false; }
+  ttSelCopy = { wc, timer: setTimeout(selectionCopyEnd, SELECTION_COPY_MS) };
+  ensureOutsideWatch();
+  return true;
+}
+function selectionCopyEnd() {
+  if (!ttSelCopy) return;
+  clearTimeout(ttSelCopy.timer);
+  ttSelCopy = null;
+  try { globalShortcut.unregister('Ctrl+C'); } catch {}
+}
+
+// Ace's windows never take focus, so nothing in Ace sees the user click
+// another app or Alt+Tab to one: the keys would stay with Ace and everything
+// typed there would land in Ace. A small hidden PowerShell helper watches the
+// mouse buttons and the foreground window ("down": a button was pressed, "fg":
+// another window came to the front). While Ace holds the keys (a field, or the
+// Ctrl+C of a selection), a press outside Ace's windows or another window
+// coming to the front gives them back. Started the first time Ace takes the
+// keys, then kept: it stops with the app (it also ends itself if Ace is gone).
+const OUTSIDE_WATCH_PS = String.raw`
+$ErrorActionPreference = 'Stop'
+Add-Type @'
+using System; using System.Runtime.InteropServices;
+public static class AceOutsideWatch {
+  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+}
+'@
+$parentPid = __PARENT_PID__
+$wasDown = $false
+$fg = [AceOutsideWatch]::GetForegroundWindow()
+$tick = 0
+while ($true) {
+  $down = (([AceOutsideWatch]::GetAsyncKeyState(1) -band 0x8000) -ne 0) -or
+          (([AceOutsideWatch]::GetAsyncKeyState(2) -band 0x8000) -ne 0) -or
+          (([AceOutsideWatch]::GetAsyncKeyState(4) -band 0x8000) -ne 0)
+  if ($down -and -not $wasDown) { [Console]::Out.WriteLine('down'); [Console]::Out.Flush() }
+  $wasDown = $down
+  $now = [AceOutsideWatch]::GetForegroundWindow()
+  if ($now -ne $fg) { $fg = $now; [Console]::Out.WriteLine('fg'); [Console]::Out.Flush() }
+  if ((++$tick % 33) -eq 0 -and -not (Get-Process -Id $parentPid -ErrorAction SilentlyContinue)) { break }
+  Start-Sleep -Milliseconds 30
+}
+`;
+let outsideWatch = null;
+function ensureOutsideWatch() {
+  if (!NO_ACTIVATE_SUPPORTED || outsideWatch) return;
+  const script = OUTSIDE_WATCH_PS.replace('__PARENT_PID__', String(process.pid));
+  let p;
+  try {
+    p = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+      '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+      { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch (e) { appendLogLine('[type-through] outside watch failed: ' + e.message); return; }
+  outsideWatch = p;
+  let buf = '';
+  p.stdout.on('data', (d) => {
+    buf += d.toString();
+    const lines = buf.split(/\r?\n/);
+    buf = lines.pop();
+    for (const l of lines) onOutsideEvent(l.trim());
+  });
+  p.on('error', () => { if (outsideWatch === p) outsideWatch = null; });
+  p.on('exit', () => { if (outsideWatch === p) outsideWatch = null; });
+}
+function stopOutsideWatch() {
+  if (!outsideWatch) return;
+  try { outsideWatch.kill(); } catch {}
+  outsideWatch = null;
+}
+// The windows whose pages take typing (type-through.js). A press on one of
+// them is the page's to handle; a press anywhere else gives the keys back.
+function pointInTypingWindow(p) {
+  for (const w of [win, stickyWin]) {
+    if (!w || w.isDestroyed() || !w.isVisible() || w.isMinimized()) continue;
+    if (state.clickThrough) continue; // clicks pass through to the app below
+    const b = w.getBounds();
+    if (p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height) return true;
+  }
+  return false;
+}
+function onOutsideEvent(ev) {
+  if (!ttTarget && !ttSelCopy) return;
+  if (ev === 'fg' || (ev === 'down' && !pointInTypingWindow(screen.getCursorScreenPoint()))) {
+    typeThroughRelease();
+    selectionCopyEnd();
+  }
+}
+
+ipcMain.handle('type-through-mode', () => ({ enabled: noActivate() }));
+ipcMain.handle('type-through-engage', (e) => typeThroughEngage(e.sender));
+ipcMain.handle('type-through-release', () => { typeThroughRelease(); selectionCopyEnd(); });
+ipcMain.handle('type-through-selection', (e, on) => (on ? selectionCopyStart(e.sender) : (selectionCopyEnd(), false)));
+ipcMain.handle('type-through-clipboard', () => {
+  let text = '', image = '';
+  try { text = clipboard.readText() || ''; } catch {}
+  try {
+    const img = clipboard.readImage();
+    if (img && !img.isEmpty()) image = img.toDataURL();
+  } catch {}
+  return { text, image };
+});
+// Recording a new hotkey in Settings needs the real key events, so for that
+// moment the window is allowed to take focus.
+ipcMain.handle('type-through-real-focus', (e, on) => {
+  const w = BrowserWindow.fromWebContents(e.sender);
+  if (!w || w.isDestroyed() || !noActivate()) return false;
+  typeThroughRelease();
+  try {
+    w.setFocusable(!!on);
+    w.setSkipTaskbar(true); // setFocusable(true) puts the window on the taskbar on Windows
+    if (on) w.focus();
+  } catch {}
+  return true;
+});
+
+function applyNoActivate() {
+  const on = noActivate();
+  if (!on) { typeThroughRelease(); selectionCopyEnd(); }
+  for (const w of [win, stickyWin, infoWin]) {
+    if (!w || w.isDestroyed()) continue;
+    try { w.setFocusable(!on); w.setSkipTaskbar(true); } catch {}
+  }
+  for (const w of [win, stickyWin]) {
+    if (w && !w.isDestroyed()) sendTo(w.webContents, 'type-through-mode', { enabled: on });
+  }
+}
+ipcMain.handle('get-keep-focus', () => ({ supported: NO_ACTIVATE_SUPPORTED, enabled: state.keepOtherAppFocused !== false }));
+ipcMain.handle('set-keep-focus', (_e, v) => {
+  state.keepOtherAppFocused = !!v;
+  saveState();
+  applyNoActivate();
+  return state.keepOtherAppFocused;
+});
+// The page says when supporter mode is on screen (see supporterUiActive).
+ipcMain.handle('set-supporter-ui', (_e, on) => {
+  on = !!on;
+  if (on === supporterUiActive) return;
+  supporterUiActive = on;
+  applyNoActivate();
+  // The user just chose supporter mode in Ace: let its window have the keyboard.
+  if (on && win && !win.isDestroyed() && win.isVisible()) { try { win.focus(); } catch {} }
+});
 
 // ── Floating toggle button ────────────────────────────────────────────────────
 // A tiny always-on-top, stealth window with one button that shows/hides the
@@ -848,6 +1142,7 @@ function applyStickyState() {
     syncStickyPosition();
     try { stickyWin.setOpacity(win.getOpacity()); } catch {}
   } else if (stickyWin.isVisible()) {
+    if (ttTarget === stickyWin.webContents) typeThroughRelease();
     stickyWin.hide();
   }
 }
@@ -870,6 +1165,7 @@ function createStickyWindow() {
     alwaysOnTop: true,
     resizable: true,
     show: false,
+    focusable: !noActivate(),
     icon: path.join(__dirname, 'build', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload-sticky.js'),
@@ -885,7 +1181,11 @@ function createStickyWindow() {
   stickyWin.setMenuBarVisibility(false);
   stickyReady = false;
   stickyWin.loadFile(path.join(__dirname, 'renderer', 'sticky.html'));
-  stickyWin.on('closed', () => { stickyWin = null; stickyReady = false; });
+  const stickyWc = stickyWin.webContents;
+  stickyWin.on('closed', () => {
+    if (ttTarget === stickyWc) typeThroughRelease();
+    stickyWin = null; stickyReady = false;
+  });
   stickyWin.on('move', () => {
     if (!stickyWin || stickyWin.isDestroyed() || !win) return;
     if (stickyMovingProgrammatically > 0) return;
@@ -933,6 +1233,7 @@ function createInfoWindow() {
     minWidth: 220, minHeight: 280,
     frame: false, backgroundColor: '#ffffff',
     skipTaskbar: true, alwaysOnTop: true, resizable: true, show: false,
+    focusable: !noActivate(),
     icon: path.join(__dirname, 'build', 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload-info.js'), contextIsolation: true, nodeIntegration: false },
   });
@@ -1229,6 +1530,9 @@ function pasteToForeground(text) {
       if (win) win.webContents.send('capture-error', 'Paste: ' + MAC_ACCESSIBILITY_HINT + ' The text is on the clipboard — press Cmd+V manually.');
       return;
     }
+    // A typing capture would take the injected Ctrl+V: give the keys back first.
+    typeThroughRelease();
+    selectionCopyEnd();
     const r = await pasteKeystroke();
     if (!r.ok && win) {
       win.webContents.send('capture-error',
@@ -1304,6 +1608,8 @@ function openSnipSelector() {
   if (!win) return;
   snipMode = true;
   snipPrevVisible = win.isVisible();
+  typeThroughRelease();
+  selectionCopyEnd();
   win.hide();
   setTimeout(() => {
     const cursor = screen.getCursorScreenPoint();
@@ -1313,14 +1619,32 @@ function openSnipSelector() {
       width: display.bounds.width, height: display.bounds.height,
       frame: false, transparent: true, alwaysOnTop: true, skipTaskbar: true,
       resizable: false, movable: false, hasShadow: false, fullscreenable: false,
+      focusable: !noActivate(),
       webPreferences: { preload: path.join(__dirname, 'preload-selector.js'), contextIsolation: true, nodeIntegration: false },
     });
     selectorWin.setAlwaysOnTop(true, 'screen-saver');
     try { selectorWin.setContentProtection(state.stealth); } catch {}
     selectorWin.loadFile(path.join(__dirname, 'renderer', 'selector.html'));
-    selectorWin.once('ready-to-show', () => selectorWin.show());
-    selectorWin.on('closed', () => { selectorWin = null; });
+    selectorWin.once('ready-to-show', () => showWindow(selectorWin));
+    // A non-activating selector gets no key events, so Esc is taken globally
+    // while it is open.
+    const escTaken = noActivate() && snipEscRegister();
+    selectorWin.on('closed', () => {
+      selectorWin = null;
+      if (escTaken) { try { globalShortcut.unregister('Escape'); } catch {} }
+    });
   }, 150);
+}
+
+function snipEscRegister() {
+  try {
+    if (globalShortcut.isRegistered('Escape')) return false;
+    return globalShortcut.register('Escape', () => {
+      snipMode = false;
+      if (selectorWin) { try { selectorWin.close(); } catch {} selectorWin = null; }
+      if (snipPrevVisible && win) showWindow(win);
+    });
+  } catch { return false; }
 }
 
 function pickSourceForDisplay(sources, display) {
@@ -1359,7 +1683,7 @@ async function handleSnipDone(rect) {
     appendLogLine('[snip] capture failed: ' + e.message);
   }
   snipMode = false;
-  if (snipPrevVisible && win) win.show();
+  if (snipPrevVisible && win) showWindow(win);
 }
 
 // The selector window is only used by the Alt+S area snip.
@@ -1368,7 +1692,7 @@ ipcMain.on('selector-done', (_e, rect) => { handleSnipDone(rect || {}); });
 ipcMain.on('selector-cancel', () => {
   snipMode = false;
   if (selectorWin) { try { selectorWin.close(); } catch {} selectorWin = null; }
-  if (snipPrevVisible && win) win.show();
+  if (snipPrevVisible && win) showWindow(win);
 });
 
 const HOTKEY_HANDLERS = {
@@ -1442,18 +1766,11 @@ let wsReconnectTimer = null;
 let nextConnId = 1;
 const supporterConns = new Map();
 let supporterOwnMicMode = 'mute';
-// Speaker: a fresh 6-digit code per hosting session. A supporter must send it
-// first, or the connection is refused: without it anyone on the network who
-// found the port could listen to the call. Wrong codes are counted per
-// address, and an address with 5 is refused for the rest of the session.
-let supporterJoinCode = '';
-const joinFailures = new Map();
-const JOIN_MAX_FAILURES = 5;
-const JOIN_TIMEOUT_MS = 10000;
-function newJoinCode() { return String(require('crypto').randomInt(0, 1000000)).padStart(6, '0'); }
-// Supporter: the code to send, and whether this connection was let in. Only a
-// connection that was let in reconnects by itself after a drop.
-let joinCodeOut = '';
+// Speaker: a supporter joins with this computer's IP address alone, no code;
+// one supporter at a time. The speaker is told who joined (toast, headset
+// panel) and can disconnect them.
+// Supporter: whether this connection was let in. Only a connection that was
+// let in reconnects by itself after a drop.
 let supporterAdmitted = false;
 let supporterRefused = '';
 const MIC_MODES = ['mute', 'aOnly', 'aAndC'];
@@ -1568,8 +1885,6 @@ function startSignalingServer() {
     return;
   }
   ensureFirewallRule(addr.port, false);
-  supporterJoinCode = newJoinCode();
-  joinFailures.clear();
   try {
     wsServer = new WebSocket.Server({ port: addr.port, host: '0.0.0.0' });
   } catch (e) {
@@ -1588,9 +1903,7 @@ function startSignalingServer() {
       try { ws.close(code, reason); } catch {}
     };
     if (supporterConns.size >= 1) return refuse('capacity', 4002);
-    if ((joinFailures.get(ip) || 0) >= JOIN_MAX_FAILURES) return refuse('blocked', 4004);
     let id = null;
-    const joinTimer = setTimeout(() => { if (!id) refuse('timeout', 4005); }, JOIN_TIMEOUT_MS);
     const admit = () => {
       id = String(nextConnId++);
       const initialMicMode = 'mute';
@@ -1612,23 +1925,8 @@ function startSignalingServer() {
     ws.on('message', (data) => {
       let msg;
       try { msg = JSON.parse(data.toString()); } catch { return; }
-      if (!id) {
-        // Nothing but the join code is accepted before the supporter is let in.
-        if (!msg || msg.type !== 'join') return;
-        clearTimeout(joinTimer);
-        if (String(msg.code || '').replace(/\D/g, '') !== supporterJoinCode) {
-          const n = (joinFailures.get(ip) || 0) + 1;
-          joinFailures.set(ip, n);
-          appendLogLine(`[supporter] wrong join code from ${ip} (${n}/${JOIN_MAX_FAILURES})`);
-          return refuse(n >= JOIN_MAX_FAILURES ? 'blocked' : 'code', 4001);
-        }
-        if (supporterConns.size >= 1) return refuse('capacity', 4002);
-        for (const e of supporterConns.values()) {
-          if (e && e.ip === ip && e.port === port) return refuse('duplicate', 4003);
-        }
-        admit();
-        return;
-      }
+      if (!id) return;
+      if (msg && msg.type === 'join') return; // an older supporter's Ace still sends its code
       if (msg && msg.type === 'request-mic-mode') {
         setSupporterMicMode(id, msg.mode);
         return;
@@ -1660,7 +1958,6 @@ function startSignalingServer() {
       if (win) win.webContents.send('signaling-in', { connId: id, ...msg });
     });
     ws.on('close', () => {
-      clearTimeout(joinTimer);
       if (!id) return;
       const cur = supporterConns.get(id);
       if (cur && cur.ws === ws) supporterConns.delete(id);
@@ -1669,6 +1966,7 @@ function startSignalingServer() {
       broadcastNetworkStatus();
     });
     ws.on('error', () => {});
+    admit();
   });
   wsServer.on('error', (e) => {
     if (win) win.webContents.send('network-error', 'Server error: ' + e.message);
@@ -1704,7 +2002,6 @@ function connectSignalingClient() {
   wsClient = ws;
   supporterRefused = '';
   ws.on('open', () => {
-    try { ws.send(JSON.stringify({ type: 'join', code: joinCodeOut })); } catch {}
     if (win) win.webContents.send('signaling-in', { type: 'opened' });
     broadcastNetworkStatus();
   });
@@ -1814,6 +2111,9 @@ function stopNetwork() {
 
 const hotkeyFailures = {};
 function registerHotkeys() {
+  // unregisterAll() also drops the keys a typing capture holds: end it cleanly.
+  typeThroughRelease();
+  selectionCopyEnd();
   globalShortcut.unregisterAll();
   for (const action of Object.keys(HOTKEY_HANDLERS)) {
     delete hotkeyFailures[action];
@@ -2128,6 +2428,7 @@ let appIsQuitting = false;
 app.on('before-quit', () => {
   appIsQuitting = true;
   try { stopSpeakerWatch(); } catch {}
+  try { stopOutsideWatch(); } catch {}
   try { deepgramActive = false; xaiActive = false; micDgActive = false; clearDeepgramTimers(); clearXaiTimers(); } catch {}
   for (const ws of [deepgramWs, xaiWs, micDgWs]) { try { if (ws) { ws.removeAllListeners(); ws.on('error', () => {}); ws.terminate(); } } catch {} }
   for (const r of recStreams.values()) { try { r.stream.end(); } catch {} }
@@ -2245,7 +2546,7 @@ function showRunningApp() {
   // hidden window only
   const hidden = !win.isVisible();
   if (win.isMinimized()) win.restore();
-  if (hidden) showMain(); else { try { win.focus(); } catch {} }
+  if (hidden) showMain(); else if (!noActivate()) { try { win.focus(); } catch {} }
   raiseFloat();
 }
 app.on('second-instance', (_e, _argv, _cwd, data) => {
@@ -4746,6 +5047,10 @@ ipcMain.handle('write-to-ide', async (_e, { code, speedFactor, stripIndent } = {
     ideTypingActive = false; stopCursorTakeover(); notifyTypingState();
     return { ok: false, error: MAC_ACCESSIBILITY_HINT };
   }
+  // A typing capture would take the injected keys: give them back first
+  // (typeThroughEngage refuses while this runs).
+  typeThroughRelease();
+  selectionCopyEnd();
   const injector = createKeyInjector();
   const teardownEarly = (error) => {
     if (win) { win.off('focus', onWinFocus); win.off('blur', onWinBlur); }
@@ -5025,24 +5330,21 @@ ipcMain.handle('set-network-config', (_e, cfg) => {
 ipcMain.handle('start-network', () => { startNetwork(); });
 
 // Supporter mode: join the speaker at host[:port] with the code their Ace shows.
+// The supporter types only the speaker's IP address; the speaker always listens
+// on the default port.
+const SUPPORTER_PORT = DEFAULT_STATE.network.speakerPort;
 function normalizeSpeakerAddress(addr) {
-  const a = String(addr || '').trim().replace(/^wss?:\/\//i, '').replace(/\/+$/, '');
-  if (!a) return null;
-  const m = a.match(/^([^\s:]+)(?::(\d{1,5}))?$/);
-  if (!m) return null;
-  const port = m[2] ? parseInt(m[2], 10) : 2000;
-  if (!(port >= 1 && port <= 65535)) return null;
-  return `${m[1]}:${port}`;
+  const ip = String(addr || '').trim().replace(/:\d*$/, '');
+  const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m || m.slice(1).some((n) => parseInt(n, 10) > 255)) return null;
+  return `${ip}:${SUPPORTER_PORT}`;
 }
-ipcMain.handle('join-as-supporter', (_e, { address, code } = {}) => {
+ipcMain.handle('join-as-supporter', (_e, { address } = {}) => {
   const addr = normalizeSpeakerAddress(address);
-  if (!addr) return { ok: false, error: 'Enter the address as shown in their Ace, for example 192.168.1.20:2000.' };
-  const digits = String(code || '').replace(/\D/g, '');
-  if (digits.length !== 6) return { ok: false, error: 'The code has 6 digits.' };
+  if (!addr) return { ok: false, error: 'Enter their IP address, for example 192.168.1.20.' };
   stopSignalingServer();
   state.network = { ...state.network, role: 'supporter', supporterAddress: addr, address: addr };
   saveState();
-  joinCodeOut = digits;
   supporterAdmitted = false;
   supporterOwnMicMode = 'mute';
   connectSignalingClient();
@@ -5106,7 +5408,6 @@ ipcMain.handle('set-side-pane', (_e, open, width) => {
 });
 ipcMain.handle('leave-supporter', () => {
   disconnectSignalingClient();
-  joinCodeOut = '';
   supporterAdmitted = false;
   state.network.role = 'speaker';
   state.network.address = `0.0.0.0:${state.network.speakerPort || 2000}`;
@@ -5132,7 +5433,6 @@ ipcMain.handle('get-supporter-invite', () => {
   const port = (parseAddress(state.network.address) || {}).port || state.network.speakerPort || 2000;
   return {
     hosting: !!wsServer && state.network.role === 'speaker',
-    code: wsServer ? supporterJoinCode : '',
     port,
     addresses: lanAddresses(),
     supporters: supporterListSnapshot(),

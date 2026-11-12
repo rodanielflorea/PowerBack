@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld('api', {
   getTranscriptionConfig: () => ipcRenderer.invoke('get-transcription-config'),
   getBuiltinKeys: () => ipcRenderer.invoke('get-builtin-keys'),
   getAntiClose: () => ipcRenderer.invoke('get-anti-close'),
+  getKeepFocus: () => ipcRenderer.invoke('get-keep-focus'),
+  setKeepFocus: (v) => ipcRenderer.invoke('set-keep-focus', v),
+  setSupporterUi: (on) => ipcRenderer.invoke('set-supporter-ui', !!on),
   setAntiClose: (v) => ipcRenderer.invoke('set-anti-close', v),
   setTranscriptionConfig: (cfg) => ipcRenderer.invoke('set-transcription-config', cfg),
   getMeetingConfig: () => ipcRenderer.invoke('get-meeting-config'),
@@ -187,4 +190,20 @@ contextBridge.exposeInMainWorld('api', {
   speculativeCancel: () => ipcRenderer.invoke('speculative-cancel'),
   onAnswerCancelSpeculative: (cb) => ipcRenderer.on('answer-cancel-speculative', () => cb()),
   onAnswerCommitSpeculative: (cb) => ipcRenderer.on('answer-commit-speculative', () => cb()),
+});
+
+// Typing into Ace without taking focus from the other app (Windows):
+// renderer/type-through.js drives it, main.js holds the keys.
+contextBridge.exposeInMainWorld('typeThrough', {
+  mode: () => ipcRenderer.invoke('type-through-mode'),
+  onMode: (cb) => ipcRenderer.on('type-through-mode', (_e, v) => cb(v)),
+  engage: () => ipcRenderer.invoke('type-through-engage'),
+  release: () => ipcRenderer.invoke('type-through-release'),
+  selection: (on) => ipcRenderer.invoke('type-through-selection', !!on),
+  realFocus: (on) => ipcRenderer.invoke('type-through-real-focus', !!on),
+  readClipboard: () => ipcRenderer.invoke('type-through-clipboard'),
+  copyText: (text) => ipcRenderer.invoke('copy-text', text),
+  onKey: (cb) => ipcRenderer.on('type-through-key', (_e, v) => cb(v)),
+  onReleased: (cb) => ipcRenderer.on('type-through-released', () => cb()),
+  onCopySelection: (cb) => ipcRenderer.on('type-through-copy-selection', () => cb()),
 });

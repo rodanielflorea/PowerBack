@@ -1608,6 +1608,7 @@ function openSettings() {
 }
 
 function closeSettings() {
+  cancelCapture();
   settingsOverlay.hidden = true;
 }
 
@@ -1836,6 +1837,15 @@ if (antiCloseEl && window.api.getAntiClose) {
   }).catch(() => {});
   antiCloseEl.addEventListener("change", () => window.api.setAntiClose(antiCloseEl.checked));
 }
+const keepFocusEl = document.getElementById("keepFocus");
+if (keepFocusEl && window.api.getKeepFocus) {
+  window.api.getKeepFocus().then((s) => {
+    const field = document.getElementById("keepFocusField");
+    if (field) field.hidden = !s.supported;
+    keepFocusEl.checked = !!s.enabled;
+  }).catch(() => {});
+  keepFocusEl.addEventListener("change", () => window.api.setKeepFocus(keepFocusEl.checked));
+}
 micSelect.addEventListener("change", () =>
   persistTx({ micDeviceId: micSelect.value }),
 );
@@ -2012,14 +2022,19 @@ function beginCapture(action) {
     await window.api.setHotkey(a, combo);
   };
   document.addEventListener("keydown", captureKeyHandler, true);
+  // On Windows the window never takes focus (type-through.js); recording a
+  // combo needs the real key events, so it may for as long as this listens.
+  if (window.typeThroughRealFocus) window.typeThroughRealFocus(true);
 }
 
 function cancelCapture() {
+  const wasCapturing = !!captureKeyHandler;
   if (captureKeyHandler) {
     document.removeEventListener("keydown", captureKeyHandler, true);
     captureKeyHandler = null;
   }
   capturingFor = null;
+  if (wasCapturing && window.typeThroughRealFocus) window.typeThroughRealFocus(false);
 }
 
 resetAllHotkeysBtn.addEventListener("click", async () => {
@@ -5853,12 +5868,12 @@ async function refreshSupporterSettings() {
     if (shareScreenEl) shareScreenEl.checked = cfg.shareScreen !== false;
     if (supporterJoinAddrEl) {
       // The same address the headset panel shows: the real network first.
-      let port = cfg.speakerPort || 2000, addrs = [];
+      let addrs = [];
       try {
         const inv = window.api.getSupporterInvite && await window.api.getSupporterInvite();
-        if (inv) { port = inv.port || port; addrs = inv.addresses || []; }
+        if (inv) addrs = inv.addresses || [];
       } catch {}
-      supporterJoinAddrEl.textContent = (addrs.length ? addrs[0].address : "<this computer's IP>") + ":" + port;
+      supporterJoinAddrEl.textContent = addrs.length ? addrs[0].address : "<this computer's IP>";
     }
   } catch {}
 }
@@ -5922,27 +5937,55 @@ if (screenFullBtn) screenFullBtn.addEventListener("click", goFull);
 if (screenVideoEl) screenVideoEl.addEventListener("dblclick", goFull);
 
 // ── Supporter mode ──────────────────────────────────────────────────────────
-// The welcome screen's "Join as supporter" opens the join screen (address and
-// code from the speaker's headset panel). Once let in, the window shows the
+// The welcome screen's "Join as supporter" opens the join screen (the IP
+// address from the speaker's headset panel). Once let in, the window shows the
 // notes chat with the mic and volume controls; End leaves. On the speaker's
-// side the headset button in the title bar shows the address and the code.
+// side the headset button in the title bar shows the IP address.
 const joinOverlayEl = document.getElementById("joinOverlay");
 const joinAddressEl = document.getElementById("joinAddress");
-const joinCodeEl = document.getElementById("joinCode");
 const joinStatusEl = document.getElementById("joinStatus");
 const joinConnectBtn = document.getElementById("joinConnectBtn");
 const supporterBarDot = document.getElementById("supporterBarDot");
 const supporterBarText = document.getElementById("supporterBarText");
 const supporterVolumeEl = document.getElementById("supporterVolume");
 let joinPending = null;      // { address, timer } while waiting to be let in
-let supporterAddress = "";
+let supporterAddress = "";   // the speaker's IP address, for display
+
+// The supporter types only the speaker's IP address; the port is always the
+// default (main adds it). A pasted "ip:port" keeps just the IP.
+const ipOnly = (a) => String(a || "").trim().replace(/:\d*$/, "");
+function isIpv4(s) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
+  return !!m && m.slice(1).every((n) => parseInt(n, 10) <= 255);
+}
+if (joinAddressEl)
+  joinAddressEl.addEventListener("input", () => {
+    const v = joinAddressEl.value;
+    const clean = v.replace(/:.*$/, "").replace(/[^\d.]/g, "");
+    if (clean !== v) joinAddressEl.value = clean;
+  });
+
+// Supporter mode on screen (the join screen, or the supporter's window): Ace
+// is then an ordinary window that takes focus, so its fields are typed into
+// the normal way (main.js, supporterUiActive). Read from the page itself, so
+// every way in and out of supporter mode is covered.
+let supporterUiOn = false;
+let supporterUiTimer = null;
+function syncSupporterUi() {
+  supporterUiTimer = null;
+  const on = !!(joinOverlayEl && !joinOverlayEl.hidden) || document.body.classList.contains("role-supporter");
+  if (on === supporterUiOn) return;
+  supporterUiOn = on;
+  if (window.api.setSupporterUi) window.api.setSupporterUi(on).catch(() => {});
+}
+const supporterUiObserver = new MutationObserver(() => {
+  if (!supporterUiTimer) supporterUiTimer = setTimeout(syncSupporterUi, 0);
+});
+if (joinOverlayEl) supporterUiObserver.observe(joinOverlayEl, { attributes: true, attributeFilter: ["hidden"] });
+supporterUiObserver.observe(document.body, { attributes: true, attributeFilter: ["class"] });
 
 const JOIN_REASONS = {
-  code: "That code is wrong. Check the code in their headset panel; it changes every session.",
-  blocked: "Too many wrong codes from this computer. They need to end and start their session again for a new code.",
   capacity: "Someone else is already supporting this call.",
-  duplicate: "This computer is already connected.",
-  timeout: "No code reached them in time. Try again.",
   ended: "Their session ended.",
   refused: "They refused the connection.",
 };
@@ -5962,15 +6005,12 @@ function showJoin(message) {
   leaveInterviewUi();
   if (joinOverlayEl) joinOverlayEl.hidden = false;
   if (joinAddressEl && !joinAddressEl.value) {
-    const saved = (netCfg && netCfg.supporterAddress) || "";
-    if (saved && saved !== "172.16.98.11:2000") joinAddressEl.value = saved;
+    const saved = ipOnly(netCfg && netCfg.supporterAddress);
+    if (saved && saved !== "172.16.98.11") joinAddressEl.value = saved;
   }
   if (joinConnectBtn) joinConnectBtn.disabled = false;
   setJoinStatus(message || "", message ? "err" : "");
-  setTimeout(() => {
-    const el = joinAddressEl && !joinAddressEl.value ? joinAddressEl : joinCodeEl;
-    try { el && el.focus(); } catch {}
-  }, 50);
+  setTimeout(() => { try { joinAddressEl && joinAddressEl.focus(); } catch {} }, 50);
 }
 
 function clearJoinPending() {
@@ -5981,24 +6021,23 @@ function clearJoinPending() {
 
 async function startJoin() {
   if (joinPending) return;
-  const address = (joinAddressEl && joinAddressEl.value.trim()) || "";
-  const code = (joinCodeEl && joinCodeEl.value.replace(/\D/g, "")) || "";
-  if (!address) { setJoinStatus("Enter their address.", "err"); joinAddressEl && joinAddressEl.focus(); return; }
-  if (code.length !== 6) { setJoinStatus("Enter the 6-digit code.", "err"); joinCodeEl && joinCodeEl.focus(); return; }
+  const address = ipOnly(joinAddressEl && joinAddressEl.value);
+  if (!address) { setJoinStatus("Enter their IP address.", "err"); joinAddressEl && joinAddressEl.focus(); return; }
+  if (!isIpv4(address)) { setJoinStatus("Enter their IP address, for example 192.168.1.20.", "err"); joinAddressEl && joinAddressEl.focus(); return; }
   netCfg = { ...(netCfg || {}), role: "supporter" };
   teardownPeers();
-  const r = await window.api.joinAsSupporter({ address, code }).catch((e) => ({ ok: false, error: e.message }));
+  const r = await window.api.joinAsSupporter({ address }).catch((e) => ({ ok: false, error: e.message }));
   if (!r || !r.ok) { setJoinStatus((r && r.error) || "Could not connect.", "err"); return; }
-  supporterAddress = r.address;
+  supporterAddress = address;
   if (joinConnectBtn) joinConnectBtn.disabled = true;
-  setJoinStatus(`Connecting to ${r.address}…`, "busy");
+  setJoinStatus(`Connecting to ${address}…`, "busy");
   joinPending = {
-    address: r.address,
+    address,
     timer: setTimeout(async () => {
       if (!joinPending) return;
       clearJoinPending();
       await window.api.leaveSupporter().catch(() => {});
-      setJoinStatus(joinReasonText("unreachable", r.address), "err");
+      setJoinStatus(joinReasonText("unreachable", address), "err");
     }, 15000),
   };
   try { netCfg = await window.api.getNetworkConfig(); } catch {}
@@ -6084,8 +6123,7 @@ if (window.api.onJoinRejected)
       setJoinStatus(joinReasonText(reason, addr), "err");
       return;
     }
-    if (reason === "code") supporterLostConnection("Their session restarted with a new code. Enter the new code.");
-    else supporterLostConnection(joinReasonText(reason, supporterAddress));
+    supporterLostConnection(joinReasonText(reason, supporterAddress));
   });
 
 window.api.onNetworkStatus((status) => {
@@ -6118,15 +6156,13 @@ if (joinBackBtn)
 const joinSettingsBtn = document.getElementById("joinSettingsBtn");
 if (joinSettingsBtn) joinSettingsBtn.addEventListener("click", () => openSettings());
 if (joinConnectBtn) joinConnectBtn.addEventListener("click", () => startJoin());
-[joinAddressEl, joinCodeEl].forEach((el) => {
-  if (el) el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); startJoin(); } });
-});
+if (joinAddressEl)
+  joinAddressEl.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); startJoin(); } });
 
 // Speaker: the headset button and its panel.
 const supporterInviteBtn = document.getElementById("supporterInviteBtn");
 const supporterPanel = document.getElementById("supporterPanel");
 const supporterPanelAddr = document.getElementById("supporterPanelAddr");
-const supporterPanelCode = document.getElementById("supporterPanelCode");
 const supporterPanelStatus = document.getElementById("supporterPanelStatus");
 const supporterPanelKick = document.getElementById("supporterPanelKick");
 const supporterPanelOther = document.getElementById("supporterPanelOther");
@@ -6139,14 +6175,14 @@ async function refreshSupporterInvite(status) {
   if (supporterInviteBtn) supporterInviteBtn.classList.toggle("connected", !!sup);
   if (!supporterPanel || supporterPanel.hidden) return;
   // The real network address first; VPN and virtual adapters are listed
-  // below it, for a supporter who is on the same VPN.
-  const all = (inv.addresses || []).map((a) => `${a.address}:${inv.port}`);
+  // below it, for a supporter who is on the same VPN. Only the IP: the
+  // supporter's Ace always uses the default port.
+  const all = (inv.addresses || []).map((a) => a.address);
   if (supporterPanelAddr) supporterPanelAddr.textContent = inv.hosting ? (all[0] || "No network found") : "—";
   if (supporterPanelOther) {
     supporterPanelOther.hidden = !inv.hosting || all.length < 2;
     supporterPanelOther.textContent = all.length > 1 ? "Other addresses of this computer (VPN, virtual): " + all.slice(1).join(", ") : "";
   }
-  if (supporterPanelCode) supporterPanelCode.textContent = inv.hosting && inv.code ? inv.code.slice(0, 3) + " " + inv.code.slice(3) : "—";
   if (supporterPanelStatus) {
     supporterPanelStatus.className = "supporter-panel-status" + (sup ? " connected" : "");
     supporterPanelStatus.textContent = !inv.hosting
