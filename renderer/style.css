@@ -211,11 +211,12 @@ html { background: var(--bg); }
 .tb-caret { width: 20px; margin-left: 2px; color: var(--muted); border-left: 1px solid var(--border); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 .tb-caret .ico { font-size: 12px; }
 .tb-caret.open { background: var(--surface-2); color: var(--text); }
-.tb-sep { width: 1px; height: 18px; background: var(--border); margin: 0 2px 0 4px; }
-/* Window controls: full height at the right edge, like the system's own. */
-.win-btn { width: 40px; height: var(--header-h); border-radius: 0; color: var(--muted); }
-.win-btn .ico { font-size: 15px; }
+.tb-sep { width: 1px; height: 16px; background: var(--border); margin: 0 2px; }
+/* Window controls: small, like the other title-bar buttons; close turns red. */
+.win-btn { width: 24px; height: 24px; border-radius: var(--radius-sm); color: var(--muted); }
+.win-btn .ico { font-size: 14px; }
 .win-btn:hover { background: var(--surface-2); color: var(--text); }
+.win-close { margin-right: 4px; }
 .win-close:hover { background: #e81123; color: #fff; }
 .win-close:active { background: #c50f1f; color: #fff; }
 
@@ -3039,7 +3040,6 @@ body.side-pane-open .answer-main { right: var(--sup-pane-w); }
 body.side-pane-open .chat-main { left: auto; right: 0; width: var(--sup-pane-w); border-left: 1px solid var(--border); }
 body.side-pane-open .cable-nudge { right: var(--sup-pane-w); }
 body.in-interview .cable-nudge { left: var(--rail-w); }
-body.role-supporter .chat-input-area { display: none !important; }
 /* The interviewer's column: just the chat, with its own message box. */
 body.role-speaker .chat-main .supporter-bar,
 body.role-speaker .chat-main .mic-mode-banner,
@@ -3048,10 +3048,6 @@ body.role-supporter .answer-presetbar .csel:has(#meetingTypeSelect),
 body.role-supporter #answerClearBtn,
 body.role-supporter #answerHistory .meet-actions,
 body.role-supporter #answerHistory .answer-q-actions { display: none !important; }
-.supporter-chat-send { display: none; }
-body.role-supporter .supporter-chat-send { display: inline-flex; align-items: center; justify-content: center; }
-.supporter-chat-send .ico { font-size: 17px; }
-body.role-supporter #getAnswerBtn { font-size: 12px; font-weight: 800; letter-spacing: .3px; }
 .chat-header { position: relative; }
 body.side-pane-open .chat-header { justify-content: flex-start; gap: 6px; padding: 0 70px 0 12px; height: 40px; }
 .chat-header-ico { font-size: 15px; color: var(--muted); flex: none; }
@@ -3151,3 +3147,39 @@ body.side-pane-open .chat-empty { margin: auto; text-align: center; color: var(-
 /* Transcription lost its connection and is retrying (renderer.js). */
 .rec-btn.reconnecting { background: var(--warn-bg); color: var(--amber); box-shadow: inset 0 0 0 1px var(--warn-border); }
 .rec-btn.reconnecting .mic-icon { animation: micBlink 1s ease-in-out infinite; }
+/* Capture the screen (an area, or all of it) into the question. */
+.capture-btns { display: flex; flex-direction: column; gap: 4px; flex: none; }
+.capture-btn {
+  -webkit-app-region: no-drag;
+  flex: 1; width: 32px; min-height: 18px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--muted); font-size: 15px;
+  transition: background var(--t) var(--ease), color var(--t) var(--ease), border-color var(--t) var(--ease);
+}
+.capture-btn:hover { background: var(--surface-2); color: var(--accent-text); border-color: var(--border-hi); }
+/* A supporter's box asks the speaker's AI, which cannot see the supporter's screen. */
+body.role-supporter .capture-btns { display: none; }
+/* See-through: a button in the title bar, the slider in its panel. */
+.opacity-btn { color: var(--muted); }
+.opacity-btn .ico { font-size: 15px; }
+.opacity-btn.open { background: var(--surface-2); color: var(--text); }
+.opacity-pop { width: 230px; padding: 10px 14px 12px; }
+.opacity-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; font-size: 12px; font-weight: 600; color: var(--text-2); }
+#opacityVal { color: var(--accent-text); font-variant-numeric: tabular-nums; }
+.opacity-pop .slider { width: 100%; min-width: 0; height: 6px; margin: 0; border-radius: 3px; overflow: visible; background: var(--surface-2); }
+.opacity-pop .slider-fill { position: relative; border-radius: 3px; }
+.opacity-pop .slider-fill::after {
+  content: ""; position: absolute; right: -7px; top: 50%; transform: translateY(-50%);
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--elev); border: 2px solid var(--accent); box-shadow: var(--shadow-sm);
+}
+.opacity-hint { margin-top: 12px; font-size: 11px; color: var(--muted); }
+/* An answer written before the call for a question like the one asked. */
+.answer-prepared-tag {
+  align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 5px;
+  margin: 0 0 -4px 2px;
+  font-size: 11px; font-weight: 600; color: var(--success-text);
+}
+.answer-prepared-tag .ico { font-size: 12px; }

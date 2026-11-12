@@ -45,6 +45,11 @@
     "sparkles": '<path d="M9.94 15.5A2 2 0 0 0 8.5 14.06l-6.14-1.58a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.14a.5.5 0 0 1 .96 0l1.58 6.14a2 2 0 0 0 1.44 1.44l6.14 1.58a.5.5 0 0 1 0 .96l-6.14 1.58a2 2 0 0 0-1.44 1.44l-1.58 6.14a.5.5 0 0 1-.96 0z"/>',
     "play": '<path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z"/>',
     "arrow-down": '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>',
+    // See-through (window opacity): a half-filled circle
+    "opacity": '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/>',
+    // Screen capture: an area, the whole screen
+    "capture-area": '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><rect x="8" y="8" width="8" height="8" rx="1" stroke-dasharray="2 2"/>',
+    "capture-screen": '<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/><circle cx="12" cy="10.5" r="2.5"/>',
     // Answer formats
     "text": '<path d="M21 6H3"/><path d="M15 12H3"/><path d="M17 18H3"/>',
     "code": '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
@@ -58,6 +63,7 @@
     "phone-off": '<path d="M10.1 13.9a14 14 0 0 0 3.73 2.67 1 1 0 0 0 1.21-.3l.36-.47A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 7.27 16.73"/><path d="M22 2 2 22"/><path d="M4.76 13.58A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.47.35a1 1 0 0 0-.29 1.23c.07.16.15.32.24.47"/>',
     "win-min": '<path d="M6.5 12h11"/>',
     "win-close": '<path d="M7 7l10 10"/><path d="M17 7 7 17"/>',
+    "copy": '<rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/>',
   };
   function aceIcon(name, cls) {
     const p = P[name];

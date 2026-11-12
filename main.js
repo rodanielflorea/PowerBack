@@ -60,7 +60,7 @@ claimAppPid();
 const WebSocket = require('ws');
 const {
   PROVIDERS, getProvider, providerList,
-  streamChat, completeChat, listModels,
+  streamChat: providerStreamChat, completeChat: providerCompleteChat, listModels,
   friendlyAnswerError, modelAbbr,
 } = require('./llm-providers');
 const { createKeyInjector, pasteKeystroke } = require('./platform-input');
@@ -199,16 +199,23 @@ const DEFAULT_STATE = {
   // Answer generation: provider + per-provider keys/models. `apiKey` is the
   // legacy xAI key (kept so older state.json files still load).
   answer: {
-    provider: 'openai',
+    // Anthropic direct: the fastest and steadiest in the 2026-11-12 measurements (MODEL_TIERS).
+    provider: 'anthropic',
     apiKey: '',
-    model: 'gpt-5.6-luna',
+    model: 'claude-sonnet-5-5',
     keys: { xai: '', anthropic: '', openai: '', openrouter: '' },
+    // The model for spoken (Text) answers, per provider.
     models: {
       xai: 'grok-4.20-0309-non-reasoning',
       anthropic: 'claude-sonnet-5-5',
-      openai: 'gpt-5.6-luna',
+      openai: 'gpt-6.1-terra',
       openrouter: 'anthropic/claude-sonnet-5.5',
     },
+    // The models for Code / Diagram answers and for Project answers.
+    codeModels: {},
+    projectModels: {},
+    // Pick the three by the meeting type whenever it changes (MEETING_MODEL_PLAN).
+    autoModels: true,
   },
   meeting: {
     kind: 'hiring',             // hiring | team (follows from type)
@@ -456,6 +463,15 @@ function baseWindowSize(b) {
 
 function createWindow() {
   loadState();
+  // Automatic models: the first start (or a provider without picks yet) gets
+  // the picks for the saved meeting type.
+  try {
+    const pid = getAnswerProvider().id;
+    if (state.answer && state.answer.autoModels !== false && !(state.answer.codeModels && state.answer.codeModels[pid])) {
+      applyAutoModels();
+      saveState();
+    }
+  } catch {}
   // Only the place is restored: the size is always the fixed one.
   const startBounds = onScreenBounds({ x: state.x, y: state.y, width: DEFAULT_STATE.width, height: DEFAULT_STATE.height });
 
@@ -554,10 +570,10 @@ function createWindow() {
 
   win.on('move', () => { saveState(); syncStickyPosition(); });
   win.on('resize', () => { saveState(); syncStickyPosition(); });
-  win.on('show', () => { applyStickyState(); sendFloatState(); });
-  win.on('hide', () => { applyStickyState(); sendFloatState(); });
-  win.on('minimize', () => { applyStickyState(); sendFloatState(); });
-  win.on('restore', () => { applyStickyState(); sendFloatState(); });
+  win.on('show', () => { applyStickyState(); applyNoteState(); sendFloatState(); });
+  win.on('hide', () => { applyStickyState(); applyNoteState(); sendFloatState(); });
+  win.on('minimize', () => { applyStickyState(); applyNoteState(); sendFloatState(); });
+  win.on('restore', () => { applyStickyState(); applyNoteState(); sendFloatState(); });
   win.on('closed', () => {
     typeThroughRelease();
     selectionCopyEnd();
@@ -566,6 +582,7 @@ function createWindow() {
     stopSpeakerWatch();
     win = null;
     if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.close(); } catch {} }
+    closeAllNotes();
     // A window left behind would keep the app, and with it the one-instance
     // lock, alive without a main window: no start would bring Ace back.
     closeInfoWindow();
@@ -579,6 +596,7 @@ function setOpacity(value) {
   if (LINUX_CSS_OPACITY) win.webContents.send('opacity-css', v);
   else win.setOpacity(v);
   if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.setOpacity(v); } catch {} }
+  if (!LINUX_CSS_OPACITY) for (const w of liveNotes()) { try { w.setOpacity(v); } catch {} }
   saveState();
   win.webContents.send('opacity-changed', v);
 }
@@ -630,6 +648,7 @@ function setStealth(value) {
   state.stealth = !!value;
   win.setContentProtection(state.stealth);
   if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.setContentProtection(state.stealth); } catch {} }
+  for (const w of liveNotes()) { try { w.setContentProtection(state.stealth); } catch {} }
   if (infoWin && !infoWin.isDestroyed()) { try { infoWin.setContentProtection(state.stealth); } catch {} }
   if (screenViewerWin && !screenViewerWin.isDestroyed()) { try { screenViewerWin.setContentProtection(state.stealth); } catch {} }
   if (floatWin && !floatWin.isDestroyed()) { try { floatWin.setContentProtection(state.stealth); } catch {} }
@@ -899,7 +918,7 @@ ipcMain.handle('type-through-real-focus', (e, on) => {
 function applyNoActivate() {
   const on = noActivate();
   if (!on) { typeThroughRelease(); selectionCopyEnd(); }
-  for (const w of [win, stickyWin, infoWin]) {
+  for (const w of [win, stickyWin, infoWin, ...liveNotes()]) {
     if (!w || w.isDestroyed()) continue;
     try { w.setFocusable(!on); w.setSkipTaskbar(true); } catch {}
   }
@@ -1245,6 +1264,166 @@ function createStickyWindow() {
     }
   });
 }
+
+// ── Notes: one piece of code or one diagram in a window of its own ─────────────
+// Double-clicking code or a diagram in an answer opens it in a new note (each
+// double-click its own note). A note shows code with line numbers and colors,
+// a diagram at full size, takes the main window's transparency, hides from
+// screen sharing and with the main window like the sticky, and can be dragged
+// anywhere, past the top or bottom of the screen too (renderer/note.js).
+const noteWins = new Set();
+const noteContent = new Map(); // webContents id -> what the note shows
+let noteCount = 0;
+let noteDrag = null;
+
+function liveNotes() {
+  return [...noteWins].filter((w) => w && !w.isDestroyed());
+}
+function closeAllNotes() {
+  for (const w of liveNotes()) { try { w.close(); } catch {} }
+}
+function applyNoteState() {
+  const show = isMainShown();
+  for (const w of liveNotes()) {
+    if (!w._placed) continue;
+    if (show && !w.isVisible()) w.showInactive();
+    else if (!show && w.isVisible()) w.hide();
+  }
+}
+function noteWorkArea(w) {
+  const ref = win && !win.isDestroyed() ? win.getBounds() : w.getBounds();
+  return screen.getDisplayMatching(ref).workArea;
+}
+// Its first size and place: next to the main window (right side, else left),
+// each new note a step lower so they don't hide each other, all of it on screen.
+function placeNote(w, width, height) {
+  const area = noteWorkArea(w);
+  width = Math.round(Math.max(220, Math.min(Number(width) || 480, area.width * 0.92)));
+  height = Math.round(Math.max(90, Math.min(Number(height) || 320, area.height * 0.92)));
+  const m = win && !win.isDestroyed() ? win.getBounds() : { x: area.x, y: area.y, width: 0, height: 0 };
+  const step = 26 * (w._index % 8);
+  let x;
+  if (m.x + m.width + 8 + width <= area.x + area.width) x = m.x + m.width + 8 + step;
+  else if (m.x - 8 - width >= area.x) x = m.x - 8 - width - step;
+  else x = area.x + area.width - width - step;
+  let y = m.y + step;
+  x = Math.max(area.x, Math.min(x, area.x + area.width - width));
+  y = Math.max(area.y, Math.min(y, area.y + area.height - height));
+  try { w.setBounds({ x, y, width, height }); } catch {}
+  w._placed = true;
+  if (isMainShown()) w.showInactive();
+}
+function createNoteWindow(content) {
+  if (!win || win.isDestroyed()) return false;
+  const area = noteWorkArea(win);
+  const w = new BrowserWindow({
+    width: 480, height: 320, x: area.x + 20, y: area.y + 20, // placed once its size is known
+    minWidth: 220, minHeight: 90,
+    frame: false,
+    backgroundColor: '#0f1116',
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    resizable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    show: false,
+    focusable: !noActivate(),
+    icon: path.join(__dirname, 'build', 'icon.png'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-note.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  w._index = noteCount++;
+  w.setContentProtection(state.stealth);
+  w.setAlwaysOnTop(true, 'screen-saver');
+  w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  w.setMenuBarVisibility(false);
+  // The main window's transparency (left alone when fully opaque: see createWindow).
+  const op = win.getOpacity();
+  if (op < 1 && !LINUX_CSS_OPACITY) try { w.setOpacity(op); } catch {}
+  if (state.clickThrough) try { w.setIgnoreMouseEvents(true, { forward: true }); } catch {}
+  const wc = w.webContents;
+  const id = wc.id;
+  noteContent.set(id, content);
+  noteWins.add(w);
+  w.on('closed', () => {
+    noteWins.delete(w);
+    noteContent.delete(id);
+    if (noteDrag && noteDrag.w === w) stopNoteDrag();
+  });
+  // A link in an answer must not turn the note into a web page.
+  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+  wc.on('will-navigate', (e) => e.preventDefault());
+  wc.on('before-input-event', (_e, input) => {
+    if (input.type === 'keyDown' && input.key === 'F12') { try { wc.openDevTools({ mode: 'detach' }); } catch {} }
+  });
+  w.loadFile(path.join(__dirname, 'renderer', 'note.html'));
+  // note.js sizes it (note-fit); if that never comes, show it anyway.
+  setTimeout(() => { if (!w.isDestroyed() && !w._placed) placeNote(w, 480, 320); }, 2500);
+  return true;
+}
+function stopNoteDrag() {
+  if (noteDrag) clearInterval(noteDrag.timer);
+  noteDrag = null;
+}
+const noteOf = (e) => {
+  const w = BrowserWindow.fromWebContents(e.sender);
+  return w && noteWins.has(w) && !w.isDestroyed() ? w : null;
+};
+ipcMain.handle('note-open', (e, c) => {
+  if (!win || win.isDestroyed() || e.sender !== win.webContents || !c) return false;
+  const kind = ['code', 'diagram', 'answer'].includes(c.kind) ? c.kind : null;
+  if (!kind) return false;
+  const str = (v, n) => String(v || '').slice(0, n);
+  return createNoteWindow({
+    kind,
+    code: str(c.code, 500000), lang: str(c.lang, 40),
+    svg: str(c.svg, 4000000), w: Number(c.w) || 0, h: Number(c.h) || 0,
+    html: str(c.html, 4000000), mode: str(c.mode, 20), title: str(c.title, 120),
+  });
+});
+ipcMain.handle('note-get', (e) => {
+  const w = noteOf(e);
+  if (!w) return null;
+  const area = noteWorkArea(w);
+  return { ...(noteContent.get(e.sender.id) || {}), max: { width: Math.floor(area.width * 0.92), height: Math.floor(area.height * 0.92) } };
+});
+ipcMain.handle('note-fit', (e, size) => {
+  const w = noteOf(e);
+  if (!w || w._placed) return;
+  placeNote(w, size && size.width, size && size.height);
+});
+ipcMain.handle('note-close', (e) => {
+  const w = noteOf(e);
+  if (w) w.close();
+});
+// Moving a note: while the button is held, the window follows the cursor. No
+// clamping to the screen, so a note can be pushed past the top or bottom edge
+// and left there with only a strip showing.
+ipcMain.on('note-drag', (e, phase) => {
+  const w = noteOf(e);
+  if (!w) return;
+  stopNoteDrag();
+  if (phase !== 'start') return;
+  const c0 = screen.getCursorScreenPoint();
+  const b0 = w.getBounds();
+  let last = '';
+  const until = Date.now() + 2 * 60 * 1000; // a release that never arrives
+  const drag = { w, timer: null };
+  drag.timer = setInterval(() => {
+    if (w.isDestroyed() || Date.now() > until) { stopNoteDrag(); return; }
+    const c = screen.getCursorScreenPoint();
+    const x = b0.x + c.x - c0.x, y = b0.y + c.y - c0.y;
+    const key = x + ',' + y;
+    if (key === last) return;
+    last = key;
+    try { w.setBounds({ x, y, width: b0.width, height: b0.height }); } catch {}
+  }, 8);
+  noteDrag = drag;
+});
 
 // ── Info window (local time / weather / holidays) ─────────────────────────────
 function createInfoWindow() {
@@ -1627,6 +1806,34 @@ async function captureRectPng(rect) {
 // (it hides while the area is picked so it is not in the shot).
 let snipMode = false;
 let snipPrevVisible = true;
+// The picture the area is cut from: { display, image }.
+//
+// It is taken BEFORE the selection overlay appears, and the overlay shows it
+// frozen while the area is picked (as the Snipping Tool does). Taking it
+// after the overlay closed caught a black Google Meet presentation: while a
+// window covers Chrome, Chrome counts the meeting window as hidden and stops
+// drawing its video, and Meet may pause the shared screen; a shared slide
+// sends a new frame only when it changes, so the presentation stayed black
+// for a while after the overlay was gone.
+let snipShot = null;
+
+async function grabDisplay(display) {
+  const sf = display.scaleFactor || 1;
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: Math.round(display.size.width * sf), height: Math.round(display.size.height * sf) },
+  });
+  const src = pickSourceForDisplay(sources, display);
+  if (!src || !src.thumbnail || src.thumbnail.isEmpty()) throw new Error('no picture of the screen');
+  return src.thumbnail;
+}
+
+function endSnip() {
+  snipMode = false;
+  snipShot = null;
+  if (selectorWin) { try { selectorWin.close(); } catch {} selectorWin = null; }
+  if (snipPrevVisible && win) showWindow(win);
+}
 
 function openSnipSelector() {
   if (selectorWin || snipMode) return;
@@ -1636,26 +1843,53 @@ function openSnipSelector() {
   typeThroughRelease();
   selectionCopyEnd();
   win.hide();
-  setTimeout(() => {
+  // Ace out of the way first, then the picture, then the overlay.
+  setTimeout(async () => {
     const cursor = screen.getCursorScreenPoint();
     const display = screen.getDisplayNearestPoint(cursor);
+    macScreenPermissionWarn();
+    try {
+      snipShot = { display, image: await grabDisplay(display) };
+    } catch (e) {
+      appendLogLine('[snip] capture failed: ' + e.message);
+      endSnip();
+      return;
+    }
+    if (!snipMode) { snipShot = null; return; } // cancelled meanwhile
     selectorWin = new BrowserWindow({
       x: display.bounds.x, y: display.bounds.y,
       width: display.bounds.width, height: display.bounds.height,
-      frame: false, transparent: true, alwaysOnTop: true, skipTaskbar: true,
+      frame: false, transparent: false, backgroundColor: '#000000',
+      alwaysOnTop: true, skipTaskbar: true,
       resizable: false, movable: false, hasShadow: false, fullscreenable: false,
-      focusable: !noActivate(),
+      focusable: !noActivate(), show: false,
       webPreferences: { preload: path.join(__dirname, 'preload-selector.js'), contextIsolation: true, nodeIntegration: false },
     });
     selectorWin.setAlwaysOnTop(true, 'screen-saver');
     try { selectorWin.setContentProtection(state.stealth); } catch {}
-    selectorWin.loadFile(path.join(__dirname, 'renderer', 'selector.html'));
-    selectorWin.once('ready-to-show', () => showWindow(selectorWin));
+    const sel = selectorWin;
+    // The overlay shows the frozen picture; it is shown once the picture is
+    // drawn (selector-ready), or after a moment in any case.
+    sel.webContents.once('did-finish-load', () => {
+      if (sel.isDestroyed() || !snipShot) return;
+      try { sel.webContents.send('selector-shot', snipShot.image.toDataURL()); } catch {}
+    });
+    const showSel = () => { if (!sel.isDestroyed() && !sel.isVisible()) showWindow(sel); };
+    const fallback = setTimeout(showSel, 1500);
+    const onReady = (e) => {
+      if (sel.isDestroyed() || e.sender !== sel.webContents) return;
+      ipcMain.removeListener('selector-ready', onReady);
+      clearTimeout(fallback);
+      showSel();
+    };
+    ipcMain.on('selector-ready', onReady);
+    sel.once('closed', () => { clearTimeout(fallback); ipcMain.removeListener('selector-ready', onReady); });
+    sel.loadFile(path.join(__dirname, 'renderer', 'selector.html'));
     // A non-activating selector gets no key events, so Esc is taken globally
     // while it is open.
     const escTaken = noActivate() && snipEscRegister();
-    selectorWin.on('closed', () => {
-      selectorWin = null;
+    sel.on('closed', () => {
+      if (selectorWin === sel) selectorWin = null;
       if (escTaken) { try { globalShortcut.unregister('Escape'); } catch {} }
     });
   }, 150);
@@ -1664,11 +1898,7 @@ function openSnipSelector() {
 function snipEscRegister() {
   try {
     if (globalShortcut.isRegistered('Escape')) return false;
-    return globalShortcut.register('Escape', () => {
-      snipMode = false;
-      if (selectorWin) { try { selectorWin.close(); } catch {} selectorWin = null; }
-      if (snipPrevVisible && win) showWindow(win);
-    });
+    return globalShortcut.register('Escape', () => endSnip());
   } catch { return false; }
 }
 
@@ -1680,45 +1910,36 @@ function pickSourceForDisplay(sources, display) {
   return sources[idx] || sources[0];
 }
 
-async function handleSnipDone(rect) {
-  const display = selectorWin
-    ? screen.getDisplayMatching(selectorWin.getBounds())
-    : screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-  const sf = display.scaleFactor || 1;
-  const x = Math.min(rect.x1, rect.x2), y = Math.min(rect.y1, rect.y2);
-  const w = Math.abs(rect.x2 - rect.x1), h = Math.abs(rect.y2 - rect.y1);
-  if (selectorWin) { try { selectorWin.close(); } catch {} selectorWin = null; }
-  // Let the selector vanish before grabbing pixels.
-  await new Promise(r => setTimeout(r, 180));
-  macScreenPermissionWarn();
+// The area picked on the overlay, cut from the picture taken before it opened.
+function handleSnipDone(rect) {
+  const shot = snipShot;
   try {
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: { width: Math.round(display.size.width * sf), height: Math.round(display.size.height * sf) },
-    });
-    const src = pickSourceForDisplay(sources, display);
-    const cropped = src.thumbnail.crop({
-      x: Math.round(x * sf), y: Math.round(y * sf),
-      width: Math.max(1, Math.round(w * sf)), height: Math.max(1, Math.round(h * sf)),
-    });
-    const dataUrl = cropped.toDataURL();
+    if (!shot) throw new Error('no picture of the screen');
+    const img = shot.image;
+    const size = img.getSize();
+    // The overlay covers the display, so its coordinates are the display's;
+    // the picture is in device pixels.
+    const kx = size.width / shot.display.size.width, ky = size.height / shot.display.size.height;
+    const x = Math.max(0, Math.round(Math.min(rect.x1, rect.x2) * kx));
+    const y = Math.max(0, Math.round(Math.min(rect.y1, rect.y2) * ky));
+    const w = Math.max(1, Math.min(size.width - x, Math.round(Math.abs(rect.x2 - rect.x1) * kx)));
+    const h = Math.max(1, Math.min(size.height - y, Math.round(Math.abs(rect.y2 - rect.y1) * ky)));
+    const dataUrl = img.crop({ x, y, width: w, height: h }).toDataURL();
     const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
     if (win && !win.isDestroyed()) win.webContents.send('snip-image', { base64: b64, mime: 'image/png' });
   } catch (e) {
     appendLogLine('[snip] capture failed: ' + e.message);
   }
-  snipMode = false;
-  if (snipPrevVisible && win) showWindow(win);
+  endSnip();
 }
+
+// The area snip from the capture button in the question box (as Alt+S).
+ipcMain.handle('start-area-snip', () => { openSnipSelector(); return true; });
 
 // The selector window is only used by the Alt+S area snip.
 ipcMain.on('selector-done', (_e, rect) => { handleSnipDone(rect || {}); });
 
-ipcMain.on('selector-cancel', () => {
-  snipMode = false;
-  if (selectorWin) { try { selectorWin.close(); } catch {} selectorWin = null; }
-  if (snipPrevVisible && win) showWindow(win);
-});
+ipcMain.on('selector-cancel', () => endSnip());
 
 const HOTKEY_HANDLERS = {
   toggleVisibility: () => toggleVisible(),
@@ -1754,6 +1975,7 @@ function setClickThrough(value) {
   if (stickyWin && !stickyWin.isDestroyed()) {
     try { stickyWin.setIgnoreMouseEvents(state.clickThrough, { forward: true }); } catch {}
   }
+  for (const w of liveNotes()) { try { w.setIgnoreMouseEvents(state.clickThrough, { forward: true }); } catch {} }
   saveState();
   if (win) win.webContents.send('click-through-changed', state.clickThrough);
 }
@@ -1959,7 +2181,8 @@ function startSignalingServer() {
         return;
       }
       if (msg && msg.type === 'remote-submit') {
-        if (win) win.webContents.send('remote-submit', { connId: id, mode: msg.mode });
+        const text = typeof msg.text === 'string' ? msg.text.slice(0, 4000) : '';
+        if (win) win.webContents.send('remote-submit', { connId: id, mode: msg.mode, text });
         return;
       }
       if (msg && (msg.type === 'chat-text' || msg.type === 'chat-image')) {
@@ -2969,7 +3192,11 @@ ipcMain.handle('get-meeting-config', () => getMeetingConfig());
 ipcMain.handle('set-meeting-config', (_e, cfg) => {
   cfg = cfg || {};
   const type = normalizeMeetingType(cfg.type || cfg.hiringType || getMeetingConfig().type);
+  const changed = getMeetingConfig().type !== type;
   state.meeting = { kind: MEETING_TYPES[type].kind, type };
+  // A new meeting type picks its models (unless that is switched off).
+  if (changed && applyAutoModels()) emitAnswerConfig();
+  if (changed && preparedAnswers.run) prepareAnswers().catch(() => {});
   saveState();
   schedulePromptCacheWarm();
   return getMeetingConfig();
@@ -3294,6 +3521,7 @@ function startDeepgramWs(apiKey, language) {
     try {
       const msg = JSON.parse(raw.toString());
       if (msg.type === 'UtteranceEnd') {
+        latencyMark('uttEndAt');
         // Speech-gap boundary — tells the renderer to flush any pending interim.
         transcriptQueue = transcriptQueue.then(() => {
           if (win && !win.isDestroyed()) win.webContents.send('transcript-utterance-end');
@@ -3307,7 +3535,10 @@ function startDeepgramWs(apiKey, language) {
       transcriptQueue = transcriptQueue.then(() => settleSpeakerName(window, !!msg.is_final)).then(() => {
         const parsed = parseTranscriptAlternative(msg.channel?.alternatives?.[0], window, !!msg.is_final);
         if (!parsed.text) return;
-        if (msg.is_final) sessionLog.push({ ts: Date.now(), kind: 'voice', text: parsed.labeled || parsed.text });
+        if (msg.is_final) {
+          sessionLog.push({ ts: Date.now(), kind: 'voice', text: parsed.labeled || parsed.text });
+          latencySpeech(window ? window[1] : Date.now());
+        }
         if (win && !win.isDestroyed()) {
           win.webContents.send('transcript-live', {
             text: parsed.text,
@@ -3316,6 +3547,12 @@ function startDeepgramWs(apiKey, language) {
             turns: parsed.turns || [],
             isFinal: !!msg.is_final,
           });
+          // The short pause (endpointing, 150 ms): the hidden answer starts
+          // now instead of at UtteranceEnd (1.5 s of silence).
+          if (msg.is_final && msg.speech_final) {
+            latencyMark('pauseAt');
+            win.webContents.send('transcript-speech-final');
+          }
         }
       }).catch(() => {});
     } catch {}
@@ -4451,8 +4688,194 @@ function getAnswerApiKey(providerId) {
   return '';
 }
 
-function getAnswerModel(providerId) {
+// ── Which model answers ──────────────────────────────────────────────────────
+// Three models per provider: one for spoken (Text) answers, one for Code and
+// Diagram answers, one for Project answers. With "automatic" on (the
+// default), all three are picked from the meeting type whenever it changes
+// (or the provider does); picking one by hand changes it until the next
+// change of meeting type.
+//
+// Each provider's models in four levels, each a list to fall back along:
+// fast (first words soonest), balanced (fast and precise), best (strong
+// code), deep (the most capable).
+//
+// Measured 2026-11-12 through llm-providers.js with a CV-sized prompt
+// (medians of 6 spoken answers / 2 code tasks; every model passed the code
+// tests): Claude Haiku 5.5 first words 1.1 s, Sonnet 5.5 1.35 s (steadiest),
+// Fable 5.2 2.3 s for answers but 1.0 s for code (done 3.3 s), Opus 5.5 4.2 s
+// (code done 6.7 s); GPT-6 Luna 1.4 s, GPT-6.1 Terra 1.5 s, GPT-6 Sol 2.1 s
+// (code done 2.4 s, faster than GPT-6.1 Sol's 5.1 s). Through OpenRouter the
+// same models were 1.5-3x slower, and Fable is unavailable to accounts that
+// only allow zero-data-retention providers (Opus then).
+const MODEL_TIERS = {
+  anthropic: {
+    fast: ['claude-haiku-5-5'],
+    balanced: ['claude-sonnet-5-5'],
+    best: ['claude-fable-5-2', 'claude-opus-5-5'],
+    deep: ['claude-fable-5-2', 'claude-opus-5-5'],
+  },
+  openai: {
+    fast: ['gpt-6-luna', 'gpt-5.6-luna'],
+    balanced: ['gpt-6.1-terra', 'gpt-5.6-terra'],
+    best: ['gpt-6-sol', 'gpt-6.1-sol', 'gpt-5.6-sol'],
+    deep: ['gpt-6-astra', 'gpt-6.1-sol'],
+  },
+  openrouter: {
+    fast: ['anthropic/claude-haiku-5.5'],
+    balanced: ['anthropic/claude-sonnet-5.5'],
+    best: ['anthropic/claude-fable-5.2', 'anthropic/claude-opus-5.5'],
+    deep: ['anthropic/claude-fable-5.2', 'anthropic/claude-opus-5.5'],
+  },
+  xai: {
+    fast: ['grok-4.20-0309-non-reasoning'],
+    balanced: ['grok-4.3'],
+    best: ['grok-4.7', 'grok-4.6'],
+    deep: ['grok-4.7', 'grok-4.6'],
+  },
+};
+const TIER_ORDER = ['deep', 'best', 'balanced', 'fast'];
+// The level each meeting type uses for spoken answers and for code and
+// diagrams. Project answers (explaining the code in VS Code) always use deep.
+const MEETING_MODEL_PLAN = {
+  recruiter_screen:    { answer: 'fast',     code: 'balanced' },
+  technical_interview: { answer: 'balanced', code: 'balanced' },
+  live_coding:         { answer: 'fast',     code: 'best' },
+  leader_round:        { answer: 'balanced', code: 'balanced' },
+  ai_interview:        { answer: 'balanced', code: 'balanced' },
+  standup:             { answer: 'balanced', code: 'balanced' },
+  sprint:              { answer: 'balanced', code: 'balanced' },
+  discussion:          { answer: 'balanced', code: 'balanced' },
+};
+// Models a provider turned down for this key (not offered, or blocked by the
+// account's data policy) are not picked again until the app restarts.
+const unavailableModels = new Set();
+
+// ── Claude models go to Anthropic directly ──────────────────────────────────
+// With an Anthropic key (built in or saved), a Claude model picked under
+// OpenRouter is sent to Anthropic's own API with that key: 1.5-3x faster to the
+// first words in the 2026-11-12 measurements, and Fable isn't blocked by
+// OpenRouter's data-retention rule. If Anthropic turns the request down before
+// any text arrives, it goes through OpenRouter as picked. Every model call in
+// this file goes through these two functions.
+let anthropicDirectOff = false; // the Anthropic key was refused: OpenRouter for the rest of the run
+const anthropicDirectLogged = new Set();
+// "anthropic/claude-haiku-5.5" -> "claude-haiku-5-5" ('' for anything else).
+function anthropicModelId(model) {
+  const m = /^anthropic\/(claude-[a-z]+)-(\d+)(?:\.(\d+))?$/i.exec(String(model || ''));
+  return m ? (m[1] + '-' + m[2] + (m[3] ? '-' + m[3] : '')).toLowerCase() : '';
+}
+function anthropicDirect(opts) {
+  const p = typeof opts.provider === 'string' ? getProvider(opts.provider) : opts.provider;
+  if (!p || p.id !== 'openrouter' || anthropicDirectOff) return null;
+  const id = anthropicModelId(opts.model);
+  const key = getAnswerApiKey('anthropic');
+  if (!id || !key || unavailableModels.has('anthropic|' + id)) return null;
+  const listed = modelListCache.anthropic;
+  const known = Array.isArray(listed) && listed.length ? listed : getProvider('anthropic').fallbackModels;
+  if (!known.includes(id)) return null;
+  if (!anthropicDirectLogged.has(id)) {
+    anthropicDirectLogged.add(id);
+    appendLogLine(`[answer] ${opts.model} goes to Anthropic directly as ${id}`);
+  }
+  return { ...opts, provider: getProvider('anthropic'), apiKey: key, model: id };
+}
+function anthropicDirectFailed(direct, e) {
+  const status = e && e.status;
+  if (status === 401 || status === 403) anthropicDirectOff = true;
+  else if (isModelUnavailableError(e)) unavailableModels.add('anthropic|' + direct.model);
+  appendLogLine(`[answer] Anthropic turned down ${direct.model} (${status || (e && e.message) || 'error'}); using OpenRouter${anthropicDirectOff ? ' from now on' : ''}`);
+}
+async function streamChat(opts) {
+  const direct = anthropicDirect(opts);
+  if (!direct) return providerStreamChat(opts);
+  let wrote = false;
+  try {
+    return await providerStreamChat({ ...direct, onDelta: (d) => { wrote = true; if (opts.onDelta) opts.onDelta(d); } });
+  } catch (e) {
+    if (wrote || (e && e.name === 'AbortError')) throw e;
+    anthropicDirectFailed(direct, e);
+    return providerStreamChat(opts);
+  }
+}
+async function completeChat(opts) {
+  const direct = anthropicDirect(opts);
+  if (!direct) return providerCompleteChat(opts);
+  let text = '';
+  try { text = await providerCompleteChat(direct); } catch (e) {
+    if (e && e.name === 'AbortError') throw e;
+    anthropicDirectFailed(direct, e);
+  }
+  return text || providerCompleteChat(opts);
+}
+function modelOffered(providerId, model) {
+  if (unavailableModels.has(providerId + '|' + model)) return false;
+  const listed = modelListCache[providerId];
+  return !(Array.isArray(listed) && listed.length) || listed.includes(model);
+}
+function pickTierModel(providerId, tier) {
+  const tiers = MODEL_TIERS[providerId];
+  if (!tiers) return getProvider(providerId).defaultModel;
+  for (const t of TIER_ORDER.slice(TIER_ORDER.indexOf(tier))) {
+    const m = (tiers[t] || []).find((x) => modelOffered(providerId, x));
+    if (m) return m;
+  }
+  return tiers[tier][0];
+}
+// The next model to try after one the provider turned down: the rest of its
+// level, then the levels below.
+function fallbackModelFor(providerId, model) {
+  const tiers = MODEL_TIERS[providerId];
+  if (!tiers) return null;
+  for (const t of TIER_ORDER) {
+    const list = tiers[t] || [];
+    const i = list.indexOf(model);
+    if (i < 0) continue;
+    const rest = list.slice(i + 1).find((x) => modelOffered(providerId, x));
+    if (rest) return rest;
+    const below = TIER_ORDER.slice(TIER_ORDER.indexOf(t) + 1);
+    return below.length ? pickTierModel(providerId, below[0]) : null;
+  }
+  return null;
+}
+function answerSlot(mode) {
+  if (mode === 'CODE' || mode === 'DIAGRAM') return 'code';
+  if (mode === 'PROJECT') return 'project';
+  return 'answer';
+}
+// The slots' picks for the current meeting type, for one provider.
+function autoModelsFor(providerId) {
+  const plan = MEETING_MODEL_PLAN[getMeetingConfig().type] || MEETING_MODEL_PLAN.technical_interview;
+  return {
+    answer: pickTierModel(providerId, plan.answer),
+    code: pickTierModel(providerId, plan.code),
+    project: pickTierModel(providerId, 'deep'),
+  };
+}
+function applyAutoModels() {
+  if (!state.answer || state.answer.autoModels === false) return false;
+  const pid = getAnswerProvider().id;
+  const picks = autoModelsFor(pid);
+  setSlotModel(pid, 'answer', picks.answer);
+  setSlotModel(pid, 'code', picks.code);
+  setSlotModel(pid, 'project', picks.project);
+  appendLogLine(`[models] ${getMeetingConfig().type} on ${pid}: text=${picks.answer} code=${picks.code} project=${picks.project}`);
+  return true;
+}
+function setSlotModel(providerId, slot, model) {
+  const a = state.answer;
+  if (slot === 'code') a.codeModels = { ...(a.codeModels || {}), [providerId]: model };
+  else if (slot === 'project') a.projectModels = { ...(a.projectModels || {}), [providerId]: model };
+  else {
+    a.models = { ...(a.models || {}), [providerId]: model };
+    if (providerId === (a.provider || 'openai')) a.model = model;
+  }
+}
+
+function getAnswerModel(providerId, mode) {
   const id = providerId || getAnswerProvider().id;
+  const slot = answerSlot(mode);
+  if (slot === 'code' && state.answer && state.answer.codeModels && state.answer.codeModels[id]) return state.answer.codeModels[id];
+  if (slot === 'project' && state.answer && state.answer.projectModels && state.answer.projectModels[id]) return state.answer.projectModels[id];
   const currentProvider = (state.answer && state.answer.provider) || 'openai';
   if (id === currentProvider && state.answer && state.answer.model) {
     return state.answer.model;
@@ -4462,19 +4885,41 @@ function getAnswerModel(providerId) {
   return getProvider(id).defaultModel;
 }
 
+// The provider turned the model down for this key (not offered, or blocked by
+// the account's data policy), as opposed to a bad key, rate limit or outage.
+function isModelUnavailableError(e) {
+  const status = e && e.status;
+  const body = String((e && (e.body || e.message)) || '');
+  if (status === 404) return true;
+  return (status === 400 || status === 403) && /model|endpoint/i.test(body) &&
+    /not.?found|does not exist|not available|unavailable|unknown|invalid|no endpoints|guardrail|data policy/i.test(body);
+}
+
 function publicAnswerConfig() {
   const provider = getAnswerProvider();
   const keys = { ...DEFAULT_STATE.answer.keys, ...((state.answer && state.answer.keys) || {}) };
   const models = { ...DEFAULT_STATE.answer.models, ...((state.answer && state.answer.models) || {}) };
+  const slots = {
+    answer: getAnswerModel(provider.id, 'ANSWER'),
+    code: getAnswerModel(provider.id, 'CODE'),
+    project: getAnswerModel(provider.id, 'PROJECT'),
+  };
   return {
     provider: provider.id,
-    model: getAnswerModel(provider.id),
+    model: slots.answer,
+    slots,
+    autoModels: !state.answer || state.answer.autoModels !== false,
     apiKey: keys.xai || ((state.answer && state.answer.apiKey) || ''),
     keys,
     models,
     providers: providerList(),
     fallbackModels: provider.fallbackModels.slice(),
-    railAbbr: modelAbbr(provider.id, getAnswerModel(provider.id)),
+    railAbbr: modelAbbr(provider.id, slots.answer),
+    railAbbrs: {
+      answer: modelAbbr(provider.id, slots.answer),
+      code: modelAbbr(provider.id, slots.code),
+      project: modelAbbr(provider.id, slots.project),
+    },
   };
 }
 
@@ -4506,12 +4951,13 @@ function applyAnswerConfig(cfg) {
     next.provider = nextProvider;
   }
 
-  if (cfg.model) {
-    next.model = cfg.model;
-    next.models = { ...(next.models || {}), [next.provider]: cfg.model };
-  }
-
+  if (cfg.autoModels !== undefined) next.autoModels = !!cfg.autoModels;
+  const providerChanged = next.provider !== (prev.provider || 'openai');
   state.answer = next;
+  // A new provider (or automatic switched back on) gets the picks for the
+  // current meeting type.
+  if ((providerChanged || cfg.autoModels === true) && next.autoModels !== false) applyAutoModels();
+  if (cfg.model) setSlotModel(next.provider, ['code', 'project'].includes(cfg.slot) ? cfg.slot : 'answer', cfg.model);
 
   applyBuiltinKeys();
   saveState();
@@ -4685,6 +5131,172 @@ function formatAnswerUserTurn(q, transcript, mode) {
   return parts.join('\n\n');
 }
 
+// ── How long an answer takes, step by step ─────────────────────────────────
+// For the latest thing the interviewer said: when their last word was spoken
+// (Deepgram's clock), when its final text arrived, when Deepgram saw the short
+// pause and the long one (UtteranceEnd), when the hidden answer started and
+// wrote its first words, when Send was pressed, and when the answer's first
+// words were on screen. One "[latency]" line in the activity log per answer,
+// every time counted from their last word.
+const latency = { speechEnd: 0, finalAt: 0, pauseAt: 0, uttEndAt: 0, specStart: 0, specFirst: 0, pending: null };
+function latencyMark(key) { latency[key] = Date.now(); }
+// New words from them: the steps after it start over.
+function latencySpeech(endAt) {
+  latency.speechEnd = endAt || Date.now();
+  latency.finalAt = Date.now();
+  latency.pauseAt = 0;
+  latency.uttEndAt = 0;
+}
+function latencyReport(how, sendAt, shownAt, model) {
+  latency.pending = null;
+  const base = latency.speechEnd;
+  if (!base || sendAt - base > 10 * 60 * 1000) return; // a typed question long after any speech
+  const rel = (t) => (t ? (t >= base ? '+' : '') + (t - base) + 'ms' : '-');
+  appendLogLine(`[latency] ${how} model=${model} | after their last word: final text ${rel(latency.finalAt)}, short pause ${rel(latency.pauseAt)}, utterance end ${rel(latency.uttEndAt)}, hidden answer started ${rel(latency.specStart)} first words ${rel(latency.specFirst)}, Send ${rel(sendAt)}, on screen ${rel(shownAt)} (${shownAt - sendAt}ms after Send)`);
+}
+
+// ── Answers written before the question is asked ────────────────────────────
+// When an interview starts (and when its meeting type changes), the answers to
+// the questions most interviews of that type ask, and to the ones this job
+// description makes likely, are written in the background with the model the
+// meeting type uses for spoken answers. When the interviewer then asks one of
+// them, Send shows it at once (labelled as prepared; ↻ writes a fresh one).
+const PREPARED_COMMON = [
+  { q: 'Tell me about yourself.', p: /\b(tell|walk)\s+(me|us)\b.{0,30}\b(yourself|your (background|career|experience|journey|resume|cv))\b|\bintroduce yourself\b/i },
+  { q: 'Why are you interested in this role and this company?', p: /\bwhy (are you interested|do you want to (work|join)|did you apply|this (role|company|position|job))|\bwhat (attracted|attracts|interests|excites) you\b|\binterested in (this|the) (role|position|company|job)\b/i },
+  { q: 'What are your salary expectations?', p: /\bsalary|\bcompensation\b|\bpay (range|expectations?)\b|\bhow much (are you|do you) (expect|want|looking)/i },
+  { q: 'Why are you looking to leave your current job?', p: /\bwhy (are you|did you|do you want to) (leav|look|mov)|\breason (for|you'?re) (leaving|looking)\b|\blooking for a (new|change)\b/i },
+  { q: 'What are your greatest strengths?', p: /\b(greatest|biggest|key|main|top) strengths?\b|\bwhat are you (really )?(good|best) at\b/i },
+  { q: 'What is your biggest weakness?', p: /\bweakness(es)?\b|\barea(s)? (for|of|to) (improvement|improve)\b/i },
+  { q: 'Tell me about a time you disagreed with a colleague or your manager.', p: /\b(disagree(d|ment)?|conflict)\b/i },
+  { q: 'What is the achievement you are most proud of?', p: /\b(biggest|greatest|proudest)\b.{0,20}\b(achievement|accomplishment)\b|\bproud(est)? of\b/i },
+  { q: 'Tell me about a time you failed or made a mistake.', p: /\b(a )?(failure|failed|mistake)\b|\bwent wrong\b/i },
+  { q: 'When could you start, and what is your notice period?', p: /\bnotice period\b|\bwhen (could|can|would) you start\b|\bavailable to start\b|\bstart date\b/i },
+  { q: 'Where do you see yourself in five years?', p: /\b(five|5) years\b|\blong[- ]term (goals?|plans?|career)\b|\bsee yourself\b/i },
+  { q: 'Do you have any questions for us?', p: /\b(any|do you have( any)?) questions for (me|us)\b|\bwhat (questions|would you like to ask)\b/i },
+];
+const PREPARED_TECH = [
+  { q: 'Tell me about the most challenging project you have worked on.', p: /\b(most )?(challenging|difficult|complex|hardest|toughest) (project|problem|technical challenge|thing you)/i },
+  { q: 'How do you handle production incidents and outages?', p: /\b(production (incident|issue|outage|problem)s?|outage|on-?call|incident)\b/i },
+  { q: 'How do you approach testing and code quality?', p: /\b(test(ing)? (strategy|approach)|how do you test|code quality|code reviews?)\b/i },
+  { q: 'Describe the architecture of a system you designed.', p: /\b(architecture|system design|design(ed)? (a|the) system)\b/i },
+];
+const PREPARED_LEADER = [
+  { q: 'How do you prioritise when everything is urgent?', p: /\bprioriti[sz](e|ing|ation)\b/i },
+  { q: 'How do you work with product and business stakeholders?', p: /\b(product|business|stakeholders?)\b.{0,40}\b(work|collaborat|partner)/i },
+  { q: 'Tell me about a time you took ownership of something outside your role.', p: /\b(ownership|took the lead|stepped up)\b/i },
+];
+const PREPARED_TEAM = {
+  standup: [{ q: 'Can you give us your update: what you did, what is next, and any blockers?', p: /\b(update|status|yesterday|today|blockers?)\b/i }],
+  sprint: [{ q: 'What did you finish this sprint, and what are you taking on next?', p: /\b(this sprint|last sprint|next sprint|sprint (review|goal|planning)|what did you (finish|complete|deliver))\b/i }],
+  discussion: [],
+};
+function preparedQuestionsFor(type) {
+  const kind = MEETING_TYPES[type] ? MEETING_TYPES[type].kind : 'hiring';
+  if (kind === 'team') return (PREPARED_TEAM[type] || []).slice();
+  let list = PREPARED_COMMON.slice();
+  if (['technical_interview', 'live_coding', 'leader_round'].includes(type)) list = list.concat(PREPARED_TECH);
+  if (type === 'leader_round') list = list.concat(PREPARED_LEADER);
+  if (type === 'ai_interview') list = list.concat(PREPARED_TECH.slice(0, 2));
+  return list;
+}
+// Words that carry the meaning of a question, roughly stemmed.
+const MATCH_STOP = new Set('a an the and or but to of in on for with at by from as is are was were be been being do does did done you your yours yourself i me my we us our it its this that these those what which who whom how why when where can could would should will may might must have has had about tell please so just really kind sort bit little give some any there here than then them they their like also into over more most much very'.split(' '));
+function meaningWords(s) {
+  return String(s || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/)
+    .filter((w) => w.length > 2 && !MATCH_STOP.has(w))
+    .map((w) => w.replace(/(ing|ed|es|s)$/, ''));
+}
+// The prepared answer for what they just asked, if one fits: its pattern
+// matches the end of what they said, or most of its question's words are in it.
+function matchPrepared(text) {
+  const tail = String(text || '').replace(/\s+/g, ' ').trim().split(/(?<=[.?!])\s+/).slice(-2).join(' ');
+  if (tail.length < 8) return null;
+  const words = new Set(meaningWords(tail));
+  let best = null, bestScore = 0;
+  for (const item of preparedAnswers.items) {
+    if (!item.answer) continue;
+    let score = item.p && item.p.test(tail) ? 1 : 0;
+    if (!score) {
+      const qw = [...new Set(meaningWords(item.q))];
+      const hit = qw.filter((w) => words.has(w)).length;
+      if (qw.length >= 2 && hit >= 2) score = hit / qw.length;
+    }
+    if (score > bestScore) { bestScore = score; best = item; }
+  }
+  return bestScore >= 0.75 ? best : null;
+}
+const preparedAnswers = { run: 0, type: '', items: [] };
+// The questions this interviewer is likely to ask, from the CV and the job description.
+async function predictQuestions(provider, apiKey, type) {
+  const text = (list) => (Array.isArray(list) ? list : []).map((d) => (d && d.text) || '').join('\n').slice(0, 6000);
+  const cv = text(state.knowledge && state.knowledge.cv);
+  const jd = text(state.knowledge && state.knowledge.jd);
+  if (!cv && !jd) return [];
+  const label = (MEETING_TYPES[type] && MEETING_TYPES[type].label) || type;
+  const prompt = `A candidate is about to have this meeting: ${label}. From the job description and CV below, list the 6 questions the other side is most likely to ask that are specific to this job or this candidate (not generic ones like "tell me about yourself", salary or strengths). One question per line, no numbering, nothing else.\n\nJOB DESCRIPTION:\n${jd || '(none)'}\n\nCV:\n${cv || '(none)'}`;
+  let raw = '';
+  try {
+    raw = await completeChat({ provider, apiKey, model: pickTierModel(provider.id, 'fast'), messages: [{ role: 'user', content: prompt }], maxTokens: 400 });
+  } catch { return []; }
+  return String(raw || '').split(/\r?\n/).map((l) => l.replace(/^[\s\d.)*-]+/, '').trim()).filter((l) => l.length > 12 && /\?$/.test(l)).slice(0, 6).map((q) => ({ q, p: null }));
+}
+async function prepareAnswers() {
+  const run = ++preparedAnswers.run;
+  const type = getMeetingConfig().type;
+  preparedAnswers.type = type;
+  preparedAnswers.items = [];
+  const provider = getAnswerProvider();
+  const apiKey = getAnswerApiKey(provider.id);
+  if (!apiKey || state.network.role === 'supporter') return;
+  // Without a CV, job description or notes there is nothing to build them on.
+  const kb = state.knowledge || {};
+  const hasMaterials = ['cv', 'jd', 'support', 'meetings'].some((k) => Array.isArray(kb[k]) && kb[k].some((d) => d && String(d.text || '').trim()));
+  if (!hasMaterials) { appendLogLine('[prepared] skipped: no CV, job description or notes uploaded'); return; }
+  // Let the interview's first moments (transcription, the cache warm) go first.
+  await new Promise((r) => setTimeout(r, 2500));
+  if (run !== preparedAnswers.run) return;
+  const t0 = Date.now();
+  const items = preparedQuestionsFor(type).map((x) => ({ ...x, answer: '' }));
+  preparedAnswers.items = items;
+  predictQuestions(provider, apiKey, type).then((more) => {
+    if (run !== preparedAnswers.run) return;
+    for (const m of more) if (!items.some((x) => meaningWords(x.q).join(' ') === meaningWords(m.q).join(' '))) items.push({ ...m, answer: '' });
+  }).catch(() => {});
+  const model = getAnswerModel(provider.id, 'ANSWER');
+  let next = 0, done = 0;
+  const worker = async () => {
+    for (;;) {
+      if (run !== preparedAnswers.run) return;
+      // Live answers come first: wait while one is being written.
+      while (answerAbort && run === preparedAnswers.run) await new Promise((r) => setTimeout(r, 500));
+      // The next question, claimed with no await in between, so the two
+      // workers never take the same one. The predicted questions may still be
+      // on their way: wait for them a little.
+      let item = null;
+      while (!(item = items[next]) && Date.now() - t0 < 15000 && run === preparedAnswers.run) {
+        await new Promise((r) => setTimeout(r, 800));
+      }
+      if (!item || run !== preparedAnswers.run) return;
+      next++;
+      try {
+        const messages = await buildAnswerMessages(item.q, null, 'ANSWER', '');
+        let text = '';
+        await streamChat({ provider, apiKey, model, messages, maxTokens: maxTokensForMode('ANSWER'), purpose: 'answer', convId: answerConvId(), onDelta: (d) => { text += d; } });
+        if (run !== preparedAnswers.run) return;
+        item.answer = spokenSanitize(text, 'ANSWER').trim();
+        item.model = model;
+        done++;
+      } catch (e) {
+        appendLogLine(`[prepared] "${item.q.slice(0, 50)}" failed: ${e.status || e.message}`);
+      }
+    }
+  };
+  await Promise.all([worker(), worker()]);
+  if (run === preparedAnswers.run) appendLogLine(`[prepared] ${done} of ${items.length} answers ready for ${type} in ${Math.round((Date.now() - t0) / 1000)} s (model ${model})`);
+}
+ipcMain.handle('prepare-answers', () => { prepareAnswers().catch((e) => appendLogLine('[prepared] ' + e.message)); return true; });
+
 async function buildAnswerMessages(q, imgs, mode, transcript) {
   const messages = [];
   let staticText = assembleStaticSystem(mode);
@@ -4785,10 +5397,28 @@ async function generateAnswer(question, images, forcedMode, transcript) {
   // "streaming" forever; give up after 25 s and say so.
   const watchdog = setTimeout(() => { ac._timedOut = true; try { ac.abort(); } catch {} }, 25000);
 
-  const model = getAnswerModel(provider.id);
   const mode = resolveAnswerMode(forcedMode, q);
+  let model = getAnswerModel(provider.id, mode);
+  const purpose = answerSlot(mode) === 'answer' ? 'answer' : 'code';
 
   const displayQ = q || (imgs ? `[${imgs.length} image${imgs.length > 1 ? 's' : ''}]` : '');
+  const sendAt = Date.now();
+  // Asked before and answered in advance: show that answer at once.
+  const prepared = !imgs && mode === 'ANSWER' ? matchPrepared(q || lastInterviewerText(mt)) : null;
+  if (prepared) {
+    clearTimeout(watchdog);
+    answerAbort = null;
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('answer-start', { question: displayQ, hasImage: false, mode, prepared: prepared.q });
+      win.webContents.send('answer-chunk', prepared.answer);
+      win.webContents.send('answer-done', { text: prepared.answer });
+    }
+    latencyReport('prepared', sendAt, Date.now(), prepared.model || model);
+    sessionLog.push({ ts: Date.now(), kind: 'question', text: q || lastInterviewerText(mt) });
+    sessionLog.push({ ts: Date.now(), kind: 'answer', text: prepared.answer });
+    recordTurn(q, prepared.answer, mode, null, mt);
+    return;
+  }
   // Show the bubble before we build/send the prompt so Send never looks idle.
   if (win && !win.isDestroyed()) win.webContents.send('answer-start', { question: displayQ, hasImage: !!imgs, mode });
 
@@ -4801,8 +5431,7 @@ async function generateAnswer(question, images, forcedMode, transcript) {
   const t0 = Date.now();
   let firstToken = true;
   const tagStrip = makeSpeakerTagStripper(mode);
-  try {
-    await streamChat({
+  const runStream = () => streamChat({
       provider,
       apiKey,
       model,
@@ -4810,6 +5439,7 @@ async function generateAnswer(question, images, forcedMode, transcript) {
       signal: ac.signal,
       convId: answerConvId(),
       maxTokens: maxTokensForMode(mode),
+      purpose,
       onDelta: (delta) => {
         const piece = tagStrip.push(spokenSanitize(delta, mode));
         if (!piece) return;
@@ -4817,11 +5447,29 @@ async function generateAnswer(question, images, forcedMode, transcript) {
           firstToken = false;
           clearTimeout(watchdog);
           appendLogLine(`[answer] first-token ${Date.now() - t0}ms provider=${provider.id} model=${model}`);
+          latencyReport('fresh answer', sendAt, Date.now(), model);
         }
         full += piece;
         if (win && !win.isDestroyed()) win.webContents.send('answer-chunk', piece);
       },
     });
+  try {
+    try {
+      await runStream();
+    } catch (e) {
+      // The provider turned this model down (not offered to this key, or
+      // blocked by its data policy): answer with the next model, and keep
+      // that one for this kind of answer.
+      const next = firstToken && e.name !== 'AbortError' && isModelUnavailableError(e) ? fallbackModelFor(provider.id, model) : null;
+      if (!next) throw e;
+      unavailableModels.add(provider.id + '|' + model);
+      appendLogLine(`[answer] ${provider.id} turned down ${model} (${e.status}); using ${next}`);
+      setSlotModel(provider.id, answerSlot(mode), next);
+      saveState();
+      emitAnswerConfig();
+      model = next;
+      await runStream();
+    }
     const rest = tagStrip.flush();
     if (rest) {
       full += rest;
@@ -4936,7 +5584,13 @@ async function warmPromptCache() {
 
 // ── Speculative answer: start streaming before the user hits send.
 // Shares the same message-building logic as generateAnswer but is abortable.
-async function startSpeculative(question, forcedMode, transcript) {
+// The interviewer's latest words (the end of the meeting transcript).
+function lastInterviewerText(mt) {
+  const lines = String(mt || '').trim().split(/\n+/);
+  return (lines[lines.length - 1] || '').replace(/^[^:]{1,40}:\s*/, '');
+}
+
+async function startSpeculative(question, forcedMode, transcript, latest) {
   // Never kill a live, user-visible stream to prefetch the next question.
   if (speculativeCommitted || answerAbort) return;
   if (speculativeAbort) { try { speculativeAbort.abort(); } catch {} speculativeAbort = null; }
@@ -4956,10 +5610,24 @@ async function startSpeculative(question, forcedMode, transcript) {
   ac._flushed = false;
   ac._transcript = mt;
 
-  const model = getAnswerModel(provider.id);
-
   const specMode = resolveAnswerMode(forcedMode, q || mt);
+  const model = getAnswerModel(provider.id, specMode);
   ac._mode = specMode; // stash so commitSpeculative can read it
+  ac._model = model;
+  latencyMark('specStart');
+  latency.specFirst = 0;
+
+  // Answered in advance: that answer is ready now, no request needed.
+  const prepared = specMode === 'ANSWER' ? matchPrepared(q || latest || lastInterviewerText(mt)) : null;
+  if (prepared) {
+    ac._buffer = prepared.answer;
+    ac._done = true;
+    ac._prepared = prepared.q;
+    ac._model = prepared.model || model;
+    latency.specFirst = latency.specStart;
+    appendLogLine(`[prepared] ready for "${(q || latest || '').slice(0, 60)}" -> "${prepared.q}"`);
+    return;
+  }
 
   const messages = await buildAnswerMessages(q, null, specMode, mt);
   // Do NOT send answer-start yet — we buffer silently and only show the UI
@@ -4976,13 +5644,16 @@ async function startSpeculative(question, forcedMode, transcript) {
       signal: ac.signal,
       convId: answerConvId(),
       maxTokens: maxTokensForMode(specMode),
+      purpose: answerSlot(specMode) === 'answer' ? 'answer' : 'code',
       onDelta: (delta) => {
         const piece = tagStrip.push(spokenSanitize(delta, specMode));
         if (!piece) return;
+        if (!latency.specFirst && speculativeAbort === ac) latencyMark('specFirst');
         speculativeBuffer += piece;
         ac._buffer = speculativeBuffer;
         if (speculativeCommitted && ac._flushed && win && !win.isDestroyed()) {
           win.webContents.send('answer-chunk', piece);
+          if (latency.pending) latencyReport(latency.pending.how, latency.pending.sendAt, Date.now(), model);
         }
       },
     });
@@ -5049,10 +5720,14 @@ function commitSpeculative(question, images, forcedMode, transcript) {
     if (win && !win.isDestroyed()) {
       const specModeCommit = (ac && ac._mode) || 'ANSWER';
       if (!streamDone) speculativeCommitted = true;
-      win.webContents.send('answer-start', { question: q, hasImage: false, mode: specModeCommit });
+      const sendAt = Date.now();
+      win.webContents.send('answer-start', { question: q, hasImage: false, mode: specModeCommit, prepared: (ac && ac._prepared) || undefined });
       const buffered = (ac && ac._buffer) || '';
       const clean = buffered ? spokenSanitize(buffered, specModeCommit) : '';
       if (clean) win.webContents.send('answer-chunk', clean);
+      const how = ac && ac._prepared ? 'prepared' : 'hidden answer';
+      if (clean) latencyReport(how, sendAt, Date.now(), (ac && ac._model) || '');
+      else latency.pending = { how, sendAt };
       if (ac) ac._flushed = true;
       if (streamDone) {
         // Stream already finished — flush everything and close
@@ -5085,8 +5760,8 @@ function commitSpeculative(question, images, forcedMode, transcript) {
   generateAnswer(question, images, forcedMode, transcript);
 }
 
-ipcMain.handle('speculative-start', (_e, { question, forcedMode, transcript } = {}) => {
-  startSpeculative(question, forcedMode, transcript);
+ipcMain.handle('speculative-start', (_e, { question, forcedMode, transcript, latest } = {}) => {
+  startSpeculative(question, forcedMode, transcript, latest);
 });
 ipcMain.handle('speculative-commit', (_e, { question, images, forcedMode, transcript } = {}) => commitSpeculative(question, images, forcedMode, transcript));
 ipcMain.handle('speculative-cancel', () => {
@@ -5171,12 +5846,16 @@ function popupNearAnchor(menu, anchor) {
   menu.popup(opts);
 }
 
-function showModelMenu(anchor) {
+function showModelMenu(anchor, mode) {
   if (!win) return;
   const provider = getAnswerProvider();
-  const current = getAnswerModel(provider.id);
+  const slot = answerSlot(mode);
+  const current = getAnswerModel(provider.id, mode);
   const ids = cachedModelIds(provider);
+  if (current && !ids.includes(current)) ids.unshift(current);
   prefetchModelList(provider);
+  const slotName = slot === 'code' ? 'Code & diagram answers' : slot === 'project' ? 'Project answers' : 'Text answers';
+  const auto = !state.answer || state.answer.autoModels !== false;
 
   const items = [
     { label: 'Provider', enabled: false },
@@ -5189,11 +5868,16 @@ function showModelMenu(anchor) {
       },
     })),
     { type: 'separator' },
-    { label: `${provider.short} models`, enabled: false },
+    {
+      label: (auto ? '• ' : '  ') + 'Pick by meeting type (automatic)',
+      click: () => { applyAnswerConfig({ autoModels: !auto }); emitAnswerConfig(); },
+    },
+    { type: 'separator' },
+    { label: `${provider.short} model for ${slotName}`, enabled: false },
     ...ids.map((id) => ({
       label: (id === current ? '• ' : '  ') + id,
       click: () => {
-        applyAnswerConfig({ model: id });
+        applyAnswerConfig({ model: id, slot });
         if (win && !win.isDestroyed()) {
           win.webContents.send('model-selected', id);
           emitAnswerConfig();
@@ -5203,7 +5887,7 @@ function showModelMenu(anchor) {
   ];
   popupNearAnchor(Menu.buildFromTemplate(items), anchor);
 }
-ipcMain.handle('show-model-menu', (_e, anchor) => showModelMenu(anchor));
+ipcMain.handle('show-model-menu', (_e, anchor, mode) => showModelMenu(anchor, mode));
 
 
 ipcMain.handle('get-hotkeys', () => ({
@@ -5630,9 +6314,11 @@ ipcMain.handle('speaker-chat-send', (_e, m) => {
   }
   return sent > 0;
 });
-ipcMain.handle('remote-submit', (_e, mode) => {
+ipcMain.handle('remote-submit', (_e, mode, text) => {
   if (state.network.role !== 'supporter' || !wsClient || wsClient.readyState !== WebSocket.OPEN) return false;
-  try { wsClient.send(JSON.stringify({ type: 'remote-submit', mode: String(mode || '') })); return true; } catch { return false; }
+  const msg = { type: 'remote-submit', mode: String(mode || '') };
+  if (typeof text === 'string' && text.trim()) msg.text = text.trim().slice(0, 4000);
+  try { wsClient.send(JSON.stringify(msg)); return true; } catch { return false; }
 });
 // Both sides, while a supporter is connected: the window grows to the right by
 // the chat column and can be resized. Closed (the supporter left, or the

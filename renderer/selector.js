@@ -2,10 +2,23 @@ const box = document.getElementById('box');
 let startX = 0, startY = 0;
 let dragging = false;
 
+// The frozen screen: shown as the page background; the window is shown once
+// it is drawn.
+window.selector.onShot((url) => {
+  const img = new Image();
+  img.onload = () => {
+    document.body.style.backgroundImage = `url("${url}")`;
+    requestAnimationFrame(() => requestAnimationFrame(() => window.selector.ready()));
+  };
+  img.onerror = () => window.selector.ready();
+  img.src = url;
+});
+
 window.addEventListener('mousedown', (e) => {
   startX = e.clientX;
   startY = e.clientY;
   dragging = true;
+  document.body.classList.add('picking');
   box.style.left = startX + 'px';
   box.style.top = startY + 'px';
   box.style.width = '0px';

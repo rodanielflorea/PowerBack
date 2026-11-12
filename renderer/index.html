@@ -22,9 +22,7 @@
       <span class="supporter-invite-dot"></span>
     </button>
     <div class="drag"></div>
-    <div class="slider" id="slider" title="Click and drag horizontally to change opacity">
-      <div class="slider-fill" id="sliderFill"></div>
-    </div>
+    <button class="btn tb-btn opacity-btn" id="opacityBtn" title="See-through: 100% (click to change, or scroll over this button)"><i data-icon="opacity"></i></button>
     <button class="btn tb-btn stealth-btn" id="stealthBtn" title="Toggle stealth (hidden from screen capture)">
       <i data-icon="eye-off" class="st-hidden"></i><i data-icon="eye" class="st-visible"></i>
     </button>
@@ -42,6 +40,15 @@
     <button class="btn win-btn" id="hideBtn" title="Hide (Ctrl+Alt+H)"><i data-icon="win-min" class="ico-thin"></i></button>
     <button class="btn win-btn win-close" id="quitBtn" title="Quit"><i data-icon="win-close" class="ico-thin"></i></button>
   </header>
+
+  <!-- How see-through the window is: opened from the title bar's button. -->
+  <div class="menu-pop opacity-pop" id="opacityPop" role="dialog" aria-label="See-through" hidden>
+    <div class="opacity-head"><span>See-through</span><span id="opacityVal">100%</span></div>
+    <div class="slider" id="slider" title="Drag to change how see-through the window is">
+      <div class="slider-fill" id="sliderFill"></div>
+    </div>
+    <div class="opacity-hint">Or scroll over the button, or press <span class="kbd">Ctrl+Alt+[</span> and <span class="kbd">Ctrl+Alt+]</span>.</div>
+  </div>
 
   <!-- The record button's display menu (renderer.js fills it). -->
   <div class="menu-pop" id="recDisplayMenu" role="menu" hidden></div>
@@ -172,9 +179,21 @@
             <label class="radio"><input type="radio" name="answerProvider" value="openrouter" id="answerProviderOpenrouter" /> OpenRouter</label>
           </div>
           <div class="field">
-            <label for="answerModel">Model</label>
+            <label class="checkbox"><input type="checkbox" id="autoModels" /> Pick the models by meeting type (automatic)</label>
+            <p class="hint">Recruiter calls get the fastest model; technical, CEO and team meetings a fast and precise one; live coding a top model for code and the fastest for talking. Project answers use the most capable model. A model picked below stays until the meeting type changes.</p>
+          </div>
+          <div class="field">
+            <label for="answerModel">Text answers</label>
             <select id="answerModel"></select>
-            <p class="hint">List is for the selected provider. Reasoning models think first (slower first token).</p>
+          </div>
+          <div class="field">
+            <label for="answerCodeModel">Code &amp; diagram answers</label>
+            <select id="answerCodeModel"></select>
+          </div>
+          <div class="field">
+            <label for="answerProjectModel">Project answers</label>
+            <select id="answerProjectModel"></select>
+            <p class="hint">Lists are for the selected provider, newest first. The model button on the left toolbar changes the model of the format selected above the answers.</p>
           </div>
         </section>
 
@@ -348,7 +367,7 @@
             <li>Start your call in Ace as usual. Then click the <b>headset button</b> at the top. It shows this computer's IP address.</li>
             <li>On the helper's computer, open Ace and choose <b>Join as supporter</b>. Enter the IP address, then click <b>Connect</b>.</li>
             <li>The helper hears your microphone and the call, and sees your answer panel as it changes: the transcript bubbles and every answer.</li>
-            <li>The helper's <b>AI</b> button (or Ctrl+Enter) presses Send on your Ace for you: your AI answers the current transcript, in the mode the helper picked, and the answer shows on both screens.</li>
+            <li>The box under the answers asks your AI: what the helper types there is answered on your Ace as a question (empty, your AI answers what was just said), in the mode the helper picked, and the answer shows on both screens. Messages between you go in the chat column, which has its own box on both sides.</li>
             <li>When the helper joins, your window and theirs widen by a <b>Private chat</b> column and can be resized. When they leave, both windows go back to the normal size. What they send shows there, and you reply in its message box. The <b>&times;</b> closes it again; the trash button clears it on both sides.</li>
             <li>The helper sees your screen in a small picture above the chat. A double-click (or the pop-out button) opens it in a window of its own that can be made full screen or moved to another monitor. If you have more than one display, the numbered buttons pick which one they see.</li>
             <li>The helper's speaker button mutes and unmutes the call sound on their side.</li>
@@ -363,7 +382,10 @@
             <li><b>Blue bubbles</b> are what the interviewer said. When a question ends, the answer appears underneath it.</li>
             <li>On each bubble: <b>↻</b> answers it again, <b>✎</b> lets you fix the transcript and then answer, <b>×</b> removes it.</li>
             <li>Type your own question in the box at the bottom and press <b>Enter</b> (or the arrow) — for example when you want to prepare an answer before they ask.</li>
+            <li>Answers start being written while the interviewer is still talking, so Send usually shows one at once. When the interview starts, Ace also writes answers to the questions most interviews ask (tell me about yourself, salary, strengths…) and to the ones your job description makes likely; those show instantly, marked <b>Prepared answer</b>. Press <b>↻</b> on the question for a fresh one.</li>
+            <li>The two small buttons next to the box capture the screen and add the picture to your question: the top one an area you drag over (like <span class="kbd">Alt+S</span>), the bottom one the whole screen (like <span class="kbd">Alt+A</span>).</li>
             <li>The format buttons above the answers (<b>Text</b>, <b>Code</b>, <b>Diagram</b>, <b>Project</b>; hover for the name) choose the answer format. Use <b>Code</b> for coding questions and <b>Diagram</b> for architecture questions.</li>
+            <li>Double-click code or a diagram in an answer to open it in a note of its own: colored code with line numbers and a Copy button, or the diagram at full size. Each double-click opens a new note. Drag a note by its top bar or bottom strip; it can go past the top or bottom of the screen with just a strip showing. Notes take the main window's transparency and hide with it.</li>
             <li>The drop-down at the top switches the meeting type mid-call if the tone changes.</li>
             <li>The <b>trash</b> button next to the format buttons removes all bubbles and answers (your materials stay).</li>
           </ul>
@@ -397,7 +419,7 @@
             <li>Keep <b>Stealth</b> on (crossed-out green eye). Then the app does not appear in Zoom, Meet or Teams screen sharing, nor in recordings.</li>
             <li class="hint">Stealth works on Windows. On macOS it works for most apps, but recent Zoom/Teams versions can still capture the window. On Linux no app can hide itself from screen capture — hide the window with <span class="kbd">Ctrl+Alt+H</span> while you share your screen.</li>
             <li class="hint">Click-through works on Windows, macOS and Linux X11 sessions; Ubuntu's default Wayland session does not support it (the button is greyed out).</li>
-            <li>Make the window see-through with <span class="kbd">Ctrl+Alt+]</span> (more visible) and <span class="kbd">Ctrl+Alt+[</span> (more transparent).</li>
+            <li>Make the window see-through with the half-circle button at the top (click it for a slider, or scroll over it), or with <span class="kbd">Ctrl+Alt+]</span> (more visible) and <span class="kbd">Ctrl+Alt+[</span> (more transparent).</li>
             <li>Hide and show instantly with <span class="kbd">Ctrl+Alt+H</span>.</li>
             <li>Move the window with <span class="kbd">Ctrl+Alt+Arrow keys</span>.</li>
           </ul>
@@ -798,10 +820,11 @@
       <div class="composer-img-strip" id="composerImgStrip" hidden></div>
       <div class="composer-row">
         <textarea id="composerInput" rows="2" spellcheck="false" placeholder="Your question (from your knowledge base)…"></textarea>
+        <div class="capture-btns" role="group" aria-label="Capture the screen">
+          <button type="button" class="capture-btn" id="captureAreaBtn" title="Capture an area of the screen (Alt+S): drag over it and it is added to your question"><i data-icon="capture-area"></i></button>
+          <button type="button" class="capture-btn" id="captureScreenBtn" title="Capture the whole screen (Alt+A): it is added to your question"><i data-icon="capture-screen"></i></button>
+        </div>
         <button id="getAnswerBtn" class="answer-send-btn" title="Get answer (Ctrl+Enter)" disabled><i data-icon="send"></i></button>
-        <button id="supporterChatBtn" class="answer-send-btn supporter-chat-send" type="button" title="Send to them (Enter)">
-          <i data-icon="message"></i>
-        </button>
       </div>
     </div>
   </section>
@@ -879,7 +902,7 @@
         <li><b>Two roles:</b> <b>Speaker</b> hosts on a port; <b>Supporter</b> dials in to help.</li>
         <li><b>Voice mode:</b> transcribes the call audio live; questions come from what is said.</li>
         <li><b>Stealth shield</b> in the header hides the window from screen-recording / meeting share-screen.</li>
-        <li><b>Opacity slider</b> in the header — click and drag to fade the window.</li>
+        <li><b>See-through button</b> (half circle) in the header — click for a slider, or scroll over it, to fade the window.</li>
         <li><b>Hotkeys</b> — see Settings &rarr; Hotkeys for the full list. Defaults: <code>Ctrl+Alt+H</code> hide, <code>Ctrl+H</code> stealth, <code>Alt+C</code> start/stop active mode.</li>
       </ul>
       <button class="welcome-dismiss" id="welcomeDismiss">Got it, let's go</button>

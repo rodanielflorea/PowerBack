@@ -13,6 +13,7 @@ const PROVIDERS = {
     keyPlaceholder: 'Paste xAI key for answers…',
     fallbackModels: [
       'grok-4.20-0309-non-reasoning',
+      'grok-4.7',
       'grok-4.3',
       'grok-4.6',
       'grok-4.5',
@@ -32,13 +33,15 @@ const PROVIDERS = {
     defaultModel: 'claude-sonnet-5-5',
     keyHint: 'Get a key at console.anthropic.com.',
     keyPlaceholder: 'Paste Anthropic key (sk-ant-…)…',
+    // Newest first, fastest to most capable.
     fallbackModels: [
+      'claude-haiku-5-5',
       'claude-sonnet-5-5',
       'claude-opus-5-5',
+      'claude-fable-5-2',
       'claude-fable-5-1',
       'claude-sonnet-5',
       'claude-opus-5',
-      'claude-fable-5',
     ],
     style: 'anthropic',
     chatUrl: 'https://api.anthropic.com/v1/messages',
@@ -49,17 +52,22 @@ const PROVIDERS = {
     id: 'openai',
     label: 'OpenAI',
     short: 'OpenAI',
-    defaultModel: 'gpt-5.6-luna',
+    defaultModel: 'gpt-6.1-terra',
     keyHint: 'Get a key at platform.openai.com/api-keys.',
     keyPlaceholder: 'Paste OpenAI key (sk-…)…',
+    // GPT-6 series: Luna (fast), Terra (mid), Sol (high-end), Astra (flagship).
     fallbackModels: [
+      'gpt-6-luna',
+      'gpt-6.1-terra',
+      'gpt-6.1-sol',
+      'gpt-6-astra',
+      'gpt-6-sol',
+      'gpt-6.1-terra-pro',
+      'gpt-6.1-sol-pro',
+      'gpt-6-astra-pro',
       'gpt-5.6-luna',
       'gpt-5.6-terra',
       'gpt-5.6-sol',
-      'gpt-5.6-luna-pro',
-      'gpt-5.6-terra-pro',
-      'gpt-5.6-sol-pro',
-      'gpt-5.4',
     ],
     style: 'openai',
     chatUrl: 'https://api.openai.com/v1/chat/completions',
@@ -73,19 +81,20 @@ const PROVIDERS = {
     label: 'OpenRouter',
     short: 'OpenRouter',
     defaultModel: 'anthropic/claude-sonnet-5.5',
-    keyHint: 'Get a key at openrouter.ai/keys.',
+    keyHint: 'Get a key at openrouter.ai/keys. Claude models go to Anthropic directly when an Anthropic key is set (faster).',
     keyPlaceholder: 'Paste OpenRouter key (sk-or-…)…',
     fallbackModels: [
+      'anthropic/claude-haiku-5.5',
       'anthropic/claude-sonnet-5.5',
       'anthropic/claude-opus-5.5',
-      'anthropic/claude-fable-5.1',
-      'openai/gpt-5.6-luna',
-      'openai/gpt-5.6-terra',
-      'openai/gpt-5.6-sol',
+      'anthropic/claude-fable-5.2',
+      'openai/gpt-6-luna',
+      'openai/gpt-6.1-terra',
+      'openai/gpt-6.1-sol',
+      'openai/gpt-6-astra',
       'google/gemini-3.8-flash',
       'x-ai/grok-4.7',
       'deepseek/deepseek-v4.1-flash',
-      'anthropic/claude-haiku-5.5',
     ],
     style: 'openai',
     chatUrl: 'https://openrouter.ai/api/v1/chat/completions',
@@ -205,6 +214,19 @@ function toAnthropicContent(content) {
     }
   }
   return parts.length ? parts : '';
+}
+
+// How much a Claude model thinks before its first words. The 5.x models think
+// by default, which delays an interview answer, so the fast ones are told not
+// to and the big ones to think little; code gets a bit more. Any of these a
+// model refuses, the request is sent again without (streamAttempts).
+function anthropicSpeedFields(model, purpose) {
+  const m = String(model || '');
+  const code = purpose === 'code';
+  if (/claude-haiku-5-5/.test(m)) return { thinking: { type: 'disabled' } };
+  if (/claude-sonnet-5-5/.test(m)) return { thinking: { type: 'between_tools' } };
+  if (/claude-(opus-5|fable-5|mythos-5)/.test(m)) return { output_config: { effort: code ? 'medium' : 'low' } };
+  return null;
 }
 
 function toAnthropicBody(model, messages, { stream, maxTokens }) {
@@ -334,8 +356,9 @@ function textFromAnthropic(data) {
   return blocks.filter((b) => b && b.type === 'text').map((b) => b.text || '').join('').trim();
 }
 
+// GPT-5 and later (GPT-6, GPT-6.1, …): reasoning models with these parameters.
 function isGpt5(model) {
-  return /^gpt-5/i.test(String(model || ''));
+  return /^gpt-([5-9]|\d{2})/i.test(String(model || ''));
 }
 
 function isXaiReasoningModel(model) {
@@ -343,16 +366,25 @@ function isXaiReasoningModel(model) {
   return /grok-4\.6|grok-4\.5|grok-4\.20-multi-agent|grok-4\.20-0309-reasoning/.test(s);
 }
 
-function openaiChatBody(model, messages, { stream, maxTokens }) {
+function openaiChatBody(model, messages, { stream, maxTokens, purpose, effort }) {
   const body = { model, messages, stream: !!stream };
   if (maxTokens) {
     if (isGpt5(model)) body.max_completion_tokens = maxTokens;
     else body.max_tokens = maxTokens;
   }
   // GPT-5.x defaults to medium reasoning and holds visible tokens until
-  // thinking finishes. Interview answers need first-token speed.
-  if (isGpt5(model)) body.reasoning_effort = 'none';
+  // thinking finishes. Interview answers need first-token speed; code gets a
+  // little thought.
+  if (isGpt5(model)) body.reasoning_effort = effort || gptEffort(model, purpose);
   return body;
+}
+
+// The least reasoning a GPT model accepts for this kind of answer. GPT-6.1 Sol,
+// GPT-6 Astra and the Pro models refuse 'none' (400: "does not support
+// 'none'"); for others not yet known, streamAttempts retries with 'low'.
+function gptEffort(model, purpose) {
+  if (purpose === 'code') return 'low';
+  return /gpt-6\.1-sol|gpt-6-astra|-pro\b/i.test(String(model || '')) ? 'low' : 'none';
 }
 
 function xaiChatBody(model, messages, { stream, maxTokens }) {
@@ -368,32 +400,33 @@ function xaiChatBody(model, messages, { stream, maxTokens }) {
 // the least thinking, kept out of the stream, for a fast first token
 // (`enabled: false` is rejected by Claude: "reasoning is mandatory"); a model
 // that rejects the `reasoning` field gets the body without it (second attempt).
-function openrouterChatBody(model, messages, { stream, maxTokens, lowReasoning }) {
+function openrouterChatBody(model, messages, { stream, maxTokens, lowReasoning, purpose }) {
   const body = { model, messages, stream: !!stream };
   if (maxTokens) body.max_tokens = maxTokens;
-  if (lowReasoning) body.reasoning = { effort: 'low', exclude: true };
+  if (lowReasoning) body.reasoning = { effort: purpose === 'code' ? 'medium' : 'low', exclude: true };
   return body;
 }
 
-function streamAttempts(p, model, messages, { maxTokens, convId } = {}) {
+function streamAttempts(p, model, messages, { maxTokens, convId, purpose } = {}) {
   const cap = maxTokens || (p.style === 'anthropic' ? 16384 : undefined);
   if (p.style === 'anthropic') {
-    return [{
-      url: p.chatUrl,
-      body: toAnthropicBody(model, messages, { stream: true, maxTokens: cap || 16384 }),
-      takeDelta: deltaFromAnthropic,
-    }];
+    const plain = toAnthropicBody(model, messages, { stream: true, maxTokens: cap || 16384 });
+    const speed = anthropicSpeedFields(model, purpose);
+    const attempts = [];
+    if (speed) attempts.push({ url: p.chatUrl, body: { ...plain, ...speed }, takeDelta: deltaFromAnthropic, onlyIf400: true });
+    attempts.push({ url: p.chatUrl, body: plain, takeDelta: deltaFromAnthropic });
+    return attempts;
   }
   if (p.id === 'openai') {
-    const chatBody = openaiChatBody(model, messages, { stream: true, maxTokens: cap });
-    const respBody = { ...toOpenAiResponsesBody(model, messages, { stream: true, maxTokens: cap }), reasoning: { effort: 'none' } };
+    const effort = isGpt5(model) ? gptEffort(model, purpose) : null;
+    const chatBody = openaiChatBody(model, messages, { stream: true, maxTokens: cap, purpose });
+    const respBody = { ...toOpenAiResponsesBody(model, messages, { stream: true, maxTokens: cap }), reasoning: { effort: effort === 'none' ? 'low' : (effort || 'low') } };
     if (convId) respBody.prompt_cache_key = String(convId);
+    const takeChat = (json) => deltaFromOpenAi(json) || deltaFromOpenAiResponses(json);
     return [
-      {
-        url: 'https://api.openai.com/v1/chat/completions',
-        body: chatBody,
-        takeDelta: (json) => deltaFromOpenAi(json) || deltaFromOpenAiResponses(json),
-      },
+      { url: 'https://api.openai.com/v1/chat/completions', body: chatBody, takeDelta: takeChat },
+      // A model that refuses no reasoning at all: the same with a little.
+      ...(effort === 'none' ? [{ url: 'https://api.openai.com/v1/chat/completions', body: openaiChatBody(model, messages, { stream: true, maxTokens: cap, purpose, effort: 'low' }), takeDelta: takeChat }] : []),
       {
         url: 'https://api.openai.com/v1/responses',
         body: respBody,
@@ -403,7 +436,7 @@ function streamAttempts(p, model, messages, { maxTokens, convId } = {}) {
   }
   if (p.id === 'openrouter') {
     return [
-      { url: p.chatUrl, body: openrouterChatBody(model, messages, { stream: true, maxTokens: cap, lowReasoning: true }), takeDelta: deltaFromOpenAi },
+      { url: p.chatUrl, body: openrouterChatBody(model, messages, { stream: true, maxTokens: cap, lowReasoning: true, purpose }), takeDelta: deltaFromOpenAi },
       { url: p.chatUrl, body: openrouterChatBody(model, messages, { stream: true, maxTokens: cap }), takeDelta: deltaFromOpenAi },
     ];
   }
@@ -424,9 +457,9 @@ async function throwIfNotOk(res) {
   throw err;
 }
 
-async function streamChat({ provider, apiKey, model, messages, signal, onDelta, convId, maxTokens }) {
+async function streamChat({ provider, apiKey, model, messages, signal, onDelta, convId, maxTokens, purpose }) {
   const p = typeof provider === 'string' ? getProvider(provider) : provider;
-  const attempts = streamAttempts(p, model, messages, { maxTokens, convId });
+  const attempts = streamAttempts(p, model, messages, { maxTokens, convId, purpose });
   let lastErr = null;
   const headers = authHeaders(p, apiKey, { stream: true, convId });
 
@@ -451,6 +484,7 @@ async function streamChat({ provider, apiKey, model, messages, signal, onDelta, 
       if (e && e.name === 'AbortError') throw e;
       lastErr = e;
       if (i === attempts.length - 1) throw e;
+      if (attempts[i].onlyIf400 && e.status !== 400) throw e;
     }
   }
   if (lastErr) throw lastErr;
@@ -495,7 +529,7 @@ function isChatModelId(provider, id) {
   }
   if (provider.id === 'openai') {
     // GPT-4 generation models are being retired; only 5.x is offered.
-    if (!/^gpt-5/.test(s)) return false;
+    if (!/^gpt-([5-9]|\d{2})/.test(s)) return false;
     return !/realtime|transcribe|tts|audio|image|search|moderation|instruct|codex|chat-latest/.test(s);
   }
   // Dated snapshots (claude-…-20251001) are the older generations.
@@ -592,6 +626,7 @@ function modelAbbr(providerId, modelId) {
     return 'Cl';
   }
   if (p === 'openai') {
+    if (/astra/i.test(id)) return 'Ast';
     if (/luna/i.test(id)) return 'Lun';
     if (/terra/i.test(id)) return 'Ter';
     if (/sol/i.test(id)) return 'Sol';

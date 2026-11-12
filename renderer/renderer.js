@@ -209,8 +209,46 @@ function makeCustomSelect(sel, compact) {
   });
 })();
 
+// See-through: a button in the title bar; its panel holds the slider. The
+// mouse wheel over the button changes it too, 5% a step.
+const opacityBtn = document.getElementById("opacityBtn");
+const opacityPop = document.getElementById("opacityPop");
+const opacityValEl = document.getElementById("opacityVal");
+let currentOpacity = 1;
 function updateFill(opacity) {
-  sliderFill.style.width = `${Math.round(opacity * 100)}%`;
+  currentOpacity = Math.max(0, Math.min(1, Number(opacity) || 0));
+  const pct = Math.round(currentOpacity * 100);
+  sliderFill.style.width = `${pct}%`;
+  if (opacityValEl) opacityValEl.textContent = `${pct}%`;
+  if (opacityBtn) opacityBtn.title = `See-through: ${pct}% (click to change, or scroll over this button)`;
+}
+function closeOpacityPop() {
+  if (opacityPop) opacityPop.hidden = true;
+  if (opacityBtn) opacityBtn.classList.remove("open");
+}
+if (opacityBtn && opacityPop) {
+  opacityBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!opacityPop.hidden) { closeOpacityPop(); return; }
+    opacityPop.hidden = false;
+    const r = opacityBtn.getBoundingClientRect();
+    const w = opacityPop.offsetWidth;
+    opacityPop.style.left = `${Math.max(6, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 6))}px`;
+    opacityPop.style.top = `${r.bottom + 4}px`;
+    opacityBtn.classList.add("open");
+  });
+  opacityBtn.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const next = Math.round((currentOpacity + (e.deltaY < 0 ? 0.05 : -0.05)) * 100) / 100;
+    window.api.setOpacity(Math.max(0, Math.min(1, next)));
+  }, { passive: false });
+  // A press outside closes it (not a click: a drag that ends outside is fine).
+  document.addEventListener("mousedown", (e) => {
+    if (opacityPop.hidden || opacityPop.contains(e.target) || opacityBtn.contains(e.target)) return;
+    closeOpacityPop();
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeOpacityPop(); });
+  window.addEventListener("blur", () => { if (!sliderDragging) closeOpacityPop(); });
 }
 
 function updateStealth(on) {
@@ -802,6 +840,8 @@ if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
   }
   hideSetup();
   log(`Started: voice mode as ${chosenRole}`, "info");
+  // Answers to the likely questions, written in the background.
+  if (window.api.prepareAnswers) window.api.prepareAnswers().catch(() => {});
   // Transcription starts by itself once the interview screen is up.
   setTimeout(() => { if (!recState && typeof startVoice === "function") startVoice(); }, 400);
 });
@@ -1717,7 +1757,17 @@ async function refreshMeetingUI() {
 
 async function persistMeeting(patch) {
   if (!window.api.setMeetingConfig) return;
+  const before = answerCfgCache && answerCfgCache.slots ? JSON.stringify(answerCfgCache.slots) : "";
   applyMeetingConfigUi(await window.api.setMeetingConfig(patch));
+  // Automatic models: say what the new meeting type picked.
+  try {
+    const cfg = await window.api.getAnswerConfig();
+    if (cfg && cfg.autoModels && cfg.slots && JSON.stringify(cfg.slots) !== before && document.body.classList.contains("in-interview")) {
+      const short = (id) => modelLabel(id).replace(/\s+[⚡⚖🧠🔧🔗].*$/u, "");
+      toast(`Models: text ${short(cfg.slots.answer)} · code ${short(cfg.slots.code)}`, "info");
+    }
+    if (cfg) applyAnswerConfigUi(cfg);
+  } catch {}
 }
 
 // The type picked on the wizard's first step.
@@ -2539,6 +2589,7 @@ function applyMeetLine(who, text, speakerId, isFinal) {
   } else if (typeof syncSendEnabled === "function") {
     syncSendEnabled();
   }
+  if (isFinal) refreshSpeculationWhileTalking();
 }
 
 function streamSegment(text, isFinal, speakerId, turns) {
@@ -2662,6 +2713,9 @@ const answerKeyEl = document.getElementById("answerKey");
 const answerKeyAnthropicEl = document.getElementById("answerKeyAnthropic");
 const answerKeyOpenaiEl = document.getElementById("answerKeyOpenai");
 const answerModelEl = document.getElementById("answerModel");
+const answerCodeModelEl = document.getElementById("answerCodeModel");
+const answerProjectModelEl = document.getElementById("answerProjectModel");
+const autoModelsEl = document.getElementById("autoModels");
 const answerModelHeaderEl = document.getElementById("answerModelHeader");
 const answerProviderSelect = document.getElementById("answerProviderSelect");
 const modeSeg = document.getElementById("modeSeg");
@@ -2669,13 +2723,19 @@ const railModelBtn = document.getElementById("railModelBtn");
 let currentAnswerEl = null;
 let answerCfgCache = { provider: "xai", model: "grok-4.20-0309-non-reasoning", keys: {}, fallbackModels: [] };
 
+// The slot of a format: Code and Diagram share one model, Project has its own.
+function modelSlotFor(mode) {
+  return mode === "CODE" || mode === "DIAGRAM" ? "code" : mode === "PROJECT" ? "project" : "answer";
+}
 function updateRailModelBtn(cfg) {
   if (!railModelBtn) return;
   const c = cfg || answerCfgCache;
-  const id = c.model || "";
-  railModelBtn.textContent = c.railAbbr || "M";
+  const slot = modelSlotFor(typeof manualMode !== "undefined" ? manualMode : "ANSWER");
+  const id = (c.slots && c.slots[slot]) || c.model || "";
+  railModelBtn.textContent = (c.railAbbrs && c.railAbbrs[slot]) || c.railAbbr || "M";
   const prov = (c.providers || []).find((p) => p.id === c.provider);
-  railModelBtn.title = (prov ? prov.label + " · " : "") + id;
+  const what = slot === "code" ? "Code & diagrams" : slot === "project" ? "Project" : "Text answers";
+  railModelBtn.title = `${what}: ${modelLabel(id).replace(/\s+[⚡⚖🧠🔧🔗].*$/u, "")}${prov ? " (" + prov.label + ")" : ""}${c.autoModels ? " · picked by meeting type" : ""}`;
 }
 
 function setProviderRadios(provider) {
@@ -2693,14 +2753,10 @@ if (railModelBtn && window.api.showModelMenu) {
     e.preventDefault();
     e.stopPropagation();
     const r = railModelBtn.getBoundingClientRect();
-    window.api.showModelMenu({ x: r.left, y: r.top, width: r.width, height: r.height });
+    window.api.showModelMenu({ x: r.left, y: r.top, width: r.width, height: r.height }, manualMode);
   });
 }
-if (window.api.onModelSelected) {
-  window.api.onModelSelected((id) => {
-    setAnswerModel(id);
-  });
-}
+// (The model menu saves the choice itself; the page follows answer-config-changed.)
 if (window.api.onAnswerConfigChanged) {
   window.api.onAnswerConfigChanged((cfg) => applyAnswerConfigUi(cfg));
 }
@@ -2721,6 +2777,7 @@ if (modeSeg) {
     if (!btn) return;
     manualMode = btn.dataset.mode;
     modeSeg.querySelectorAll('.mode-seg-btn').forEach(b => b.classList.toggle('mode-seg-btn--active', b === btn));
+    updateRailModelBtn();
     syncSpeedSlider();
     syncProjectMode();
     _speculativeText = null;
@@ -2746,29 +2803,46 @@ const MODEL_DISPLAY = {
   "grok-2-vision-1212":               "Grok 2 Vision  (legacy)",
   "grok-beta":                        "Grok Beta  (experimental)",
   "grok-build-0.1":                   "Grok Build  🔧 code",
-  "claude-sonnet-5-5":                "Claude Sonnet 5.5  ⚖ latest",
-  "claude-opus-5-5":                  "Claude Opus 5.5  🧠 latest",
-  "claude-fable-5-1":                 "Claude Fable 5.1  🧠 flagship",
-  "claude-haiku-5-5":                 "Claude Haiku 5.5  ⚡ cheap",
+  "grok-4.7":                         "Grok 4.7  🧠 latest",
+  "claude-haiku-5-5":                 "Claude Haiku 5.5  ⚡ fastest",
+  "claude-sonnet-5-5":                "Claude Sonnet 5.5  ⚖ fast + precise",
+  "claude-opus-5-5":                  "Claude Opus 5.5  🧠",
+  "claude-fable-5-2":                 "Claude Fable 5.2  🧠 best for code",
+  "claude-fable-5-1":                 "Claude Fable 5.1  🧠",
   "claude-sonnet-5":                  "Claude Sonnet 5",
   "claude-opus-5":                    "Claude Opus 5  🧠",
   "claude-fable-5":                   "Claude Fable 5  🧠",
   "claude-opus-4-8":                  "Claude Opus 4.8",
   "claude-sonnet-4-6":                "Claude Sonnet 4.6",
-  "gpt-5.6-sol":                      "GPT-5.6 Sol  🧠 flagship",
+  "gpt-6-luna":                       "GPT-6 Luna  ⚡ fastest",
+  "gpt-6-luna-pro":                   "GPT-6 Luna Pro",
+  "gpt-6.1-terra":                    "GPT-6.1 Terra  ⚖ fast + precise",
+  "gpt-6.1-terra-pro":                "GPT-6.1 Terra Pro",
+  "gpt-6.1-sol":                      "GPT-6.1 Sol",
+  "gpt-6.1-sol-pro":                  "GPT-6.1 Sol Pro",
+  "gpt-6-sol":                        "GPT-6 Sol  🧠 best for code",
+  "gpt-6-sol-pro":                    "GPT-6 Sol Pro",
+  "gpt-6-astra":                      "GPT-6 Astra  🧠 most capable",
+  "gpt-6-astra-pro":                  "GPT-6 Astra Pro",
+  "gpt-5.6-sol":                      "GPT-5.6 Sol",
   "gpt-5.6-sol-pro":                  "GPT-5.6 Sol Pro  🧠",
-  "gpt-5.6-terra":                    "GPT-5.6 Terra  ⚖ balanced",
+  "gpt-5.6-terra":                    "GPT-5.6 Terra",
   "gpt-5.6-terra-pro":                "GPT-5.6 Terra Pro",
-  "gpt-5.6-luna":                     "GPT-5.6 Luna  ⚡ fast",
+  "gpt-5.6-luna":                     "GPT-5.6 Luna",
   "gpt-5.6-luna-pro":                 "GPT-5.6 Luna Pro  ⚡",
   "gpt-5.4":                          "GPT-5.4",
-  "anthropic/claude-sonnet-5.5":      "Claude Sonnet 5.5  ⚖ latest",
-  "anthropic/claude-opus-5.5":        "Claude Opus 5.5  🧠 latest",
-  "anthropic/claude-fable-5.1":       "Claude Fable 5.1  🧠 flagship",
-  "anthropic/claude-haiku-5.5":       "Claude Haiku 5.5  ⚡ cheap",
-  "openai/gpt-5.6-sol":               "GPT-5.6 Sol  🧠 flagship",
-  "openai/gpt-5.6-terra":             "GPT-5.6 Terra  ⚖ balanced",
-  "openai/gpt-5.6-luna":              "GPT-5.6 Luna  ⚡ fast",
+  "anthropic/claude-haiku-5.5":       "Claude Haiku 5.5  ⚡ fastest",
+  "anthropic/claude-sonnet-5.5":      "Claude Sonnet 5.5  ⚖ fast + precise",
+  "anthropic/claude-opus-5.5":        "Claude Opus 5.5  🧠",
+  "anthropic/claude-fable-5.2":       "Claude Fable 5.2  🧠 best for code",
+  "anthropic/claude-fable-5.1":       "Claude Fable 5.1  🧠",
+  "openai/gpt-6-luna":                "GPT-6 Luna  ⚡ fastest",
+  "openai/gpt-6.1-terra":             "GPT-6.1 Terra  ⚖ fast + precise",
+  "openai/gpt-6.1-sol":               "GPT-6.1 Sol",
+  "openai/gpt-6-astra":               "GPT-6 Astra  🧠 most capable",
+  "openai/gpt-5.6-sol":               "GPT-5.6 Sol",
+  "openai/gpt-5.6-terra":             "GPT-5.6 Terra",
+  "openai/gpt-5.6-luna":              "GPT-5.6 Luna",
   "google/gemini-3.8-flash":          "Gemini 3.8 Flash  ⚡",
   "x-ai/grok-4.7":                    "Grok 4.7",
   "deepseek/deepseek-v4.1-flash":     "DeepSeek V4.1 Flash  ⚡ cheap",
@@ -2798,27 +2872,34 @@ function fillKeyFields(cfg) {
   setVal(answerKeyOpenaiEl, keys.openai || "");
 }
 
+// The lists keep the provider's order (newest first); the curated models
+// (fallbackModels: fastest to most capable) lead.
 function fillModelSelects(cfg, liveIds) {
   const fallback = (cfg.fallbackModels && cfg.fallbackModels.length)
-    ? cfg.fallbackModels.map((id) => ({ id }))
-    : FALLBACK_MODELS.slice();
-  const current = cfg.model || fallback[0].id;
-  let opts;
-  if (Array.isArray(liveIds) && liveIds.length) opts = liveIds.map((id) => ({ id }));
-  else opts = fallback;
-  if (!opts.some((o) => o.id === current)) opts.unshift({ id: current });
-  for (const sel of [answerModelEl, answerModelHeaderEl]) {
-    if (!sel) continue;
+    ? cfg.fallbackModels.slice()
+    : FALLBACK_MODELS.map((o) => o.id);
+  const slots = cfg.slots || { answer: cfg.model, code: cfg.model, project: cfg.model };
+  let ids = Array.isArray(liveIds) && liveIds.length ? liveIds.slice() : fallback.slice();
+  const curated = fallback.filter((id) => !liveIds || !liveIds.length || ids.includes(id));
+  ids = curated.concat(ids.filter((id) => !curated.includes(id)));
+  for (const id of [slots.answer, slots.code, slots.project]) if (id && !ids.includes(id)) ids.unshift(id);
+  const fill = (sel, value) => {
+    if (!sel) return;
     sel.innerHTML = "";
-    for (const o of opts) {
+    for (const id of ids) {
       const opt = document.createElement("option");
-      opt.value = o.id;
-      opt.textContent = modelLabel(o.id);
+      opt.value = id;
+      opt.textContent = modelLabel(id);
       sel.appendChild(opt);
     }
-    sel.value = current;
+    sel.value = value || ids[0];
     if (sel._cselRefresh) sel._cselRefresh();
-  }
+  };
+  fill(answerModelEl, slots.answer);
+  fill(answerModelHeaderEl, slots.answer);
+  fill(answerCodeModelEl, slots.code);
+  fill(answerProjectModelEl, slots.project);
+  if (autoModelsEl) autoModelsEl.checked = !!cfg.autoModels;
 }
 
 async function applyAnswerConfigUi(cfg, { refreshLive = false } = {}) {
@@ -2845,14 +2926,15 @@ async function setAnswerProvider(provider) {
   await applyAnswerConfigUi(cfg || await window.api.getAnswerConfig(), { refreshLive: true });
 }
 
-function setAnswerModel(value) {
+function setAnswerModel(value, slot) {
   if (!value) return;
-  window.api.setAnswerConfig({ model: value }).then((cfg) => {
+  window.api.setAnswerConfig({ model: value, slot: slot || "answer" }).then((cfg) => {
     if (cfg) {
       answerCfgCache = cfg;
       updateRailModelBtn(cfg);
     }
   });
+  if (slot && slot !== "answer") return;
   if (answerModelEl && answerModelEl.value !== value) {
     answerModelEl.value = value;
     if (answerModelEl._cselRefresh) answerModelEl._cselRefresh();
@@ -2862,7 +2944,13 @@ function setAnswerModel(value) {
     if (answerModelHeaderEl._cselRefresh) answerModelHeaderEl._cselRefresh();
   }
 }
-if (answerModelEl) answerModelEl.addEventListener("change", () => setAnswerModel(answerModelEl.value));
+if (answerModelEl) answerModelEl.addEventListener("change", () => setAnswerModel(answerModelEl.value, "answer"));
+if (answerCodeModelEl) answerCodeModelEl.addEventListener("change", () => setAnswerModel(answerCodeModelEl.value, "code"));
+if (answerProjectModelEl) answerProjectModelEl.addEventListener("change", () => setAnswerModel(answerProjectModelEl.value, "project"));
+if (autoModelsEl) autoModelsEl.addEventListener("change", async () => {
+  const cfg = await window.api.setAnswerConfig({ autoModels: autoModelsEl.checked });
+  if (cfg) applyAnswerConfigUi(cfg);
+});
 if (answerModelHeaderEl) answerModelHeaderEl.addEventListener("change", () => setAnswerModel(answerModelHeaderEl.value));
 document.querySelectorAll('input[name="answerProvider"]').forEach((el) => {
   el.addEventListener("change", () => {
@@ -2990,6 +3078,15 @@ async function doScreenshot() {
 }
 if (window.api.onTriggerScreenshot) window.api.onTriggerScreenshot(doScreenshot);
 
+// The capture buttons next to the question box: the same as Alt+S and Alt+A.
+const captureAreaBtn = document.getElementById("captureAreaBtn");
+const captureScreenBtn = document.getElementById("captureScreenBtn");
+if (captureAreaBtn) captureAreaBtn.addEventListener("click", (e) => {
+  e.preventDefault();
+  if (window.api.startAreaSnip) window.api.startAreaSnip().catch(() => {});
+});
+if (captureScreenBtn) captureScreenBtn.addEventListener("click", (e) => { e.preventDefault(); doScreenshot(); });
+
 // Alt+S area-snip result — main captures the region and sends it here.
 if (window.api.onSnipImage) window.api.onSnipImage((img) => {
   if (img && img.base64) addAttachedImage(img.base64, img.mime || 'image/png');
@@ -3004,6 +3101,30 @@ let _speculativeTimer = null;
 let _speculativeText = null;
 const SPECULATE_MIN_CHARS = 6;
 const SPECULATE_DEBOUNCE_MS = 150;
+
+// While they talk: after each finished sentence the hidden answer starts again
+// with everything said so far (when at least 5 new words came in, at most
+// about once a second), so the answer to nearly the whole question is being
+// written by the time they stop. Each restart replaces the one before.
+let _specWordsAt = 0;
+let _specStartedAt = 0;
+function refreshSpeculationWhileTalking() {
+  if (composerInput && composerInput.value.trim()) return;
+  const live = liveMeetText();
+  if (!live || Date.now() - _specStartedAt < 1000) return;
+  const words = live.split(/\s+/).filter(Boolean).length;
+  // Something new they started saying (not the continuation of the text the
+  // hidden answer was started for) counts from zero.
+  const prev = normQuestion(_speculativeText || "");
+  const continues = !!prev && normQuestion(live).startsWith(prev.slice(0, 40));
+  if (continues && words - _specWordsAt < 5) return;
+  kickSpeculative(true);
+}
+// Deepgram heard them pause (150 ms): start the hidden answer now rather than
+// after 1.5 s of silence (the utterance end, which still starts it too).
+if (window.api.onTranscriptSpeechFinal) window.api.onTranscriptSpeechFinal(() => {
+  if (!composerInput || !composerInput.value.trim()) kickSpeculative(true);
+});
 
 function normQuestion(s) {
   return String(s || "").replace(/\s+/g, " ").replace(/[.?!\s]+$/g, "").trim().toLowerCase();
@@ -3050,8 +3171,10 @@ function startSpeculativeNow() {
   if (!key) return;
   if (normQuestion(_speculativeText) === normQuestion(key)) return;
   _speculativeText = key;
+  _specStartedAt = Date.now();
+  _specWordsAt = live ? live.split(/\s+/).filter(Boolean).length : 0;
   if (window.api.speculativeStart) {
-    window.api.speculativeStart({ question: t, forcedMode: manualMode, transcript: mt });
+    window.api.speculativeStart({ question: t, forcedMode: manualMode, transcript: mt, latest: live });
   }
 }
 
@@ -3358,9 +3481,12 @@ function addAnswerTurn(question, imgs, mode, ts) {
   aTime.className = "answer-time answer-time--a";
   a.appendChild(aTime);
   a._timeEl = aTime;
-  // Double-click an answer to push it (text, code, and any diagrams) to the sticky note.
-  a.title = "Double-click to send to sticky note";
-  a.addEventListener("dblclick", () => injectAnswerToSticky(a));
+  // Double-click code or a diagram: a note of its own. Anything else in the
+  // answer: to the sticky note.
+  a.title = turnMode === "CODE" || turnMode === "DIAGRAM"
+    ? "Double-click to open in a note of its own"
+    : "Double-click to send to sticky note (code or a diagram opens in a note of its own)";
+  a.addEventListener("dblclick", (e) => onAnswerDoubleClick(a, e));
   if (showQ) turn.appendChild(q);
   turn.appendChild(a);
 
@@ -3471,6 +3597,7 @@ window.api.onAnswerStart((data) => {
     _optimisticAnswer = false;
     pendingBubbleImages = [];
     if (currentAnswerEl.dataset) currentAnswerEl.dataset.mode = answerMode;
+    markPreparedAnswer(currentAnswerEl, data && data.prepared);
     return;
   }
   dropEmptyStreamingTurn();
@@ -3478,7 +3605,21 @@ window.api.onAnswerStart((data) => {
   const imgs = pendingBubbleImages.slice();
   pendingBubbleImages = [];
   currentAnswerEl = addAnswerTurn(question, imgs, answerMode);
+  markPreparedAnswer(currentAnswerEl, data && data.prepared);
 });
+// Written before the call for a question like this one: say so (↻ writes a
+// fresh answer to the exact question).
+function markPreparedAnswer(a, preparedFor) {
+  if (!a || !preparedFor || !a.parentElement) return;
+  const tag = document.createElement("div");
+  tag.className = "answer-prepared-tag";
+  tag.title = "Written before the call for: " + preparedFor + " Press ↻ on the question for a fresh answer.";
+  tag.innerHTML = aceIcon("check");
+  const t = document.createElement("span");
+  t.textContent = "Prepared answer";
+  tag.appendChild(t);
+  a.parentElement.insertBefore(tag, a);
+}
 window.api.onAnswerChunk((delta) => {
   if (!currentAnswerEl) currentAnswerEl = addAnswerTurn("", null, 'ANSWER');
   // Stream into the child div so the badge span is never destroyed by textContent=
@@ -3571,6 +3712,55 @@ window.api.onAnswerDone((v) => {
   }
   currentAnswerEl = null;
 });
+
+// ── Notes: code or a diagram in a window of its own ──────────────────────────
+// Double-click a code block or a diagram: a new note with just that one
+// (colored code / the diagram at full size). Double-click elsewhere in a Code
+// or Diagram answer: its one code block or diagram, or the whole answer when
+// it has several. Anything else goes to the sticky note as before.
+function onAnswerDoubleClick(a, e) {
+  const t = e && e.target && e.target.closest ? e.target : null;
+  const stream = a._streamEl || a;
+  const pre = t && t.closest("pre");
+  const dia = t && t.closest(".mermaid-block");
+  if (pre && stream.contains(pre)) { openCodeNote(pre); return; }
+  if (dia && stream.contains(dia) && dia.querySelector("svg")) { openDiagramNote(dia); return; }
+  const mode = a.dataset.mode;
+  if ((mode === "CODE" || mode === "DIAGRAM") && !a.classList.contains("streaming")) {
+    const pres = stream.querySelectorAll("pre");
+    const dias = [...stream.querySelectorAll(".mermaid-block")].filter((d) => d.querySelector("svg"));
+    if (dias.length === 1 && !pres.length) { openDiagramNote(dias[0]); return; }
+    if (pres.length === 1 && !dias.length) { openCodeNote(pres[0]); return; }
+    if (pres.length || dias.length) { openAnswerNote(a); return; }
+  }
+  injectAnswerToSticky(a);
+}
+function clearDoubleClickSelection() {
+  try { window.getSelection().removeAllRanges(); } catch {}
+}
+function openCodeNote(pre) {
+  if (!window.api.openNote) return;
+  clearDoubleClickSelection();
+  const code = pre.querySelector("code") || pre;
+  const lang = ((code.className || "").match(/language-([\w+#.-]+)/) || [])[1] || "";
+  window.api.openNote({ kind: "code", code: code.textContent || "", lang });
+}
+function openDiagramNote(block) {
+  const svg = block && block.querySelector("svg");
+  if (!svg || !window.api.openNote) return;
+  clearDoubleClickSelection();
+  const vb = svg.viewBox && svg.viewBox.baseVal;
+  window.api.openNote({ kind: "diagram", svg: svg.outerHTML, w: vb ? vb.width : 0, h: vb ? vb.height : 0 });
+}
+function openAnswerNote(a) {
+  if (!window.api.openNote) return;
+  clearDoubleClickSelection();
+  const copy = (a._streamEl || a).cloneNode(true);
+  copy.querySelectorAll(".code-action-bar, .answer-mode-badge, .answer-time, button").forEach((n) => n.remove());
+  copy.querySelectorAll(".expandable").forEach((n) => { n.classList.remove("expandable"); n.removeAttribute("title"); });
+  const mode = a.dataset.mode || "CODE";
+  window.api.openNote({ kind: "answer", html: copy.innerHTML, mode, title: mode === "DIAGRAM" ? "Diagram answer" : "Code answer" });
+}
 
 // Double-click handler: push an answer bubble to the sticky note as rich
 // markdown, so the sticky renders its diagrams and code exactly like the chat.
@@ -3762,8 +3952,14 @@ function appendScriptToAnswer(el, script) {
 function renderMermaidInElement(el) {
   renderDiagramsMarkdown(el, function (svgEl, ph) {
     ph.classList.add('expandable');
-    ph.title = 'Click to expand';
-    ph.addEventListener('click', () => openDiagramOverlay(svgEl));
+    ph.title = 'Click to expand · double-click to open in a note';
+    let clickTimer = 0;
+    ph.addEventListener('click', (e) => {
+      clearTimeout(clickTimer);
+      if (e.detail > 1) return;
+      clickTimer = setTimeout(() => openDiagramOverlay(svgEl), 280);
+    });
+    ph.addEventListener('dblclick', () => clearTimeout(clickTimer));
   });
 }
 
@@ -6771,9 +6967,24 @@ if (window.api.onRemoteSubmit)
       const mode = req && req.mode;
       if (["ANSWER", "CODE", "DIAGRAM", "PROJECT"].includes(mode) && mode !== manualMode) setManualMode(mode);
       const before = currentAnswerEl;
-      submitComposer();
+      const text = String((req && req.text) || "").trim();
+      if (text && composerInput) {
+        const ownText = composerInput.value;
+        const ownImages = attachedImages;
+        attachedImages = [];
+        composerInput.value = text;
+        try { submitComposer(); }
+        finally {
+          composerInput.value = ownText;
+          attachedImages = ownImages;
+          renderImgStrip();
+          if (typeof syncSendEnabled === "function") syncSendEnabled();
+        }
+      } else {
+        submitComposer();
+      }
       ok = !!currentAnswerEl && currentAnswerEl !== before;
-      if (ok) toast("Your supporter asked the AI.", "info");
+      if (ok) toast(text ? "Your supporter asked the AI a question." : "Your supporter asked the AI.", "info");
       else reason = "nothing";
     }
     window.api.remoteSubmitResult({ connId, ok, reason });
@@ -6856,25 +7067,24 @@ function applyMirror(msg) {
 }
 if (window.api.onMirrorIn) window.api.onMirrorIn((msg) => applyMirror(msg));
 
-// Supporter side: the two send buttons.
+// Supporter side. The box under the answers asks their AI: what is typed is
+// answered as a question on their computer; empty, the AI answers what was
+// just said. Messages to them go in the chat column's own box. A picture
+// put in the AI box cannot go to their AI, so it goes to the chat.
 async function supporterAskAI() {
-  const sent = await window.api.remoteSubmit(manualMode).catch(() => false);
-  if (!sent) toast("Not connected to them.", "err");
-}
-async function supporterSendChat() {
   const text = composerInput ? composerInput.value.trim() : "";
+  const sent = await window.api.remoteSubmit(manualMode, text).catch(() => false);
+  if (!sent) { toast("Not connected to them.", "err"); return; }
+  if (composerInput && text) composerInput.value = "";
   const imgs = typeof attachedImages !== "undefined" ? attachedImages.slice() : [];
-  if (!text && !imgs.length) return;
-  if (composerInput) composerInput.value = "";
-  if (imgs.length) clearAttachedImages();
-  if (text) {
-    const ok = await window.api.sendChatText(text).catch(() => false);
-    chatAddText(text, ok);
-  }
-  for (const im of imgs) {
-    const url = `data:${im.mime || "image/png"};base64,${im.base64}`;
-    const ok = await window.api.sendChatImage(url).catch(() => false);
-    chatAddImage(url, ok);
+  if (imgs.length) {
+    clearAttachedImages();
+    for (const im of imgs) {
+      const url = `data:${im.mime || "image/png"};base64,${im.base64}`;
+      const ok = await window.api.sendChatImage(url).catch(() => false);
+      chatAddImage(url, ok);
+    }
+    toast("Pictures go to the chat; their AI gets the text.", "info");
   }
 }
 if (window.api.onRemoteSubmitResult)
@@ -6884,14 +7094,12 @@ if (window.api.onRemoteSubmitResult)
       ? "Nothing to answer yet. Wait until they hear a question."
       : "Their Ace is not in a call right now.", "warn");
   });
-const supporterChatBtn = document.getElementById("supporterChatBtn");
-if (supporterChatBtn) supporterChatBtn.addEventListener("click", (e) => { e.preventDefault(); supporterSendChat(); });
 if (composerInput)
   composerInput.addEventListener("keydown", (e) => {
     if (!document.body.classList.contains("role-supporter")) return;
     if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
       e.preventDefault();
-      supporterSendChat();
+      supporterAskAI();
     }
   });
 const chatClearBtn = document.getElementById("chatClearBtn");
@@ -6900,15 +7108,17 @@ if (chatClearBtn) chatClearBtn.addEventListener("click", () => { if (window.api.
 let composerDefaults = null;
 function supporterComposerUi(on) {
   if (!composerInput || !getAnswerBtn) return;
-  if (!composerDefaults) composerDefaults = { title: getAnswerBtn.title, html: getAnswerBtn.innerHTML };
+  if (!composerDefaults) composerDefaults = { title: getAnswerBtn.title, html: getAnswerBtn.innerHTML, chat: chatInputEl ? chatInputEl.placeholder : "" };
   if (on) {
-    composerInput.placeholder = "Message to them… (Enter)";
-    getAnswerBtn.title = "Send the current transcript to the AI on their computer (Ctrl+Enter)";
-    getAnswerBtn.textContent = "AI";
+    composerInput.placeholder = "Ask their AI… (Enter; empty: answer what was just said)";
+    getAnswerBtn.title = "Ask the AI on their computer (Enter)";
+    getAnswerBtn.innerHTML = composerDefaults.html;
     getAnswerBtn.disabled = false;
+    if (chatInputEl) chatInputEl.placeholder = "Message to them… (Enter)";
   } else {
     getAnswerBtn.title = composerDefaults.title;
     getAnswerBtn.innerHTML = composerDefaults.html;
+    if (chatInputEl) chatInputEl.placeholder = composerDefaults.chat;
     // The interviewer's own hint (syncProjectMode keeps it while not a supporter).
     composerInput.placeholder = "Your question (from your knowledge base)…";
     syncSendEnabled();
