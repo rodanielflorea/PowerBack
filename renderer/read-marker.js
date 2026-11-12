@@ -247,7 +247,37 @@
     const c = box.getBoundingClientRect();
     const delta = lineTop(el) - (c.top + c.height * eye);
     // Up only, and not for a hair's breadth (phrases on the same line).
-    if (delta > 4) box.scrollTo({ top: box.scrollTop + delta, behavior: 'smooth' });
+    if (delta > 4) glideTo(box, box.scrollTop + delta);
+  }
+
+  // The text drifts up slowly and evenly, like a teleprompter: a quick jump of
+  // a whole line is when the eye loses its place. One line takes about two
+  // thirds of a second, a longer move at most GLIDE_MAX_MS; a new target while
+  // it is moving carries on from where it is, without a stop or a jump.
+  const GLIDE_MS_PER_PX = 28;
+  const GLIDE_MIN_MS = 500, GLIDE_MAX_MS = 1400;
+  let glide = null; // { box, from, to, t0, ms, raf }
+  function glideTo(box, top) {
+    const max = box.scrollHeight - box.clientHeight;
+    const to = Math.max(0, Math.min(max, top));
+    const from = box.scrollTop;
+    if (Math.abs(to - from) < 1) return;
+    if (glide) cancelAnimationFrame(glide.raf);
+    const ms = Math.max(GLIDE_MIN_MS, Math.min(GLIDE_MAX_MS, Math.abs(to - from) * GLIDE_MS_PER_PX));
+    const g = { box, from, to, t0: performance.now(), ms, raf: 0, last: from };
+    glide = g;
+    const step = (now) => {
+      if (glide !== g) return;
+      // The reader scrolled by hand meanwhile: their scroll wins.
+      if (Math.abs(box.scrollTop - g.last) > 2) { glide = null; return; }
+      const k = Math.min(1, (now - g.t0) / g.ms);
+      const eased = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; // gentle start and stop
+      box.scrollTop = g.from + (g.to - g.from) * eased;
+      g.last = box.scrollTop;
+      if (k < 1) g.raf = requestAnimationFrame(step);
+      else glide = null;
+    };
+    g.raf = requestAnimationFrame(step);
   }
   function setEyeLineAt(el) {
     const box = scroller(el);
