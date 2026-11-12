@@ -17,10 +17,18 @@
   </header>
 
   <div class="info-scroll">
-    <section class="info-clock">
-      <div class="info-time" id="infoTime">--:--</div>
-      <div class="info-date" id="infoDate">—</div>
-      <div class="info-tz" id="infoTz"></div>
+    <!-- The things looked at most, in one strip at the top: time, weather, salary. -->
+    <section class="info-top">
+      <div class="info-top-row">
+        <div class="info-clock">
+          <div class="info-time" id="infoTime">--:--</div>
+          <div class="info-date"><span id="infoDate">—</span><span class="info-tz" id="infoTz"></span></div>
+        </div>
+        <div class="info-weather" id="infoWeather"><span class="info-dim">…</span></div>
+      </div>
+      <div class="info-salary" id="infoSalary" hidden>
+        <span class="info-salary-label">Salary</span><span class="info-salary-value" id="infoSalaryValue"></span>
+      </div>
     </section>
 
     <section class="info-block" id="infoWorkBlock">
@@ -31,11 +39,6 @@
     <section class="info-block" id="infoEduBlock">
       <div class="info-block-label">Education</div>
       <div class="cv-list" id="infoEdu"><span class="info-dim">Loading…</span></div>
-    </section>
-
-    <section class="info-block" id="infoWeatherBlock">
-      <div class="info-block-label">Weather</div>
-      <div class="info-weather" id="infoWeather"><span class="info-dim">Loading…</span></div>
     </section>
 
     <section class="info-block" id="infoHolidaysBlock">

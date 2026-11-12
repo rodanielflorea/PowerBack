@@ -67,9 +67,16 @@ public static class AceInput {
     if (dy != 0) Send(Mouse(0x0800, 0, 0, dy));
     if (dx != 0) Send(Mouse(0x1000, 0, 0, dx));
   }
+  // Scan-code key events (not virtual-key), so VM guests, terminals and games —
+  // which read hardware scan codes and ignore virtual-key / Unicode injection —
+  // receive the keystroke. Falls back to a virtual-key event if the layout has
+  // no scan code for the key.
   public static void KeyPress(int vk, bool down) {
-    ushort scan = (ushort)MapVirtualKey((uint)vk, 0);
-    Send(Key((ushort)vk, scan, (down ? 0u : 0x0002u) | (Extended(vk) ? 0x0001u : 0u)));
+    ushort scan = (ushort)MapVirtualKey((uint)vk, 0); // MAPVK_VK_TO_VSC
+    uint up = down ? 0u : 0x0002u; // KEYEVENTF_KEYUP
+    uint ext = Extended(vk) ? 0x0001u : 0u; // KEYEVENTF_EXTENDEDKEY
+    if (scan != 0) Send(Key(0, scan, up | ext | 0x0008)); // KEYEVENTF_SCANCODE
+    else Send(Key((ushort)vk, 0, up | ext));
   }
   public static void Text(string s) {
     foreach (char c in s) Send(Key(0, c, 0x0004), Key(0, c, 0x0004 | 0x0002)); // UNICODE down, up

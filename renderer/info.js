@@ -46,11 +46,22 @@ function renderWeather(w) {
   if (!w) { elWeather.innerHTML = '<span class="info-dim">Unavailable</span>'; return; }
   const emoji = weatherEmoji(w.desc);
   elWeather.innerHTML =
-    '<span class="info-weather-emoji">' + emoji + '</span>' +
-    '<div><div class="info-weather-temp">' + (w.tempC != null ? w.tempC + '°C' : '—') + '</div>' +
-    '<div class="info-weather-desc">' + (w.desc || '') +
-    (w.feelsC != null ? ' · feels ' + w.feelsC + '°' : '') +
-    (w.humidity != null ? ' · ' + w.humidity + '% RH' : '') + '</div></div>';
+    '<div class="info-weather-main"><span class="info-weather-emoji">' + emoji + '</span>' +
+    '<span class="info-weather-temp">' + (w.tempC != null ? w.tempC + '°C' : '—') + '</span></div>' +
+    '<div class="info-weather-desc">' + (w.desc || '') + '</div>' +
+    '<div class="info-weather-desc">' + [w.feelsC != null ? 'feels ' + w.feelsC + '°' : '', w.humidity != null ? w.humidity + '% RH' : ''].filter(Boolean).join(' · ') + '</div>';
+}
+
+// The salary expectation from the materials step: { amount, currency, period }.
+function renderSalary(sal) {
+  const box = document.getElementById('infoSalary');
+  if (!box) return;
+  const ok = sal && Number(sal.amount) > 0;
+  box.hidden = !ok;
+  if (!ok) return;
+  const per = { month: 'month', annual: 'year', hourly: 'hour' }[sal.period] || sal.period || 'month';
+  document.getElementById('infoSalaryValue').textContent =
+    Number(sal.amount).toLocaleString('en-US') + ' ' + (sal.currency || 'USD') + ' / ' + per;
 }
 
 // Render one line per entry, with date, English name, and past/soon styling.
@@ -137,13 +148,12 @@ function renderCv(cv) {
     const modeCls = mode === 'onsite' ? ' cv-mode--onsite' : (mode === 'hybrid' ? ' cv-mode--hybrid' : '');
     return '<div class="cv-item">' +
       '<div class="cv-head"><span class="cv-company">' + esc(w.company) + '</span><span class="cv-period">' + esc(w.period) + '</span></div>' +
-      (w.role ? '<div class="cv-role">' + esc(w.role) + '</div>' : '') +
-      '<div class="cv-meta">' + (w.location ? '<span>' + esc(w.location) + '</span>' : '') +
-      (mode ? '<span class="cv-mode' + modeCls + '">' + esc(mode) + '</span>' : '') + '</div></div>';
+      '<div class="cv-sub">' + [w.role, w.location].filter(Boolean).map(esc).join(' · ') +
+      (mode ? ' <span class="cv-mode' + modeCls + '">' + esc(mode) + '</span>' : '') + '</div></div>';
   }).join('') : '<span class="info-dim">No work history found in the CV</span>';
   elEdu.innerHTML = edu.length ? edu.map((e) =>
     '<div class="cv-item"><div class="cv-head"><span class="cv-company">' + esc(e.school) + '</span><span class="cv-period">' + esc(e.period) + '</span></div>' +
-    (e.degree ? '<div class="cv-role">' + esc(e.degree) + '</div>' : '') + '</div>').join('')
+    (e.degree ? '<div class="cv-sub">' + esc(e.degree) + '</div>' : '') + '</div>').join('')
     : '<span class="info-dim">No education found in the CV</span>';
 }
 
@@ -156,9 +166,11 @@ if (window.info && window.info.onData) {
     _tz = p.timezone || null;
     const loc = [p.city, p.country].filter(Boolean).join(', ');
     elLoc.textContent = loc || (p.name || 'Local');
-    elTz.textContent = _tz || '';
+    elTz.textContent = _tz ? ' · ' + _tz.replace(/^.*\//, '').replace(/_/g, ' ') : '';
+    elTz.title = _tz || '';
     tickClock();
     renderWeather(data && data.weather);
+    renderSalary(data && data.salary);
     renderHolidaysAndEvents(data);
     renderCv(data ? data.cv : undefined);
   });

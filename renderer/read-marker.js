@@ -212,6 +212,80 @@
     paint();
   }
 
+  // ── The eye line ──
+  // While reading aloud the eye should stay at one height. The phrase to read
+  // next is kept on a line a fixed way down the answer panel (EYE of its
+  // height): when the voice finishes a line, the text moves up by that line
+  // and the next one arrives where the eye already is. The text only ever
+  // moves up, so the first lines of an answer are read where they stand until
+  // the reading reaches the eye line. Clicking a phrase puts the eye line
+  // where that phrase is: "I am looking here".
+  const EYE_DEFAULT = 0.3;
+  const EYE_MIN = 0.12, EYE_MAX = 0.7;
+  let eye = EYE_DEFAULT;
+
+  function scroller(el) {
+    for (let n = el && el.parentElement; n; n = n.parentElement) {
+      const o = getComputedStyle(n).overflowY;
+      if ((o === 'auto' || o === 'scroll') && n.scrollHeight > n.clientHeight + 1) return n;
+    }
+    return null;
+  }
+  // The top of the line a phrase starts on (a phrase may wrap over two lines).
+  function lineTop(el) {
+    const rects = el.getClientRects();
+    return (rects.length ? rects[0] : el.getBoundingClientRect()).top;
+  }
+  function nowEl() {
+    if (!cur || !cur.spans.length) return null;
+    return cur.spans[Math.min(cur.pos, cur.spans.length - 1)][0];
+  }
+  function keepEyeLine() {
+    const el = nowEl();
+    const box = el && scroller(el);
+    if (!box) return;
+    const c = box.getBoundingClientRect();
+    const delta = lineTop(el) - (c.top + c.height * eye);
+    // Up only, and not for a hair's breadth (phrases on the same line).
+    if (delta > 4) glideTo(box, box.scrollTop + delta);
+  }
+
+  // The text drifts up slowly and evenly, like a teleprompter: a quick jump of
+  // a whole line is when the eye loses its place. One line takes about two
+  // thirds of a second, a longer move at most GLIDE_MAX_MS; a new target while
+  // it is moving carries on from where it is, without a stop or a jump.
+  const GLIDE_MS_PER_PX = 28;
+  const GLIDE_MIN_MS = 500, GLIDE_MAX_MS = 1400;
+  let glide = null; // { box, from, to, t0, ms, raf }
+  function glideTo(box, top) {
+    const max = box.scrollHeight - box.clientHeight;
+    const to = Math.max(0, Math.min(max, top));
+    const from = box.scrollTop;
+    if (Math.abs(to - from) < 1) return;
+    if (glide) cancelAnimationFrame(glide.raf);
+    const ms = Math.max(GLIDE_MIN_MS, Math.min(GLIDE_MAX_MS, Math.abs(to - from) * GLIDE_MS_PER_PX));
+    const g = { box, from, to, t0: performance.now(), ms, raf: 0, last: from };
+    glide = g;
+    const step = (now) => {
+      if (glide !== g) return;
+      // The reader scrolled by hand meanwhile: their scroll wins.
+      if (Math.abs(box.scrollTop - g.last) > 2) { glide = null; return; }
+      const k = Math.min(1, (now - g.t0) / g.ms);
+      const eased = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; // gentle start and stop
+      box.scrollTop = g.from + (g.to - g.from) * eased;
+      g.last = box.scrollTop;
+      if (k < 1) g.raf = requestAnimationFrame(step);
+      else glide = null;
+    };
+    g.raf = requestAnimationFrame(step);
+  }
+  function setEyeLineAt(el) {
+    const box = scroller(el);
+    if (!box) return;
+    const c = box.getBoundingClientRect();
+    eye = Math.max(EYE_MIN, Math.min(EYE_MAX, (lineTop(el) - c.top) / c.height));
+  }
+
   // Wrap the sense groups of a finished answer. Code, diagrams and tables are left alone.
   function attach(rootEl) {
     if (!rootEl) return;
@@ -242,7 +316,12 @@
           open = { i: spans.length - 1, block, ended: groupEnds(piece, w) };
         }
         const i = open.i;
-        el.addEventListener('click', () => { if (cur && cur.spans === spans) { setPos(i + 1); finals = []; interimUsed = 0; } });
+        el.addEventListener('click', () => {
+          if (!cur || cur.spans !== spans) return;
+          setEyeLineAt(el); // the eye is on the phrase that was clicked
+          setPos(i + 1); finals = []; interimUsed = 0;
+          keepEyeLine();
+        });
       }
       node.parentNode.replaceChild(frag, node);
     }
@@ -271,7 +350,7 @@
         if (!isFinal) interimUsed += fromInterim;
         else fresh.splice(0, fromInterim);
         setPos(r.pos);
-        try { const el = cur.spans[Math.min(cur.pos, cur.spans.length - 1)][0]; el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch {}
+        try { keepEyeLine(); } catch {}
       }
     }
     if (isFinal) {

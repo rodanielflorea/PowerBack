@@ -1,0 +1,27 @@
+About Ace
+
+Ace is a real-time meeting and interview assistant. It listens to a call,
+transcribes what is said, and suggests spoken answers, code and diagrams on a
+small always-on-top window that stays hidden from screen sharing.
+
+What it does
+  - Live transcription of the meeting, with the speaker's words on screen.
+  - AI answers on demand (never automatically): press Send or Ctrl+Enter.
+  - Code and diagram answers, each openable in its own note.
+  - A supporter can join to see your screen, chat, and — with your screen
+    shared — control it to help hands-on.
+  - Stealth: the window is hidden from screen-capture and screen-sharing.
+
+This installer
+  - Installs Ace for the current user (no administrator rights needed).
+  - Lets you choose the install folder on the next screen.
+  - Adds a Desktop and Start Menu shortcut.
+  - Removes any previous version of Ace automatically.
+
+Using Ace responsibly
+  Ace is a preparation and accessibility aid. Make sure your use of it follows
+  the rules of the meeting, interview or exam you take part in, and the laws on
+  recording and consent where you and the other participants are. You are
+  responsible for how you use it.
+
+Select "I Agree" to continue, then choose where to install Ace.

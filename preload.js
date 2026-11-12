@@ -195,6 +195,7 @@ contextBridge.exposeInMainWorld('api', {
   onDisplaysChanged: (cb) => ipcRenderer.on('displays-changed', () => cb()),
   getCursorScreenSourceId: () => ipcRenderer.invoke('get-cursor-screen-source-id'),
   getCursorDisplayIndex: () => ipcRenderer.invoke('get-cursor-display-index'),
+  getCursorDisplayId: () => ipcRenderer.invoke('get-cursor-display-id'),
   getAllScreenSourceIds: () => ipcRenderer.invoke('get-all-screen-source-ids'),
   // Latency optimizations
   warmApiConnection: () => ipcRenderer.invoke('warm-api-connection'),
