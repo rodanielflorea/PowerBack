@@ -57,9 +57,8 @@
       <button class="btn" id="supporterPanelClose" title="Close">&times;</button>
     </div>
     <p class="supporter-panel-lead">On the other computer, open Ace, choose <b>Join as supporter</b> and enter:</p>
-    <div class="supporter-panel-row"><span class="supporter-panel-key">Address</span><span class="supporter-panel-val" id="supporterPanelAddr">&nbsp;</span></div>
+    <div class="supporter-panel-row"><span class="supporter-panel-key">IP address</span><span class="supporter-panel-val" id="supporterPanelAddr">&nbsp;</span></div>
     <p class="supporter-panel-other" id="supporterPanelOther" hidden></p>
-    <div class="supporter-panel-row"><span class="supporter-panel-key">Code</span><span class="supporter-panel-val supporter-code" id="supporterPanelCode">&nbsp;</span></div>
     <p class="supporter-panel-status" id="supporterPanelStatus">&nbsp;</p>
     <button class="action-btn-secondary" id="supporterPanelKick" hidden>Disconnect the supporter</button>
     <p class="supporter-panel-hint">Both computers must be on the same network. The supporter hears your microphone and the call, sees your answer panel, and can press Send for you. Your chat with them opens on the right. Their microphone starts off.</p>
@@ -111,7 +110,7 @@
           <h3 class="settings-subhead">Answering</h3>
           <p class="hint">Answers are sent only when you press Send / Ctrl+Enter.</p>
           <h3 class="settings-subhead">Supporter</h3>
-          <p class="hint">Someone on another computer can join your call with this app (welcome screen &rarr; <b>Join as supporter</b>) using this address: <code id="supporterJoinAddr">&hellip;</code> and the session's code, which the headset button at the top shows once a session is started. They hear the call, see your answer panel, and their messages appear in the Private chat column.</p>
+          <p class="hint">Someone on another computer can join your call with this app (welcome screen &rarr; <b>Join as supporter</b>) using this IP address: <code id="supporterJoinAddr">&hellip;</code>, once a session is started (the headset button at the top shows it too). They hear the call, see your answer panel, and their messages appear in the Private chat column.</p>
           <div class="field-row">
             <label class="checkbox"><input type="checkbox" id="shareScreen" /> Share my screen with the supporter</label>
           </div>
@@ -132,6 +131,10 @@
           <div class="field" id="antiCloseField" hidden>
             <label class="checkbox"><input type="checkbox" id="antiClose" /> Keep the app running if another program closes it (Windows)</label>
             <p class="hint">Relaunches the app automatically if it is terminated. It cannot stop a program running as administrator.</p>
+          </div>
+          <div class="field" id="keepFocusField" hidden>
+            <label class="checkbox"><input type="checkbox" id="keepFocus" /> Keep focus in the other app when you click or type in Ace (Windows)</label>
+            <p class="hint">Clicking Ace never takes focus from the window you were in. Typing into an Ace text box borrows the keyboard until you press Enter to send, press Esc, or click anything else in Ace. Digits and symbols are typed as on a US keyboard; AltGr characters are not typed.</p>
           </div>
           <div class="field">
             <label for="micSelect">Microphone device</label>
@@ -343,15 +346,15 @@
         <section class="settings-section help-section">
           <h3>Supporter mode (a helper on another computer)</h3>
           <ol class="help-steps">
-            <li>Start your call in Ace as usual. Then click the <b>headset button</b> at the top. It shows this computer's address and a 6-digit code.</li>
-            <li>On the helper's computer, open Ace and choose <b>Join as supporter</b>. Enter the address and the code, then click <b>Connect</b>.</li>
+            <li>Start your call in Ace as usual. Then click the <b>headset button</b> at the top. It shows this computer's IP address.</li>
+            <li>On the helper's computer, open Ace and choose <b>Join as supporter</b>. Enter the IP address, then click <b>Connect</b>.</li>
             <li>The helper hears your microphone and the call, and sees your answer panel as it changes: the transcript bubbles and every answer.</li>
             <li>The helper's <b>AI</b> button (or Ctrl+Enter) presses Send on your Ace for you: your AI answers the current transcript, in the mode the helper picked, and the answer shows on both screens.</li>
             <li>When the helper joins, your window and theirs widen by a <b>Private chat</b> column. What they send shows there, and you reply in its message box. The <b>&times;</b> closes it again; the trash button clears it on both sides.</li>
             <li>The helper's speaker button mutes and unmutes the call sound on their side.</li>
             <li>The helper's microphone starts off. With <b>Talk to them</b>, only you hear them; the meeting does not.</li>
           </ol>
-          <p>Both computers must be on the same network. The code changes every session, and one supporter can join at a time. On Windows, allow the firewall prompt the first time. To stop, click <b>Disconnect the supporter</b> in the headset panel, or <b>End</b> on the helper's side.</p>
+          <p>Both computers must be on the same network, and one supporter can join at a time. Anyone on the network who enters this computer's IP address can join while your session runs, so check who joined in the headset panel. On Windows, allow the firewall prompt the first time. To stop, click <b>Disconnect the supporter</b> in the headset panel, or <b>End</b> on the helper's side.</p>
         </section>
 
         <section class="settings-section help-section">
@@ -504,12 +507,10 @@
         <h2 class="setup-title">Join as supporter</h2>
         <button class="setup-gear-btn" id="joinSettingsBtn" title="Settings &amp; user guide">&#9881;</button>
       </div>
-      <p class="setup-intro">You hear their call, see their screen and their answer panel live, can ask their AI for an answer, and can chat with them. Both computers must be on the same network. In their Ace, the headset button at the top shows the address and the code.</p>
+      <p class="setup-intro">You hear their call, see their screen and their answer panel live, can ask their AI for an answer, and can chat with them. Both computers must be on the same network. In their Ace, the headset button at the top shows their IP address.</p>
       <div class="profile-inputs profile-inputs--vertical">
-        <label class="field-label" for="joinAddress">Their address</label>
-        <input type="text" id="joinAddress" class="profile-input" placeholder="192.168.1.20:2000" spellcheck="false" autocomplete="off" />
-        <label class="field-label" for="joinCode">Code</label>
-        <input type="text" id="joinCode" class="profile-input join-code-input" placeholder="6 digits" inputmode="numeric" maxlength="7" spellcheck="false" autocomplete="off" />
+        <label class="field-label" for="joinAddress">Their IP address</label>
+        <input type="text" id="joinAddress" class="profile-input" placeholder="192.168.1.20" inputmode="decimal" maxlength="15" spellcheck="false" autocomplete="off" />
       </div>
       <p class="join-status" id="joinStatus" role="status"></p>
       <div class="wizard-nav">
@@ -903,6 +904,7 @@
   <audio id="speakerInAudio" autoplay playsinline style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none"></audio>
   <audio id="cableOutAudio" autoplay playsinline style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none"></audio>
 
+  <script src="type-through.js"></script>
   <script src="lib/simplepeer.min.js"></script>
   <script src="lib/marked.min.js"></script>
   <script src="lib/mermaid.min.js"></script>
