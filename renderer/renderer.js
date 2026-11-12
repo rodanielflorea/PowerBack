@@ -1777,6 +1777,24 @@ if (recordSessionEl) recordSessionEl.addEventListener("change", () => persistTx(
 const uploadSessionEl = document.getElementById("uploadSession");
 if (uploadSessionEl) uploadSessionEl.addEventListener("change", () => persistTx({ uploadSession: uploadSessionEl.checked }));
 
+// ── Transcription connection ───────────────────────────────────────────────
+// Main retries a lost Deepgram connection at once and then every 5 s, keeping
+// what is said meanwhile. Say so once when it is lost and once when it is
+// back; the mic button is amber in between. When the computer's network comes
+// back, ask for a retry at once.
+if (window.api.onTranscriptConnection) window.api.onTranscriptConnection((s) => {
+  const state = s && s.state;
+  if (recBtn) recBtn.classList.toggle("reconnecting", state === "lost");
+  if (state === "lost") {
+    toast("Transcription lost its connection. Retrying every 5 seconds; what is said meanwhile is kept.", "warn");
+    log("Transcription connection lost; retrying every 5 s", "err");
+  } else if (state === "connected") {
+    toast("Transcription is connected again.", "info");
+    log("Transcription connection is back", "info");
+  }
+});
+window.addEventListener("online", () => { if (window.api.networkOnline) window.api.networkOnline(); });
+
 // ── Appearance: Dark / Light / System (theme.js applies it) ────────────────
 const themeSegEl = document.getElementById("themeSeg");
 function syncThemeSeg() {
@@ -3151,34 +3169,33 @@ if (answerClearBtn) {
     // Reset spacer so first new turn starts flush
     if (answerSpacer) answerSpacer.style.height = "0px";
     showAnswerJump(false);
+    followTranscript = true;
     // Also wipe the remembered answers/code/diagrams used to ground follow-ups.
     if (window.api.clearAnswerMemory) window.api.clearAnswerMemory();
   });
 }
 
-// Bring a transcript bubble into view as it grows. A bubble taller than the
-// panel is lined up by its bottom edge so the newest words stay on screen.
-//
-// While the newest answer is on screen it is being read, so new transcript
-// below it must not push it away: the panel scrolls only as far as keeps the
-// answer's top in place (an answer taller than the panel does not move at
-// all), and a "New transcript" button offers the rest. Clicking it, scrolling
-// down to the end yourself, or the next answer ends the hold.
+// Bring a transcript bubble into view as it grows: only while the reader is
+// at the end. The panel follows new transcript as long as the end of the last
+// bubble is in view. Scrolling up stops that, so an answer can be read in
+// peace; scrolling back down to the end of the last bubble starts it again.
+// While it is off, a bar above the message box shows the newest words as they
+// are heard; clicking it goes to the end and follows again. A bubble taller
+// than the panel is lined up by its bottom edge so the newest words show.
 const answerJumpBtn = document.getElementById("answerJump");
-let answerHoldReleased = null; // the answer the reader chose to move on from
-// Read to the end (the reading marker has dimmed every phrase): no hold.
-function answerFullyRead(a) {
-  return !!a.querySelector(".read-s") && !a.querySelector(".read-s:not(.read-done)");
+let followTranscript = true;
+let answerScrollTop = 0; // where the panel was last put by this code, or seen
+function lastTurnEndVisible() {
+  const last = lastTurnEl();
+  if (!last) return true;
+  return last.getBoundingClientRect().bottom <= answerHistory.getBoundingClientRect().bottom + 24;
 }
-function latestAnswerBefore(el) {
-  const all = answerHistory.querySelectorAll(".answer-a");
-  const a = all[all.length - 1];
-  if (!a || a === answerHoldReleased) return null;
-  if (answerFullyRead(a)) { answerHoldReleased = a; return null; }
-  return a.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING ? a : null;
+// A scroll made by this code, not by the reader: the scroll listener knows it
+// by its position and leaves following as it is.
+function setAnswerScroll(top) {
+  answerHistory.scrollTop = top;
+  answerScrollTop = answerHistory.scrollTop;
 }
-// The bar shows the newest words as they are heard, so the speech is on
-// screen at once even while the answer is held in place.
 function showAnswerJump(on, bubble) {
   if (!answerJumpBtn) return;
   if (on) {
@@ -3194,7 +3211,7 @@ function showAnswerJump(on, bubble) {
     const t = String(line || "").replace(/\s+/g, " ").trim();
     // The newest words matter most: a long line keeps its end.
     if (textEl) textEl.textContent = t ? (t.length > 80 ? "…" + t.slice(-80).replace(/^\S*\s/, "") : t) : "New transcript";
-    answerJumpBtn.title = "Show the new transcript";
+    answerJumpBtn.title = "Go to the newest transcript (and follow it again)";
   }
   answerJumpBtn.hidden = !on;
 }
@@ -3202,26 +3219,21 @@ function revealMeetBubble(el) {
   if (!el || !answerHistory) return;
   try {
     const cRect = answerHistory.getBoundingClientRect();
+    // What came before it still runs past the bottom (an answer longer than
+    // the panel, still being written): the reader is not at the end.
+    const prev = el.previousElementSibling;
+    if (followTranscript && prev && prev !== answerSpacer && prev.getBoundingClientRect().bottom > cRect.bottom + 24) followTranscript = false;
+    if (!followTranscript) { showAnswerJump(true, el); return; }
     const r = el.getBoundingClientRect();
     let delta = 0;
     if (r.height > cRect.height || r.bottom > cRect.bottom) delta = r.bottom - cRect.bottom;
     else if (r.top < cRect.top) delta = r.top - cRect.top;
-    if (delta > 0) {
-      const a = latestAnswerBefore(el);
-      const ar = a && a.getBoundingClientRect();
-      if (ar && ar.bottom > cRect.top + 8 && ar.top < cRect.bottom - 8) {
-        const room = Math.max(0, ar.top - cRect.top - 8);
-        if (delta > room) { delta = room; showAnswerJump(true, el); }
-      } else if (answerJumpBtn && !answerJumpBtn.hidden) {
-        showAnswerJump(false); // the answer was read to the end, or left behind
-      }
-    }
-    if (delta) answerHistory.scrollTop += delta;
+    if (delta) setAnswerScroll(answerHistory.scrollTop + delta);
+    showAnswerJump(false);
   } catch {}
 }
 if (answerJumpBtn) answerJumpBtn.addEventListener("click", () => {
-  const all = answerHistory.querySelectorAll(".answer-a");
-  answerHoldReleased = all[all.length - 1] || null;
+  followTranscript = true;
   showAnswerJump(false);
   // The newest bubble's bottom at the panel's bottom (not the scroll end: a
   // spacer below the last turn would leave the panel blank).
@@ -3231,17 +3243,16 @@ if (answerJumpBtn) answerJumpBtn.addEventListener("click", () => {
   const r = last.getBoundingClientRect();
   if (r.bottom > c.bottom - 12) answerHistory.scrollTo({ top: answerHistory.scrollTop + r.bottom - c.bottom + 12, behavior: "smooth" });
 });
+// The reader's own scrolling: up stops following, down to the end of the last
+// bubble starts it again.
 if (answerHistory) answerHistory.addEventListener("scroll", () => {
-  if (!answerJumpBtn || answerJumpBtn.hidden) return;
-  const last = lastTurnEl();
-  if (!last) return;
-  const c = answerHistory.getBoundingClientRect();
-  // The reader scrolled down to the newest bubble: they have moved on.
-  if (last.getBoundingClientRect().bottom <= c.bottom + 4) {
-    const all = answerHistory.querySelectorAll(".answer-a");
-    answerHoldReleased = all[all.length - 1] || null;
-    showAnswerJump(false);
-  }
+  const t = answerHistory.scrollTop;
+  if (Math.abs(t - answerScrollTop) < 2) return; // this code's own scroll
+  const up = t < answerScrollTop;
+  answerScrollTop = t;
+  if (up) followTranscript = false;
+  else if (lastTurnEndVisible()) followTranscript = true;
+  if (followTranscript) showAnswerJump(false);
 });
 
 // Spacer div pinned at the bottom of answerHistory — always sized to the
@@ -3366,7 +3377,9 @@ function addAnswerTurn(question, imgs, mode, ts) {
     const aTopInScroll = answerHistory.scrollTop + (a.getBoundingClientRect().top - cRect.top);
     const prev = showQ ? q : turn.previousElementSibling;
     const context = prev ? Math.min(72, prev.getBoundingClientRect().height) : 0;
-    answerHistory.scrollTop = Math.max(0, aTopInScroll - context);
+    setAnswerScroll(Math.max(0, aTopInScroll - context));
+    // Following goes on only if the whole answer fits on screen.
+    followTranscript = lastTurnEndVisible();
   }));
   return a;
 }
@@ -4730,15 +4743,7 @@ function teardownPeers() {
     cableCtx = null;
   }
   cableAGain = null;
-  cableBGain = null;
   cableDest = null;
-  if (bIncomingSrcNode) {
-    try {
-      bIncomingSrcNode.disconnect();
-    } catch {}
-    bIncomingSrcNode = null;
-  }
-  bIncomingForCable = null;
   if (cableOutEl) {
     try {
       cableOutEl.srcObject = null;
@@ -4824,7 +4829,6 @@ async function speakerHandleOpened(connId) {
         ),
       );
     startLevelMeter(remote);
-    if (typeof attachBToCable === "function") attachBToCable(remote);
   };
   peer.on("stream", (remote) => attachRemote(remote, "stream"));
   peer.on("track", (track, remote) =>
@@ -5318,30 +5322,29 @@ const netListenDeviceEl = document.getElementById("netListenDevice");
 const netListenStatusEl = document.getElementById("netListenStatus");
 const testListenBtnEl = document.getElementById("testListenBtn");
 
-const MIC_MODE_LABELS = { mute: "MUTE", aOnly: "TO A", aAndC: "TO A+C" };
+// The supporter's microphone: off, or heard by the speaker only. Nothing the
+// supporter says reaches the meeting.
+const MIC_MODE_LABELS = { mute: "MUTE", aOnly: "TO A" };
 const MIC_MODE_ICONS = {
   mute: "\u{1F507}",
   aOnly: "\u{1F512}",
-  aAndC: "\u{1F4E2}",
 };
-const MIC_MODES_R = ["mute", "aOnly", "aAndC"];
+const MIC_MODES_R = ["mute", "aOnly"];
 let currentMicMode = "aOnly";
 
+// The virtual-cable output (when one is set) carries the speaker's own
+// microphone only; the supporter's voice is never mixed into it.
 let cableCtx = null;
 let cableAGain = null;
-let cableBGain = null;
 let cableDest = null;
 let cableOutEl = null;
-// aMicForCable removed — cable mixer reuses speakerMicOnlyStream
-let bIncomingForCable = null;
-let bIncomingSrcNode = null;
 
 function updateMicPillUI(mode) {
   if (!micPillEl) return;
   const m = MIC_MODES_R.includes(mode) ? mode : "aOnly";
   if (micPillIconEl) micPillIconEl.textContent = MIC_MODE_ICONS[m];
   if (micPillLabelEl) micPillLabelEl.textContent = MIC_MODE_LABELS[m];
-  micPillEl.classList.remove("mode-mute", "mode-aOnly", "mode-aAndC");
+  micPillEl.classList.remove("mode-mute", "mode-aOnly");
   micPillEl.classList.add("mode-" + m);
   const role = (netCfg && netCfg.role) || "";
   micPillEl.disabled = !(role === "speaker" || role === "supporter");
@@ -5355,9 +5358,8 @@ function applyMicModeLocally(mode) {
   applyMicModeToCableMixer(mode);
 }
 
-function applyMicModeToCableMixer(mode) {
-  if (cableAGain) cableAGain.gain.value = mode === "aAndC" ? 0 : 1;
-  if (cableBGain) cableBGain.gain.value = mode === "aAndC" ? 1 : 0;
+function applyMicModeToCableMixer() {
+  if (cableAGain) cableAGain.gain.value = 1;
 }
 
 if (micPillEl)
@@ -5378,16 +5380,11 @@ window.api.onMicModeChanged((info) => {
       role === "supporter"
         ? "Your mic is off. Nobody hears you."
         : "The supporter's mic is off.";
-  else if (mode === "aOnly")
+  else
     msg =
       role === "supporter"
         ? "They hear you. The meeting does not."
         : "The supporter can talk to you. The meeting does not hear them.";
-  else if (mode === "aAndC")
-    msg =
-      role === "supporter"
-        ? "You are live: they and the meeting hear you."
-        : "The supporter is live in the meeting.";
   updateSupporterMicButtons(mode);
   toast(msg, mode);
   log(msg, "info");
@@ -5398,7 +5395,7 @@ function toast(message, kind) {
   if (!container) return;
   const el = document.createElement("div");
   el.className = "toast " + (kind ? "toast-" + kind : "toast-info");
-  const TOAST_ICONS = { err: "alert", warn: "warning", mute: "mic-off", aOnly: "mic", aAndC: "mic" };
+  const TOAST_ICONS = { err: "alert", warn: "warning", mute: "mic-off", aOnly: "mic" };
   el.innerHTML = aceIcon(TOAST_ICONS[kind] || "info", "toast-ico");
   const msgEl = document.createElement("span");
   msgEl.textContent = message;
@@ -5417,13 +5414,12 @@ function updateMicModeBanner(mode) {
   const icon = document.getElementById("micModeBannerIcon");
   const text = document.getElementById("micModeBannerText");
   if (!banner || !icon || !text) return;
-  banner.classList.remove("mode-mute", "mode-aOnly", "mode-aAndC");
+  banner.classList.remove("mode-mute", "mode-aOnly");
   banner.classList.add("mode-" + mode);
   icon.innerHTML = aceIcon(mode === "mute" ? "mic-off" : "mic");
   if (mode === "mute") text.textContent = "Your mic is off. Nobody hears you.";
   else if (mode === "aOnly")
     text.textContent = "They hear you. The meeting does not.";
-  else if (mode === "aAndC") text.textContent = "You are live: they and the meeting hear you.";
 }
 
 async function refreshMicPill() {
@@ -5700,11 +5696,9 @@ async function ensureCableMixer() {
   cableCtx = new (window.AudioContext || window.webkitAudioContext)();
   const aSrc = cableCtx.createMediaStreamSource(speakerMicOnlyStream);
   cableAGain = cableCtx.createGain();
-  cableBGain = cableCtx.createGain();
   cableDest = cableCtx.createMediaStreamDestination();
   aSrc.connect(cableAGain).connect(cableDest);
-  cableBGain.connect(cableDest);
-  applyMicModeToCableMixer(currentMicMode);
+  applyMicModeToCableMixer();
   cableOutEl = document.getElementById("cableOutAudio");
   if (cableOutEl) {
     cableOutEl.srcObject = cableDest.stream;
@@ -5719,23 +5713,6 @@ async function ensureCableMixer() {
     cableOutEl
       .play()
       .catch((e) => log("Cable output play failed: " + e.message, "err"));
-  }
-  if (bIncomingForCable) attachBToCable(bIncomingForCable);
-}
-
-function attachBToCable(stream) {
-  bIncomingForCable = stream;
-  if (!cableCtx) return;
-  if (bIncomingSrcNode) {
-    try {
-      bIncomingSrcNode.disconnect();
-    } catch {}
-  }
-  try {
-    bIncomingSrcNode = cableCtx.createMediaStreamSource(stream);
-    bIncomingSrcNode.connect(cableBGain);
-  } catch (e) {
-    log("Cable B attach failed: " + e.message, "err");
   }
 }
 
@@ -5774,7 +5751,6 @@ window.api.onNetworkStatus((status) => {
     setTimeout(() => ensureCableMixer().catch(() => {}), 200);
   }
   updateNetStatusPill(status);
-  updateCableNudge(status);
 });
 
 function updateNetStatusPill(status) {
@@ -5809,31 +5785,7 @@ function updateNetStatusPill(status) {
   }
 }
 
-let cableNudgeDismissed = false;
-function updateCableNudge(status) {
-  const banner = document.getElementById("cableNudge");
-  if (!banner) return;
-  if (cableNudgeDismissed) {
-    banner.hidden = true;
-    return;
-  }
-  const role = (status && status.role) || (netCfg && netCfg.role) || "";
-  const hasCable = !!(netCfg && netCfg.virtualCableId);
-  const inInterview = document.body.classList.contains("in-interview");
-  banner.hidden = !(inInterview && role === "speaker" && !hasCable);
-}
 
-const cableNudgeGetEl = document.getElementById("cableNudgeGet");
-const cableNudgeDismissEl = document.getElementById("cableNudgeDismiss");
-if (cableNudgeGetEl)
-  cableNudgeGetEl.addEventListener("click", () =>
-    window.api.openExternal("https://vb-audio.com/Cable/"),
-  );
-if (cableNudgeDismissEl)
-  cableNudgeDismissEl.addEventListener("click", () => {
-    cableNudgeDismissed = true;
-    document.getElementById("cableNudge").hidden = true;
-  });
 
 const testCableBtnEl = document.getElementById("testCableBtn");
 if (testCableBtnEl)
@@ -5898,8 +5850,8 @@ async function refreshMicPillTooltip() {
     const data = await window.api.getHotkeys();
     const ptt = data.current && data.current.pushToTalk;
     pill.title = ptt
-      ? `Cycle B's mic mode: mute → A only → A+C  (hotkey: ${ptt})`
-      : `Cycle B's mic mode: mute → A only → A+C`;
+      ? `The supporter's mic: off ↔ talks to you only  (hotkey: ${ptt})`
+      : `The supporter's mic: off ↔ talks to you only`;
   } catch {}
 }
 setTimeout(() => refreshMicPillTooltip().catch(() => {}), 500);

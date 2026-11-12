@@ -625,7 +625,6 @@ body:not(.in-interview) .right-rail { display: none !important; }
 .mic-pill-label { padding: 0 2px; }
 .mic-pill.mode-mute  { background: var(--surface-2); color: var(--text-2); border-color: var(--border-hi); }
 .mic-pill.mode-aOnly { background: var(--success-bg); color: var(--success-text); border-color: var(--success-border); }
-.mic-pill.mode-aAndC { background: var(--danger-bg); color: var(--danger-text); border-color: var(--danger-border); }
 .mic-pill[disabled], .mic-pill.disabled { opacity: 0.5; }
 
 .app-logo {
@@ -1471,11 +1470,6 @@ textarea.meet-editbox {
 }
 .mic-mode-banner.mode-mute  { background: var(--surface); color: var(--text-2); border-color: var(--border); }
 .mic-mode-banner.mode-aOnly { background: var(--success-bg); color: var(--success-text); border-color: var(--success-border); }
-.mic-mode-banner.mode-aAndC { background: var(--danger-bg); color: var(--danger-text); border-color: var(--danger-border); animation: bannerPulse 1.6s ease-in-out infinite; }
-@keyframes bannerPulse {
-  0%,100% { background: var(--danger-bg); }
-  50%      { background: var(--danger-bg); }
-}
 .mic-mode-banner-icon { display: inline-flex; font-size: 15px; }
 
 .chat-header {
@@ -2397,7 +2391,6 @@ textarea.meet-editbox {
 .toast.toast-warn .toast-ico  { color: #fcd34d; }
 .toast.toast-mute .toast-ico  { color: #d0d5dd; }
 .toast.toast-aOnly .toast-ico { color: #86efac; }
-.toast.toast-aAndC .toast-ico { color: #fca5a5; }
 .toast.toast-out   { animation: toastOut 220ms var(--ease) forwards; }
 @keyframes toastIn  { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes toastOut { to   { opacity: 0; transform: translateY(-8px); } }
@@ -3155,6 +3148,6 @@ body.side-pane-open .chat-empty { margin: auto; text-align: center; color: var(-
 .answer-jump:hover { background: var(--surface-2); }
 /* The VB-Cable banner sits under the title bar; the panels below move down
    instead of being covered. */
-body:has(#cableNudge:not([hidden])).in-interview .answer-main,
-body:has(#cableNudge:not([hidden])).in-interview:not(.side-pane-open) .chat-main { top: calc(var(--header-h) + 36px); }
-.cable-nudge { min-height: 36px; }
+/* Transcription lost its connection and is retrying (renderer.js). */
+.rec-btn.reconnecting { background: var(--warn-bg); color: var(--amber); box-shadow: inset 0 0 0 1px var(--warn-border); }
+.rec-btn.reconnecting .mic-icon { animation: micBlink 1s ease-in-out infinite; }
