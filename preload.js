@@ -90,6 +90,11 @@ contextBridge.exposeInMainWorld('api', {
   updateAnswer: (accept) => ipcRenderer.invoke('update-answer', !!accept),
   updateCancel: () => ipcRenderer.invoke('update-cancel'),
   sendSignaling: (msg) => ipcRenderer.send('signaling-out', msg),
+  // Remote control (speaker side): the supporter asks, the speaker answers.
+  onControlState: (cb) => ipcRenderer.on('control-state', (_e, v) => cb(v)),
+  controlStop: () => ipcRenderer.invoke('control-stop'),
+  // Supporter: the Alt+C hotkey — take or release control of the speaker's screen.
+  onSupporterToggleControl: (cb) => ipcRenderer.on('supporter-toggle-control', () => cb()),
   onSignaling: (cb) => ipcRenderer.on('signaling-in', (_e, v) => cb(v)),
   onNetworkStatus: (cb) => ipcRenderer.on('network-status', (_e, v) => cb(v)),
   onNetworkError: (cb) => ipcRenderer.on('network-error', (_e, v) => cb(v)),

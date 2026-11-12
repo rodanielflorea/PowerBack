@@ -3183,3 +3183,32 @@ body.role-supporter .capture-btns { display: none; }
   font-size: 11px; font-weight: 600; color: var(--success-text);
 }
 .answer-prepared-tag .ico { font-size: 12px; }
+
+/* ── Remote control banner (speaker) ─────────────────────────── */
+.control-banner {
+  position: fixed; top: calc(var(--header-h) + 6px); left: 8px; right: 8px; z-index: 950;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px;
+  padding: 8px 10px;
+  background: var(--elev); color: var(--text);
+  border: 1px solid var(--warn-border); border-left: 4px solid var(--amber);
+  border-radius: 10px; box-shadow: var(--shadow-lg);
+  font-size: 12px; font-weight: 600; line-height: 1.35;
+  -webkit-app-region: no-drag;
+}
+.control-banner[hidden] { display: none; }
+.control-banner.is-on { border-color: var(--danger); border-left-color: var(--danger); }
+.control-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
+.control-banner.is-on .control-dot { background: var(--danger); animation: control-pulse 1.2s ease-in-out infinite; }
+@keyframes control-pulse { 50% { opacity: .35; } }
+.control-text { flex: 1 1 160px; min-width: 0; }
+.control-actions { display: inline-flex; gap: 6px; margin-left: auto; }
+.control-btn {
+  height: 26px; padding: 0 12px; border-radius: 7px;
+  border: 1px solid var(--border-hi); background: var(--surface-2); color: var(--text);
+  font: inherit; font-size: 12px; cursor: pointer;
+}
+.control-btn:hover { border-color: var(--muted); }
+.control-btn[hidden] { display: none; }
+.control-btn--allow { background: var(--accent); border-color: var(--accent); color: #fff; }
+.control-btn--allow:hover { background: var(--accent-hover); }
+.control-btn--stop { background: var(--danger); border-color: var(--danger); color: #fff; }
