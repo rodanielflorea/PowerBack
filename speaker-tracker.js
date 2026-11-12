@@ -142,4 +142,93 @@ function cleanName(raw) {
   return s;
 }
 
-module.exports = { createSpeakerTracker, cleanName };
+// ── Voices ────────────────────────────────────────────────────────────────────
+// The transcription service separates the voices it hears ("speaker 0, 1, 2").
+// A voice has no name of its own; the screen has names but not always (nobody
+// framed, a shared screen) and its frame moves about a second late. Together:
+// every line the screen names is a vote "this voice is that person", and a
+// voice with a clear name keeps it when the screen is silent or, at a change of
+// speaker, still shows the previous person.
+
+const MIN_VOTES = 2;        // weight a name needs before a voice may use it alone
+const MIN_SHARE = 0.6;      // ...and its share of that voice's votes
+const SURE_VOTES = 4;       // a voice this sure of its name can overrule the screen
+const SURE_SHARE = 0.75;
+
+function createVoiceNames() {
+  const votes = new Map();   // voice -> Map(name -> weight)
+
+  function top(voice) {
+    const m = votes.get(voice);
+    if (!m) return null;
+    let total = 0, name = null, weight = 0;
+    for (const [n, w] of m) { total += w; if (w > weight) { weight = w; name = n; } }
+    return name ? { name, weight, share: weight / total } : null;
+  }
+  function vote(voice, name, weight) {
+    if (!name || voice == null) return;
+    const m = votes.get(voice) || new Map();
+    m.set(name, (m.get(name) || 0) + (weight || 1));
+    votes.set(voice, m);
+  }
+  // The name a voice has earned, or null while it is still unclear.
+  function nameFor(voice) {
+    const t = top(voice);
+    return t && t.weight >= MIN_VOTES && t.share >= MIN_SHARE ? t.name : null;
+  }
+  // Another voice that clearly owns this name.
+  function ownedByOther(name, voice) {
+    for (const v of votes.keys()) {
+      if (v === voice) continue;
+      const t = top(v);
+      if (t && t.name === name && t.weight >= MIN_VOTES + 1 && t.share >= MIN_SHARE) return true;
+    }
+    return false;
+  }
+  // The name for words of one voice, given what the screen showed (or null).
+  // weight: how much this line counts as evidence (longer lines count more).
+  function resolve(voice, screenName, weight) {
+    const own = nameFor(voice);
+    if (!screenName) return own;
+    if (own && own !== screenName) {
+      const t = top(voice);
+      // This voice is known, and the screen shows a name that is another
+      // voice's: the frame had not moved yet. Not counted as a vote.
+      if (t.weight >= SURE_VOTES && t.share >= SURE_SHARE && ownedByOther(screenName, voice)) return own;
+    }
+    vote(voice, screenName, weight);
+    return screenName;
+  }
+  function reset() { votes.clear(); }
+  return { resolve, nameFor, vote, reset };
+}
+
+// Words of one result -> stretches of one voice: [{ voice, text, t0, t1, n }]
+// (t0/t1 in the service's seconds). Empty when the words carry no voice.
+// A stretch of one or two words between other voices is nearly always a slip
+// of the voice separation and goes to its neighbour.
+function voiceRuns(words) {
+  let runs = [];
+  for (const w of words || []) {
+    if (!Number.isInteger(w.speaker)) return [];
+    const tok = w.punctuated_word || w.word || '';
+    if (!tok) continue;
+    const last = runs[runs.length - 1];
+    if (last && last.voice === w.speaker) { last.text += ' ' + tok; last.t1 = w.end; last.n++; }
+    else runs.push({ voice: w.speaker, text: tok, t0: w.start, t1: w.end, n: 1 });
+  }
+  if (runs.length > 1) {
+    const out = [];
+    runs.forEach((r, i) => {
+      const prev = out[out.length - 1];
+      if (r.n <= 2 && prev) { prev.text += ' ' + r.text; prev.t1 = r.t1; prev.n += r.n; }
+      else if (r.n <= 2 && runs[i + 1]) { runs[i + 1].text = r.text + ' ' + runs[i + 1].text; runs[i + 1].t0 = r.t0; runs[i + 1].n += r.n; }
+      else if (prev && prev.voice === r.voice) { prev.text += ' ' + r.text; prev.t1 = r.t1; prev.n += r.n; }
+      else out.push({ ...r });
+    });
+    runs = out;
+  }
+  return runs;
+}
+
+module.exports = { createSpeakerTracker, cleanName, createVoiceNames, voiceRuns };

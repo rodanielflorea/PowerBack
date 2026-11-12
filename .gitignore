@@ -35,6 +35,7 @@ out/
 !build/mac-open.command
 !build/MAC-README.txt
 !build/installer.nsh
+!build/about.txt
 mac-audio/build/*
 !mac-audio/build/.gitkeep
 

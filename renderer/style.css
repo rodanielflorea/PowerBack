@@ -256,6 +256,9 @@ html { background: var(--bg); }
   padding: 6px 0;
   gap: 4px;
   z-index: 10;
+  /* The rail's empty area drags the window, like the header. Its buttons and
+     the speed slider stay clickable (they are no-drag). */
+  -webkit-app-region: drag;
 }
 .rail-sep { width: 16px; height: 1px; background: var(--border-hi); margin: 4px 0; }
 .rail-spacer { flex: 1; }
@@ -3167,7 +3170,17 @@ body.role-supporter .capture-btns { display: none; }
 .opacity-pop { width: 230px; padding: 10px 14px 12px; }
 .opacity-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; font-size: 12px; font-weight: 600; color: var(--text-2); }
 #opacityVal { color: var(--accent-text); font-variant-numeric: tabular-nums; }
-.opacity-pop .slider { width: 100%; min-width: 0; height: 6px; margin: 0; border-radius: 3px; overflow: visible; background: var(--surface-2); }
+/* Transparent layer under any pop-up panel: an outside click closes the panel,
+   even over the window-drag header/rail. Sits just below .menu-pop (z 80). */
+.pop-backdrop { position: fixed; inset: 0; z-index: 79; background: transparent; -webkit-app-region: no-drag; }
+/* The track stays a thin 6px line, but padding makes the whole row clickable so
+   a single click anywhere along it sets the value at that point. */
+.opacity-pop .slider {
+  width: 100%; min-width: 0; height: 6px; margin: 0; cursor: pointer;
+  padding: 8px 0; box-sizing: content-box;
+  border-radius: 3px; overflow: visible;
+  background-color: var(--surface-2); background-clip: content-box;
+}
 .opacity-pop .slider-fill { position: relative; border-radius: 3px; }
 .opacity-pop .slider-fill::after {
   content: ""; position: absolute; right: -7px; top: 50%; transform: translateY(-50%);
@@ -3212,3 +3225,47 @@ body.role-supporter .capture-btns { display: none; }
 .control-btn--allow { background: var(--accent); border-color: var(--accent); color: #fff; }
 .control-btn--allow:hover { background: var(--accent-hover); }
 .control-btn--stop { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* ── Uploaded files: a count with a drop-down, not a growing pile of chips ── */
+.upload-zone { position: relative; }
+.upload-summary {
+  -webkit-app-region: no-drag;
+  align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 22px; padding: 0 8px;
+  background: var(--surface-2); color: var(--text-2);
+  border: 1px solid var(--border-hi); border-radius: 6px;
+  font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.upload-summary:hover { color: var(--text); border-color: var(--accent); }
+.upload-summary .ico { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.upload-dropdown {
+  position: absolute; left: 8px; right: 8px; top: calc(100% - 6px); z-index: 40;
+  max-height: 168px; overflow-y: auto; padding: 4px;
+  background: var(--elev); border: 1px solid var(--border-hi); border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  cursor: default;
+}
+.upload-dropdown[hidden] { display: none; }
+.upload-drop-row { display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 8px; border-radius: 5px; }
+.upload-drop-row:hover { background: var(--hover); }
+.upload-drop-name { flex: 1; min-width: 0; font-size: 11.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-drop-x {
+  flex: none; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px;
+  background: none; color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer;
+}
+.upload-drop-x:hover { background: var(--danger); color: #fff; }
+.upload-drop-clear {
+  display: block; width: 100%; margin-top: 4px; padding: 6px; border: 0; border-top: 1px solid var(--border);
+  background: none; color: var(--danger); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.upload-drop-clear:hover { background: var(--hover); }
+/* Required for a hiring call (body.meeting-hiring), optional for a team meeting. */
+.req-mark { display: none; color: var(--danger); font-weight: 700; }
+body.meeting-hiring .req-mark { display: inline; }
+.hiring-only { display: none; }
+body.meeting-hiring .hiring-only { display: inline; }
+body.meeting-hiring .team-only { display: none; }
+.upload-zone.required-missing { border-color: var(--danger); }
+.salary-row.required-missing .salary-amount { border-color: var(--danger); }
+.setup-required { margin: 10px 0 0; font-size: 12px; font-weight: 600; color: var(--danger); }

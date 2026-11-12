@@ -95,6 +95,7 @@
     </div>
     <nav class="settings-tabs" id="settingsTabs">
       <button class="tab-btn active" data-tab="apikeys" type="button">Providers</button>
+      <button class="tab-btn" data-tab="materials" type="button">Materials</button>
       <button class="tab-btn" data-tab="hotkeys" type="button">Hotkeys</button>
       <button class="tab-btn" data-tab="diag" type="button">Check</button>
       <button class="tab-btn" data-tab="vscode" type="button">VS Code</button>
@@ -206,6 +207,18 @@
           </div>
         </section>
 
+      </div>
+
+      <div class="settings-tab" data-tab="materials" hidden>
+        <section class="settings-section">
+          <h3>Materials</h3>
+          <p class="hint">Add, change or remove the files answers are built from. Changes take effect from the next answer, during a live meeting too. Many files show as a count, with a drop-down to delete them one by one or clear all.</p>
+          <div class="upload-grid">
+            <div class="upload-zone" id="sDropCv" data-kind="cv"><div class="upload-zone-title">Resume / CV</div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="sFilesCv"></div><input type="file" id="sFileCv" hidden /></div>
+            <div class="upload-zone" id="sDropJd" data-kind="jd"><div class="upload-zone-title">Job Description</div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="sFilesJd"></div><input type="file" id="sFileJd" hidden /></div>
+            <div class="upload-zone" id="sDropSupport" data-kind="support"><div class="upload-zone-title">Support material</div><div class="upload-zone-hint">Click or drag &amp; drop · multiple</div><div class="upload-files" id="sFilesSupport"></div><input type="file" id="sFileSupport" hidden multiple /></div>
+          </div>
+        </section>
       </div>
 
       <!-- Hidden, no-nav panes kept so existing wiring keeps working; removed in cleanup. -->
@@ -365,7 +378,7 @@
           <ol class="help-steps">
             <li><b>Meeting type</b> — pick what kind of meeting it is. <i>Hiring interviews</i>: Recruiter / HR screen, Technical interview, Live coding / system design, CTO / CEO / founder round, AI interview (a bot asks and scores). <i>Team meetings</i>: Standup / status update, Sprint review &amp; planning, 1:1 / technical discussion. Each type has its own answer logic (for example a standup update goes ticket by ticket and ends with "That's all for me."). For team meetings, put your current tickets, PRs, numbers and blockers in <i>Support material</i>.</li>
             <li><b>Your profile</b> — your name, country, city and timezone. Pick a city and the timezone fills in by itself. Click <b>＋</b> to save the profile so next time you just pick it from the list.</li>
-            <li><b>Materials</b> — drag in your <b>CV</b> and the <b>job description</b> (PDF, Word or text). Add any extra notes as <i>Support material</i>, and earlier interview notes as <i>Previous meeting records</i>. Optionally enter your <b>salary expectation</b> (amount, currency, per month / year / hour) so the app can answer that question the way you want.</li>
+            <li><b>Materials</b> — drag in your <b>CV</b> and the <b>job description</b> (PDF, Word or text). Add any extra notes as <i>Support material</i>, and enter your <b>salary expectation</b> (amount, currency, per month / year / hour). For a hiring call the CV, the job description and the salary are required; for a team meeting they are optional. Several files in one box show as a count with a drop-down, where you delete them one by one or clear all. During the meeting, <b>Settings → Materials</b> adds or replaces files; answers use them from the next one on.</li>
           </ol>
           <p>Click <b>Start interview</b>. Listening starts automatically.</p>
         </section>
@@ -667,17 +680,16 @@
         <h2 class="setup-title">Materials</h2>
         <button class="setup-gear-btn" id="setupSettingsBtn" title="Settings &amp; user guide"><i data-icon="settings"></i></button>
       </div>
-      <p class="setup-intro">Upload whatever you have — CV, job description, support material. That is what answers are built from. Missing files are fine.</p>
+      <p class="setup-intro">Answers are built from these files. <span class="hiring-only">For a hiring call the resume, the job description and your salary expectation are required.</span><span class="team-only">For a team meeting, put your tickets, PRs and numbers in Support material; everything here is optional.</span></p>
 
       <div class="upload-grid">
-        <div class="upload-zone" id="dropCv" data-kind="cv"><div class="upload-zone-title">Resume / CV</div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="filesCv"></div><input type="file" id="fileCv" hidden /></div>
-        <div class="upload-zone" id="dropJd" data-kind="jd"><div class="upload-zone-title">Job Description</div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="filesJd"></div><input type="file" id="fileJd" hidden /></div>
+        <div class="upload-zone" id="dropCv" data-kind="cv"><div class="upload-zone-title">Resume / CV<span class="req-mark" title="Required for a hiring call"> *</span></div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="filesCv"></div><input type="file" id="fileCv" hidden /></div>
+        <div class="upload-zone" id="dropJd" data-kind="jd"><div class="upload-zone-title">Job Description<span class="req-mark" title="Required for a hiring call"> *</span></div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="filesJd"></div><input type="file" id="fileJd" hidden /></div>
         <div class="upload-zone" id="dropSupport" data-kind="support"><div class="upload-zone-title">Support material</div><div class="upload-zone-hint">Click or drag &amp; drop · multiple</div><div class="upload-files" id="filesSupport"></div><input type="file" id="fileSupport" hidden multiple /></div>
-        <div class="upload-zone" id="dropMeetings" data-kind="meetings"><div class="upload-zone-title">Previous meeting records</div><div class="upload-zone-hint">Click or drag &amp; drop · multiple</div><div class="upload-files" id="filesMeetings"></div><input type="file" id="fileMeetings" hidden multiple /></div>
       </div>
 
       <div class="salary-block">
-        <p class="setup-roles-label">Salary expectation <span class="hint-inline">(optional — used when they ask)</span></p>
+        <p class="setup-roles-label">Salary expectation<span class="req-mark" title="Required for a hiring call"> *</span> <span class="hint-inline"><span class="hiring-only">(used when they ask)</span><span class="team-only">(optional)</span></span></p>
         <div class="salary-row">
           <input type="number" id="salaryAmount" class="profile-input salary-amount" placeholder="e.g. 8000" min="0" step="100" />
           <select id="salaryCurrency" class="profile-input salary-select">
@@ -698,6 +710,7 @@
       <!-- Role is always Speaker; kept as a hidden input for the existing start logic. -->
       <input type="radio" name="setupRoleV" value="speaker" id="setupRoleSpeakerV" checked hidden />
 
+      <p class="setup-required" id="setupRequired" hidden></p>
       <div class="wizard-nav">
         <span class="wizard-steps"><span class="wizard-dots" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i></span>Step 3 of 3</span>
         <button class="wizard-next" id="setupStartBtnV"><span>Start</span><span class="wizard-next-ico"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10-6.5z"/></svg></span></button>

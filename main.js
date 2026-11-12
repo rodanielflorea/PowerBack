@@ -44,6 +44,28 @@ if (!app.requestSingleInstanceLock({ guardian: BY_GUARDIAN, dev: DEV_RUN })) {
   }
   return; // nothing below belongs to a second start
 }
+
+// ── A test copy stays out of the way ─────────────────────────────────────────
+// A development run with a data folder of its own (--user-data-dir=..., the
+// way tests start one) runs next to the installed app. Its windows are the
+// same always-on-top, non-activating, possibly see-through windows, so one of
+// them lying over the installed app took that app's mouse clicks while looking
+// like nothing was there. A test copy is therefore never always-on-top (the
+// installed app's windows stay above it and keep their clicks) and always
+// starts fully opaque (so it is plainly visible wherever it is).
+const TEST_INSTANCE = DEV_RUN && (app.commandLine.hasSwitch('user-data-dir') || process.argv.some((a) => a.startsWith('--user-data-dir')));
+if (TEST_INSTANCE) {
+  const realSetAlwaysOnTop = BrowserWindow.prototype.setAlwaysOnTop;
+  BrowserWindow.prototype.setAlwaysOnTop = function () {};
+  const dropTop = (w) => { try { realSetAlwaysOnTop.call(w, false); } catch {} };
+  app.on('browser-window-created', (_e, w) => {
+    // setImmediate so this runs after the constructor's alwaysOnTop:true option
+    // is applied natively; re-assert on show/focus in case it is raised again.
+    setImmediate(() => dropTop(w));
+    w.on('show', () => dropTop(w));
+    w.on('focus', () => dropTop(w));
+  });
+}
 // The guardian starts the app when the process named in app.pid is gone. The
 // file is claimed now, so it does not start a copy while this one is still
 // starting or is waiting at the licence window. app.path says which file this
@@ -68,7 +90,7 @@ const { createRemoteInput, vkFor } = require('./remote-input');
 const license = require('./license');
 const { uploadFolder } = require('./gofile');
 const { signatureDistance } = require('./speaker-detect');
-const { createSpeakerTracker } = require('./speaker-tracker');
+const { createSpeakerTracker, createVoiceNames, voiceRuns } = require('./speaker-tracker');
 const { createVscodeBridge } = require('./vscode-bridge');
 // The legacy Mac build (Electron 32, for macOS 10.15–11) must never take an
 // update: the regular build needs macOS 12 and would not start after it.
@@ -142,17 +164,17 @@ const HOTKEY_DEFAULTS = {
   moveDown: 'Ctrl+Alt+Down',
   opacityUp: 'Ctrl+Alt+]',
   opacityDown: 'Ctrl+Alt+[',
-  scrollUp: 'Ctrl+Up',
-  scrollDown: 'Ctrl+Down',
-  reloadSite: 'Ctrl+R',
-  toggleStealth: 'Ctrl+H',
+  scrollUp: 'Ctrl+Shift+Up',
+  scrollDown: 'Ctrl+Shift+Down',
+  reloadSite: '',
+  toggleStealth: '',
   // Supporter only: take / release control of the speaker's screen. Registered
   // just in supporter mode (registerHotkeys), so it never steals Alt+C from the
   // speaker, who toggles transcription with the title-bar button instead.
   toggleRecording: 'Alt+C',
-  pushToTalk: 'Ctrl+B',
-  closeSticky: 'Ctrl+Shift+Left',
-  openSticky: 'Ctrl+Shift+Right',
+  pushToTalk: '',
+  closeSticky: 'Ctrl+Shift+Alt+Left',
+  openSticky: 'Ctrl+Shift+Alt+Right',
   // These are global shortcuts, so a plain-key combo (Shift+Z, Shift+Up) would
   // be intercepted everywhere and the user could not type it in any app. They
   // default to unset; the user can bind a combo with Ctrl/Alt in Settings.
@@ -166,9 +188,21 @@ const HOTKEY_DEFAULTS = {
   clearTranscriptBubble: '',
   stopRemoteControl: 'Ctrl+Alt+Esc',
 };
-// Old defaults that, as global shortcuts, swallowed ordinary keystrokes
-// (capital Z, Shift+arrow selection). Cleared on load so they stop doing so.
-const BAD_HOTKEY_DEFAULTS = { clearTranscriptBubble: 'Shift+Z', stickyScrollUp: 'Shift+Up', stickyScrollDown: 'Shift+Down' };
+// Old global-shortcut defaults that shadowed ordinary keystrokes. On load, a
+// saved copy of the old default is remapped to the safer combo (or cleared), so
+// existing installs stop stealing those keys without the user re-binding.
+const HOTKEY_MIGRATIONS = {
+  clearTranscriptBubble: { from: 'Shift+Z', to: '' },
+  stickyScrollUp:        { from: 'Shift+Up', to: '' },
+  stickyScrollDown:      { from: 'Shift+Down', to: '' },
+  reloadSite:            { from: 'Ctrl+R', to: '' },
+  pushToTalk:            { from: 'Ctrl+B', to: '' },
+  toggleStealth:         { from: 'Ctrl+H', to: '' },
+  scrollUp:              { from: 'Ctrl+Up', to: 'Ctrl+Shift+Up' },
+  scrollDown:            { from: 'Ctrl+Down', to: 'Ctrl+Shift+Down' },
+  closeSticky:           { from: 'Ctrl+Shift+Left', to: 'Ctrl+Shift+Alt+Left' },
+  openSticky:            { from: 'Ctrl+Shift+Right', to: 'Ctrl+Shift+Alt+Right' },
+};
 
 const DEFAULT_STATE = {
   x: null, y: null, width: 380, height: 800,
@@ -331,11 +365,12 @@ function loadState() {
   // Answers are manual only (Send / Ctrl+Enter); drop the retired auto-answer
   // choice that older versions saved.
   if (state.transcription) delete state.transcription.autoAnswer;
+  if (TEST_INSTANCE) state.opacity = 1; // a test copy is never see-through at start
   // Clear the old plain-key global hotkeys (Shift+Z etc.) still saved from
   // before, so typing those keys works again. The user can rebind in Settings.
   if (state.hotkeys) {
-    for (const [action, bad] of Object.entries(BAD_HOTKEY_DEFAULTS)) {
-      if (state.hotkeys[action] === bad) state.hotkeys[action] = '';
+    for (const [action, m] of Object.entries(HOTKEY_MIGRATIONS)) {
+      if (state.hotkeys[action] === m.from) state.hotkeys[action] = m.to;
     }
   }
   // Click-through is a transient mode: never start a session with it on, or
@@ -588,10 +623,10 @@ function createWindow() {
 
   win.on('move', () => { saveState(); syncStickyPosition(); });
   win.on('resize', () => { saveState(); syncStickyPosition(); });
-  win.on('show', () => { applyStickyState(); applyNoteState(); sendFloatState(); });
-  win.on('hide', () => { applyStickyState(); applyNoteState(); sendFloatState(); });
-  win.on('minimize', () => { applyStickyState(); applyNoteState(); sendFloatState(); });
-  win.on('restore', () => { applyStickyState(); applyNoteState(); sendFloatState(); });
+  win.on('show', () => { applyStickyState(); applyNoteState(); applyInfoState(); sendFloatState(); });
+  win.on('hide', () => { applyStickyState(); applyNoteState(); applyInfoState(); sendFloatState(); });
+  win.on('minimize', () => { applyStickyState(); applyNoteState(); applyInfoState(); sendFloatState(); });
+  win.on('restore', () => { applyStickyState(); applyNoteState(); applyInfoState(); sendFloatState(); });
   win.on('closed', () => {
     typeThroughRelease();
     selectionCopyEnd();
@@ -1492,6 +1527,14 @@ function closeInfoWindow() {
   infoAcc = null; // so the next window's fallback-fetch guard works
 }
 
+// The info window (time / weather / holidays) follows the main window: hidden
+// while the main window is minimized or hidden, shown again when it returns.
+function applyInfoState() {
+  if (!infoWin || infoWin.isDestroyed()) return;
+  if (isMainShown()) { if (!infoWin.isVisible()) infoWin.showInactive(); }
+  else if (infoWin.isVisible()) { try { infoWin.hide(); } catch {} }
+}
+
 // Map a free-text country name to an ISO-2 code via date.nager.at's country list.
 // fetch with an abort timeout so a slow/keyless endpoint can't hang the widget.
 async function tfetch(url, opts, ms) {
@@ -1638,7 +1681,8 @@ async function extractCvSummary() {
 }
 
 function sendInfoData() {
-  if (infoWin && !infoWin.isDestroyed() && infoAcc) infoWin.webContents.send('info-data', infoAcc);
+  // With the salary expectation of the running session (shown at the top).
+  if (infoWin && !infoWin.isDestroyed() && infoAcc) infoWin.webContents.send('info-data', { ...infoAcc, salary: activeSalary });
 }
 async function refreshInfoData() {
   if (!infoWin || infoWin.isDestroyed()) return;
@@ -2032,7 +2076,12 @@ function sendHelpRequest() {
 let wsServer = null;
 let wsClient = null;
 let wsReconnectTimer = null;
+let wsServerHeartbeat = null; // speaker: pings supporters, drops dead ones
+let wsClientHeartbeat = null; // supporter: pings the speaker, reconnects if silent
 let nextConnId = 1;
+// How often to ping, and how long a silent socket may live before it is
+// terminated (so a dropped link is noticed in seconds, not TCP minutes).
+const WS_PING_MS = 5000;
 const supporterConns = new Map();
 let supporterOwnMicMode = 'mute';
 // Speaker: a supporter joins with this computer's IP address alone, no code;
@@ -2090,6 +2139,7 @@ function parseAddress(addr) {
 }
 
 function stopSignalingServer() {
+  if (wsServerHeartbeat) { clearInterval(wsServerHeartbeat); wsServerHeartbeat = null; }
   // Tell the supporter the session is over, so it does not keep reconnecting.
   for (const entry of supporterConns.values()) {
     try { entry.ws.send(JSON.stringify({ type: 'reject', reason: 'ended' })); } catch {}
@@ -2164,7 +2214,21 @@ function startSignalingServer() {
     broadcastNetworkStatus();
     return;
   }
+  // Keepalive: ping every supporter; a socket that misses a round is dead
+  // (the network dropped without a close) and is terminated, which fires its
+  // 'close' handler — releasing control and freeing the slot for a reconnect.
+  if (wsServerHeartbeat) clearInterval(wsServerHeartbeat);
+  wsServerHeartbeat = setInterval(() => {
+    if (!wsServer) return;
+    wsServer.clients.forEach((c) => {
+      if (c.isAlive === false) { try { c.terminate(); } catch {} return; }
+      c.isAlive = false;
+      try { c.ping(); } catch {}
+    });
+  }, WS_PING_MS);
   wsServer.on('connection', (ws, req) => {
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
     let ip = (req && req.socket && req.socket.remoteAddress) || '';
     if (ip.startsWith('::ffff:')) ip = ip.slice(7);
     if (ip === '::1') ip = '127.0.0.1';
@@ -2252,6 +2316,7 @@ function startSignalingServer() {
 
 function disconnectSignalingClient() {
   if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+  if (wsClientHeartbeat) { clearInterval(wsClientHeartbeat); wsClientHeartbeat = null; }
   if (wsClient) {
     wsClient._closedByUs = true; // a leave or a fresh connect, not a drop
     try { wsClient.close(); } catch {}
@@ -2277,11 +2342,23 @@ function connectSignalingClient() {
   }
   wsClient = ws;
   supporterRefused = '';
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
   ws.on('open', () => {
     if (win) win.webContents.send('signaling-in', { type: 'opened' });
     broadcastNetworkStatus();
+    // Keepalive: ping the speaker; if a round goes unanswered the link is dead,
+    // so terminate it and let the 'close' handler reconnect.
+    if (wsClientHeartbeat) clearInterval(wsClientHeartbeat);
+    wsClientHeartbeat = setInterval(() => {
+      if (wsClient !== ws || ws.readyState !== WebSocket.OPEN) return;
+      if (ws.isAlive === false) { try { ws.terminate(); } catch {} return; }
+      ws.isAlive = false;
+      try { ws.ping(); } catch {}
+    }, WS_PING_MS);
   });
   ws.on('message', (data) => {
+    ws.isAlive = true;
     let msg;
     try { msg = JSON.parse(data.toString()); } catch { return; }
     if (msg && msg.type === 'reject') {
@@ -2325,6 +2402,7 @@ function connectSignalingClient() {
     if (win) win.webContents.send('signaling-in', msg);
   });
   ws.on('close', (code, reason) => {
+    if (wsClientHeartbeat) { clearInterval(wsClientHeartbeat); wsClientHeartbeat = null; }
     if (win) win.webContents.send('signaling-in', { type: 'closed', code, reason: reason ? reason.toString() : '' });
     if (wsClient === ws) wsClient = null;
     broadcastNetworkStatus();
@@ -2345,7 +2423,8 @@ function connectSignalingClient() {
       return;
     }
     if (state.network.role === 'supporter') {
-      wsReconnectTimer = setTimeout(connectSignalingClient, 5000);
+      // Reconnect quickly after a drop so control and screen resume fast.
+      wsReconnectTimer = setTimeout(connectSignalingClient, 2000);
     }
   });
   ws.on('error', (e) => {
@@ -3272,6 +3351,14 @@ ipcMain.handle('get-cursor-display-index', () => {
   } catch { return 0; }
 });
 
+// The id of the display the cursor is on — the reliable way to match a
+// desktopCapturer screen source (its display_id), since the source order and
+// the display order need not agree. Used by the full screenshot.
+ipcMain.handle('get-cursor-display-id', () => {
+  try { return String(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id); }
+  catch { return ''; }
+});
+
 // Returns all screen source IDs sorted by name (Screen 1, Screen 2 …).
 ipcMain.handle('get-all-screen-source-ids', async () => {
   try {
@@ -3449,6 +3536,8 @@ function scheduleDeepgramReconnect() {
 // instead. Names come from the screen only; voices are not remembered.
 // "Interviewer" is the fallback.
 const speakerTracker = createSpeakerTracker({ readName: readTileName, isSelf: isOwnName, signatureDistance });
+// Which voice (the transcription's speaker separation) is which person (speaker-tracker.js).
+const voiceNames = createVoiceNames();
 let watchWin = null;
 let lastSpeechAt = 0;            // last transcript event from the meeting audio
 let lastFramedAt = 0;            // last screen read with a framed tile
@@ -3590,14 +3679,45 @@ function transcriptWho(window, isFinal) {
   return named || (!isFinal && speakerTracker.lastName()) || 'Interviewer';
 }
 
+// The screen's name for words spoken in the service's seconds [t0, t1].
+function screenNameAt(t0, t1) {
+  if (!Number.isFinite(t0) || !Number.isFinite(t1)) return null;
+  return speakerTracker.nameAt(deepgramT0 + t0 * 1000 + SCREEN_LAG_MS, deepgramT0 + t1 * 1000 + SCREEN_LAG_MS);
+}
+
+// One result -> one line per person: "Bruce: ...", "Louis: ...". The name is
+// the screen's for that stretch of words, checked against the voice that said
+// them (voiceNames); a voice that has a name keeps it when the screen shows
+// none. Only final words count as evidence; words still changing do not.
 function parseTranscriptAlternative(alt, window, isFinal) {
   const transcript = String((alt && alt.transcript) || '').trim();
   const words = (alt && alt.words) || [];
   const text = transcript || words.map((w) => w.punctuated_word || w.word || '').join(' ').replace(/\s+/g, ' ').trim();
   if (!text) return { text: '', labeled: '', speaker: 0, turns: [] };
   lastSpeechAt = Date.now();
-  const who = transcriptWho(window, isFinal);
-  return { text, labeled: who + ': ' + text, speaker: 0, turns: [{ speaker: 0, who, text }] };
+  const runs = voiceRuns(words);
+  if (!runs.length) {
+    const who = transcriptWho(window, isFinal);
+    return { text, labeled: who + ': ' + text, speaker: 0, turns: [{ speaker: 0, who, text }] };
+  }
+  if (!isFinal) {
+    // Still changing: one line, named after the voice now talking.
+    const voice = runs[runs.length - 1].voice;
+    const screen = window ? speakerTracker.nameAt(window[0] + SCREEN_LAG_MS, window[1] + SCREEN_LAG_MS) : null;
+    const who = screen || voiceNames.nameFor(voice) || speakerTracker.lastName() || 'Interviewer';
+    return { text, labeled: who + ': ' + text, speaker: voice, turns: [{ speaker: voice, who, text }] };
+  }
+  const turns = [];
+  for (const r of runs) {
+    const weight = Math.min(3, Math.max(0.5, r.n / 5));
+    const who = voiceNames.resolve(r.voice, screenNameAt(r.t0, r.t1), weight) || 'Interviewer';
+    const last = turns[turns.length - 1];
+    if (last && last.who === who) last.text += ' ' + r.text;
+    else turns.push({ speaker: r.voice, who, text: r.text });
+  }
+  // One person: the service's own text (its formatting of numbers and the like).
+  if (turns.length === 1) turns[0].text = text;
+  return { text, labeled: turns.map((t) => t.who + ': ' + t.text).join('\n'), speaker: turns[0].speaker, turns };
 }
 
 // A final line spoken while nobody was framed waits briefly for the caption
@@ -3618,6 +3738,8 @@ function startDeepgramWs(apiKey, language) {
     // VAD + utterance-end events for smoother, more natural finalization.
     vad_events: 'true', endpointing: '150', no_delay: 'true', utterance_end_ms: '1500',
     punctuate: 'true',
+    // Each word comes with the voice that said it, for the speaker names.
+    diarize: 'true',
   });
   params.set('model', 'nova-2');
   params.set('language', (language && language !== 'auto') ? language : 'en-US');
@@ -3643,6 +3765,7 @@ function startDeepgramWs(apiKey, language) {
     // starts at its first byte, so the session clock starts that much earlier.
     const heldMs = deepgramBacklog.flush(ws);
     deepgramT0 = Date.now() - heldMs;
+    voiceNames.reset(); // a new connection numbers the voices afresh
     appendLogLine(`[deepgram] connected in ${Date.now() - startedAt} ms` + (heldMs > 200 ? ` (sent ${heldMs} ms of audio held meanwhile)` : ''));
     deepgramReconnectAttempts = 0;
     watchDeepgramSocket(ws, 'deepgram');
@@ -4523,6 +4646,7 @@ ipcMain.handle('session-new', (_e, meta) => {
   convoHistory = [];
   activeProfile = s.profile;
   activeSalary = sal;
+  sendInfoData(); // the info window shows it at the top
   state.profile = { ...s.profile }; // remember as the default for next time
   saveState();
   saveSessions();
@@ -4617,6 +4741,7 @@ ipcMain.handle('session-resume', (_e, { id, profile, salary } = {}) => {
     .map((t) => ({ user: t.q || '', assistant: t.a || '', mode: t.mode || 'ANSWER' }));
   activeProfile = s.profile;
   activeSalary = s.salary;
+  sendInfoData(); // the info window shows it at the top
   state.profile = { ...s.profile };
   saveState();
   saveSessions();

@@ -28,7 +28,7 @@ body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
   -webkit-app-region: drag;
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 8px 8px 12px;
+  padding: 3px 6px 3px 10px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
@@ -48,47 +48,56 @@ body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 /* Everything below the header scrolls if content is taller than the window */
 .info-scroll { flex: 1; overflow-y: auto; }
 
-.info-clock {
-  text-align: center; padding: 16px 8px 12px;
-  background: radial-gradient(360px 160px at 50% -40%, var(--accent-dim), transparent 70%);
+/* Top strip: the clock on the left, the weather on the right, the salary below. */
+.info-top {
+  padding: 8px 10px;
+  background: radial-gradient(360px 140px at 20% -50%, var(--accent-dim), transparent 70%);
 }
-.info-time { font-size: 34px; font-weight: 700; letter-spacing: -0.5px; line-height: 1; font-variant-numeric: tabular-nums; }
-.info-date { font-size: 12px; color: var(--muted); margin-top: 5px; }
-.info-tz { font-size: 10px; color: var(--muted); opacity: .8; margin-top: 2px; }
+.info-top-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.info-clock { min-width: 0; }
+.info-time { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.info-date { font-size: 11px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.info-tz { opacity: .85; }
+.info-weather { flex: none; max-width: 52%; text-align: right; }
+.info-weather-main { display: flex; align-items: center; justify-content: flex-end; gap: 4px; line-height: 1.05; }
+.info-weather-temp { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; font-variant-numeric: tabular-nums; }
+.info-weather-emoji { font-size: 16px; }
+.info-weather-desc { font-size: 10.5px; color: var(--muted); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.info-salary {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  margin-top: 7px; padding: 4px 8px; border-radius: 7px;
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.info-salary[hidden] { display: none; }
+.info-salary-label { font-size: 9.5px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); }
+.info-salary-value { font-size: 12.5px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
 
-.info-block { padding: 10px 12px; border-top: 1px solid var(--border); }
+.info-block { padding: 6px 10px 7px; border-top: 1px solid var(--border); }
 .info-block-label {
-  font-size: 9.5px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;
-  color: var(--muted); margin-bottom: 6px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 3px;
 }
-.info-weather { display: flex; align-items: center; gap: 10px; }
-.info-weather-temp { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
-.info-weather-desc { font-size: 12px; color: var(--muted); line-height: 1.35; }
-.info-weather-emoji { font-size: 24px; }
 
-.info-holidays { font-size: 12px; line-height: 1.5; }
-.info-holiday { display: flex; gap: 8px; }
-.info-holiday-date { color: var(--muted); flex-shrink: 0; min-width: 52px; font-variant-numeric: tabular-nums; }
-.info-holiday-name { color: var(--text); }
+.info-holidays { font-size: 11px; line-height: 1.4; }
+.info-holiday { display: flex; gap: 6px; }
+.info-holiday-date { color: var(--muted); flex-shrink: 0; min-width: 42px; font-variant-numeric: tabular-nums; }
+.info-holiday-name { color: var(--text); min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .info-holiday--soon .info-holiday-name { color: var(--amber); font-weight: 600; }
 .info-holiday--past { opacity: 0.5; }
 
-.info-dim { color: var(--muted); font-style: italic; font-size: 12px; }
+.info-dim { color: var(--muted); font-style: italic; font-size: 11px; }
 
-/* ── CV: work history + education ───────────────────────────── */
-.cv-list { display: flex; flex-direction: column; gap: 8px; }
-.cv-item {
-  padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px;
-  background: var(--bg); box-shadow: var(--shadow-sm);
-}
+/* ── CV: work history + education, one dense entry each ─────── */
+.cv-list { display: flex; flex-direction: column; }
+.cv-item { padding: 3px 0; }
+.cv-item + .cv-item { border-top: 1px dashed var(--border); }
 .cv-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.cv-company { font-size: 12.5px; font-weight: 650; }
-.cv-period { font-size: 11px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.cv-role { font-size: 12px; color: var(--text); margin-top: 1px; }
-.cv-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; font-size: 11px; color: var(--muted); }
+.cv-company { font-size: 11.5px; font-weight: 650; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cv-period { font-size: 10px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cv-sub { font-size: 10.5px; color: var(--muted); line-height: 1.3; }
 .cv-mode {
-  font-size: 10px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase;
-  padding: 1px 6px; border-radius: 999px; background: var(--accent-dim); color: var(--accent);
+  font-size: 8.5px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase;
+  padding: 0 5px; border-radius: 999px; background: var(--accent-dim); color: var(--accent);
 }
 .cv-mode--onsite { background: var(--warn-bg); color: var(--warn-text); }
 .cv-mode--hybrid { background: var(--violet-bg); color: var(--violet-text); }

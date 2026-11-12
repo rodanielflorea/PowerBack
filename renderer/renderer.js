@@ -222,15 +222,29 @@ function updateFill(opacity) {
   if (opacityValEl) opacityValEl.textContent = `${pct}%`;
   if (opacityBtn) opacityBtn.title = `See-through: ${pct}% (click to change, or scroll over this button)`;
 }
+// A transparent full-window layer under the panel. A click anywhere on it
+// closes the panel — this works even over the header and rail, which are
+// window-drag regions whose mousedown never reaches a document listener.
+let opacityBackdrop = null;
+function ensureOpacityBackdrop() {
+  if (opacityBackdrop) return opacityBackdrop;
+  opacityBackdrop = document.createElement("div");
+  opacityBackdrop.className = "pop-backdrop";
+  opacityBackdrop.addEventListener("mousedown", (e) => { e.preventDefault(); closeOpacityPop(); });
+  document.body.appendChild(opacityBackdrop);
+  return opacityBackdrop;
+}
 function closeOpacityPop() {
   if (opacityPop) opacityPop.hidden = true;
   if (opacityBtn) opacityBtn.classList.remove("open");
+  if (opacityBackdrop) opacityBackdrop.style.display = "none";
 }
 if (opacityBtn && opacityPop) {
   opacityBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (!opacityPop.hidden) { closeOpacityPop(); return; }
     opacityPop.hidden = false;
+    ensureOpacityBackdrop().style.display = "block";
     const r = opacityBtn.getBoundingClientRect();
     const w = opacityPop.offsetWidth;
     opacityPop.style.left = `${Math.max(6, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 6))}px`;
@@ -806,6 +820,9 @@ syncSetupRoleV();
 
 if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
   await saveWizardMeetingType();
+  // A new hiring call does not start without its required materials (a
+  // continued session was set up when it was first started).
+  if (!resumeSessionId && (await missingHiringMaterials()).length) return;
   const sup = false; // the interview wizard always starts the speaker; supporters join from the welcome screen
   const chosenRole = "speaker";
   const patch = { role: chosenRole };
@@ -957,7 +974,6 @@ const CONTINUE_KB_KINDS = [
   { kind: "cv", label: "Resume / CV", multi: false },
   { kind: "jd", label: "Job Description", multi: false },
   { kind: "support", label: "Support material", multi: true },
-  { kind: "meetings", label: "Meeting records", multi: true },
 ];
 function renderContinueDetail(meta) {
   if (!continueDetail) return;
@@ -1000,28 +1016,12 @@ async function renderContinueKb(id) {
   const kb = await window.api.sessionKbGet(id);
   if (!kb) return;
   CONTINUE_KB_KINDS.forEach(({ kind }) => {
-    const el = document.getElementById("cFiles" + cap1(kind));
-    if (!el) return;
-    el.innerHTML = "";
-    (kb[kind] || []).forEach((it, i) => {
-      const chip = document.createElement("span");
-      chip.className = "upload-chip";
-      const kbz = it.chars ? ` · ${Math.max(1, Math.round(it.chars / 1000))}k` : "";
-      const nameSpan = document.createElement("span");
-      nameSpan.className = "upload-chip-name";
-      nameSpan.textContent = it.name + kbz;
-      chip.appendChild(nameSpan);
-      const x = document.createElement("button");
-      x.className = "upload-chip-x";
-      x.textContent = "×";
-      x.title = "Remove";
-      x.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        await window.api.sessionKbRemove(id, kind, i);
+    renderUploadList(document.getElementById("cFiles" + cap1(kind)), kb[kind] || [], {
+      onRemove: async (i) => { await window.api.sessionKbRemove(id, kind, i); renderContinueKb(id); },
+      onClear: async () => {
+        for (let i = (kb[kind] || []).length - 1; i >= 0; i--) await window.api.sessionKbRemove(id, kind, i);
         renderContinueKb(id);
-      });
-      chip.appendChild(x);
-      el.appendChild(chip);
+      },
     });
   });
 }
@@ -1133,39 +1133,99 @@ function renderLoadedTurns(turns) {
 
 // Upload zones — read each file's bytes, send to main for text extraction, and
 // render chips from the stored (persisted) knowledge.
-const KB_KINDS = ["cv", "jd", "support", "meetings"];
+const KB_KINDS = ["cv", "jd", "support"];
 const cap1 = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
-function renderKbList(kind, items) {
-  const el = document.getElementById("files" + cap1(kind));
-  if (!el) return;
-  el.innerHTML = "";
-  (items || []).forEach((it, i) => {
-    const chip = document.createElement("span");
-    chip.className = "upload-chip";
-    const kb = it.chars ? ` · ${Math.max(1, Math.round(it.chars / 1000))}k` : "";
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "upload-chip-name";
-    nameSpan.textContent = it.name + kb;
-    chip.appendChild(nameSpan);
+// Uploaded files as a compact control: a "N files" summary that toggles a
+// drop-down (so the zone never grows with many files), each row with a delete,
+// and a "Clear all". Which drop-downs are open survives a re-render.
+const _openUploadDropdowns = new Set();
+function renderUploadList(containerEl, items, handlers) {
+  if (!containerEl) return;
+  containerEl.innerHTML = "";
+  const list = items || [];
+  if (!list.length) { _openUploadDropdowns.delete(containerEl.id); return; }
+
+  const summary = document.createElement("button");
+  summary.type = "button";
+  summary.className = "upload-summary";
+  summary.innerHTML = `<span>${list.length} file${list.length > 1 ? "s" : ""}</span>` + aceIcon("chevron-down");
+
+  const panel = document.createElement("div");
+  panel.className = "upload-dropdown";
+  panel.hidden = !_openUploadDropdowns.has(containerEl.id);
+  panel.addEventListener("click", (e) => e.stopPropagation());
+  list.forEach((it, i) => {
+    const row = document.createElement("div");
+    row.className = "upload-drop-row";
+    const name = document.createElement("span");
+    name.className = "upload-drop-name";
+    const kbz = it.chars ? ` · ${Math.max(1, Math.round(it.chars / 1000))}k` : "";
+    name.textContent = it.name + kbz;
+    name.title = it.name;
     const x = document.createElement("button");
-    x.className = "upload-chip-x";
+    x.type = "button";
+    x.className = "upload-drop-x";
     x.textContent = "×";
-    x.title = "Remove";
+    x.title = "Delete this file";
     x.addEventListener("click", async (e) => {
       e.stopPropagation();
-      await window.api.kbRemove(kind, i);
-      refreshKb();
+      _openUploadDropdowns.add(containerEl.id); // stay open through the re-render
+      await handlers.onRemove(i);
     });
-    chip.appendChild(x);
-    el.appendChild(chip);
+    row.append(name, x);
+    panel.appendChild(row);
   });
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.className = "upload-drop-clear";
+  clear.textContent = "Clear all";
+  clear.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await handlers.onClear();
+  });
+  panel.appendChild(clear);
+
+  summary.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    panel.hidden = !panel.hidden;
+    if (panel.hidden) _openUploadDropdowns.delete(containerEl.id);
+    else _openUploadDropdowns.add(containerEl.id);
+  });
+  containerEl.append(summary, panel);
+}
+// A click anywhere else closes any open file drop-down.
+document.addEventListener("click", (e) => {
+  if (e.target.closest(".upload-summary") || e.target.closest(".upload-dropdown")) return;
+  document.querySelectorAll(".upload-dropdown").forEach((p) => {
+    p.hidden = true;
+    if (p.parentElement) _openUploadDropdowns.delete(p.parentElement.id);
+  });
+});
+
+// Remove every file of one kind from the global knowledge base.
+async function clearKb(kind) {
+  if (!window.api.kbGet) return;
+  const kb = await window.api.kbGet();
+  const n = (kb[kind] || []).length;
+  for (let i = n - 1; i >= 0; i--) await window.api.kbRemove(kind, i);
 }
 
+// Both the setup step (files*) and the Settings → Materials tab (sFiles*) show
+// the same global knowledge base.
 async function refreshKb() {
   if (!window.api.kbGet) return;
   const kb = await window.api.kbGet();
-  for (const kind of KB_KINDS) renderKbList(kind, kb[kind] || []);
+  for (const kind of KB_KINDS) {
+    const handlers = {
+      onRemove: async (i) => { await window.api.kbRemove(kind, i); refreshKb(); },
+      onClear: async () => { await clearKb(kind); refreshKb(); },
+    };
+    for (const prefix of ["files", "sFiles"]) {
+      renderUploadList(document.getElementById(prefix + cap1(kind)), kb[kind] || [], handlers);
+    }
+  }
 }
 
 async function addKbFiles(kind, fileList) {
@@ -1182,20 +1242,28 @@ async function addKbFiles(kind, fileList) {
   refreshKb();
 }
 
-KB_KINDS.forEach((kind) => {
-  const zone = document.getElementById("drop" + cap1(kind));
-  const input = document.getElementById("file" + cap1(kind));
-  if (!zone || !input) return;
-  zone.addEventListener("click", () => input.click());
-  input.addEventListener("change", () => { addKbFiles(kind, input.files); input.value = ""; });
-  zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("dragover"); });
-  zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
-  zone.addEventListener("drop", (e) => {
-    e.preventDefault();
-    zone.classList.remove("dragover");
-    addKbFiles(kind, e.dataTransfer && e.dataTransfer.files);
+// The setup step's zones (drop*/file*) and the Settings → Materials ones (sDrop*/sFile*).
+function wireKbZoneSet(dropPrefix, filePrefix) {
+  KB_KINDS.forEach((kind) => {
+    const zone = document.getElementById(dropPrefix + cap1(kind));
+    const input = document.getElementById(filePrefix + cap1(kind));
+    if (!zone || !input) return;
+    zone.addEventListener("click", (e) => {
+      if (e.target.closest(".upload-summary, .upload-dropdown")) return; // the file list, not a new upload
+      input.click();
+    });
+    input.addEventListener("change", () => { addKbFiles(kind, input.files); input.value = ""; });
+    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("dragover"); });
+    zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      zone.classList.remove("dragover");
+      addKbFiles(kind, e.dataTransfer && e.dataTransfer.files);
+    });
   });
-});
+}
+wireKbZoneSet("drop", "file");
+wireKbZoneSet("sDrop", "sFile");
 refreshKb();
 
 const endModal = document.getElementById("endModal");
@@ -1634,6 +1702,7 @@ if (logClearBtn)
 
 function openSettings() {
   settingsOverlay.hidden = false;
+  refreshKb(); // the Materials tab shows what is loaded now
   const isSupporter = netCfg && netCfg.role === "supporter";
   activateTab("apikeys");
   refreshTranscriptionUI();
@@ -1750,15 +1819,47 @@ function applyMeetingConfigUi(cfg) {
   if (group) group.open = true;
 }
 
+// Hiring call or team meeting: the materials step marks what is required.
+function markMeetingKind(cfg) {
+  if (cfg && cfg.kind) document.body.classList.toggle("meeting-hiring", cfg.kind === "hiring");
+  return cfg;
+}
 async function refreshMeetingUI() {
   if (!window.api.getMeetingConfig) return;
-  applyMeetingConfigUi(await window.api.getMeetingConfig());
+  applyMeetingConfigUi(markMeetingKind(await window.api.getMeetingConfig()));
+}
+// A hiring call needs the resume, the job description and the salary
+// expectation. Returns what is missing (empty = fine) and marks it on screen.
+async function missingHiringMaterials() {
+  const cfg = window.api.getMeetingConfig ? await window.api.getMeetingConfig() : null;
+  const note = document.getElementById("setupRequired");
+  const cvZone = document.getElementById("dropCv"), jdZone = document.getElementById("dropJd");
+  const salaryRow = document.querySelector(".salary-block .salary-row");
+  const missing = [];
+  if (cfg && cfg.kind === "hiring") {
+    const kb = window.api.kbGet ? await window.api.kbGet() : {};
+    const amount = Number((document.getElementById("salaryAmount") || {}).value);
+    const noCv = !(kb.cv || []).length, noJd = !(kb.jd || []).length, noSalary = !(amount > 0);
+    if (noCv) missing.push("your resume / CV");
+    if (noJd) missing.push("the job description");
+    if (noSalary) missing.push("your salary expectation");
+    if (cvZone) cvZone.classList.toggle("required-missing", noCv);
+    if (jdZone) jdZone.classList.toggle("required-missing", noJd);
+    if (salaryRow) salaryRow.classList.toggle("required-missing", noSalary);
+  } else {
+    [cvZone, jdZone, salaryRow].forEach((el) => el && el.classList.remove("required-missing"));
+  }
+  if (note) {
+    note.hidden = !missing.length;
+    note.textContent = missing.length ? "A hiring call needs " + missing.join(missing.length > 2 ? ", " : " and ").replace(/, ([^,]*)$/, " and $1") + "." : "";
+  }
+  return missing;
 }
 
 async function persistMeeting(patch) {
   if (!window.api.setMeetingConfig) return;
   const before = answerCfgCache && answerCfgCache.slots ? JSON.stringify(answerCfgCache.slots) : "";
-  applyMeetingConfigUi(await window.api.setMeetingConfig(patch));
+  applyMeetingConfigUi(markMeetingKind(await window.api.setMeetingConfig(patch)));
   // Automatic models: say what the new meeting type picked.
   try {
     const cfg = await window.api.getAnswerConfig();
@@ -2598,8 +2699,14 @@ function streamSegment(text, isFinal, speakerId, turns) {
     ? turns.filter((t) => t && String(t.text || "").trim())
     : speakerLineBlock(text).split("\n").filter(Boolean).map((ln) => ({ text: ln.replace(/^Interviewer:\s*/i, "") }));
   if (!rows.length) return;
+  // Main names each line after the person who said it (the meeting screen and
+  // the voice). Finished words of several people: one line each, in order.
+  const named = rows.filter((r) => r.who);
+  if (isFinal && named.length > 1 && new Set(named.map((r) => r.who)).size > 1) {
+    rows.forEach((r) => applyMeetLine(r.who || "Interviewer", String(r.text || "").trim(), 0, true));
+    return;
+  }
   const body = rows.map((r) => String(r.text || "").trim()).filter(Boolean).join(" ");
-  // Main names the line after whoever the meeting screen framed as speaking.
   if (body) applyMeetLine(rows[0].who || "Interviewer", body, 0, isFinal);
 }
 
@@ -2607,7 +2714,7 @@ function streamSegment(text, isFinal, speakerId, turns) {
 // updates smoothly instead of stuttering on every packet.
 let pendingInterim = null;
 let interimFlushTimer = null;
-const INTERIM_FLUSH_MS = 80;
+const INTERIM_FLUSH_MS = 40;
 function scheduleInterimFlush() {
   if (interimFlushTimer) return;
   interimFlushTimer = setTimeout(() => {
@@ -2641,7 +2748,8 @@ window.api.onTranscriptLive((payload) => {
     pendingInterim = null;
     streamSegment(pack.display, true, pack.speaker, pack.turns);
     clearInterimPreview();
-    if (payload && payload.text) pushScript((payload.turns && payload.turns[0] && payload.turns[0].who) || "Interviewer", payload.text);
+    if (payload && payload.turns && payload.turns.length > 1) payload.turns.forEach((t) => pushScript(t.who || "Interviewer", t.text));
+    else if (payload && payload.text) pushScript((payload.turns && payload.turns[0] && payload.turns[0].who) || "Interviewer", payload.text);
     log(display.replace(/\n/g, " · "));
   } else {
     pendingInterim = pack;
@@ -3015,17 +3123,23 @@ async function doScreenshot() {
   let stream = null;
   let video  = null;
   try {
-    // Get all sources + cursor display index in parallel.
-    let allSources = [], displayIdx = 0;
-    try { allSources  = await window.api.getCursorScreenSourceId(); } catch {}
-    try { displayIdx  = await window.api.getCursorDisplayIndex();   } catch {}
+    // Get all sources, the cursor's display id, and (as a fallback) its index.
+    let allSources = [], cursorDisplayId = "", displayIdx = 0;
+    try { allSources      = await window.api.getCursorScreenSourceId(); } catch {}
+    try { cursorDisplayId = await window.api.getCursorDisplayId();      } catch {}
+    try { displayIdx      = await window.api.getCursorDisplayIndex();   } catch {}
 
     // Filter to screen-only sources (IDs start with "screen:"), sort by name.
     const screenSources = (allSources || [])
       .filter((s) => s.id && s.id.startsWith("screen:"))
       .sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { numeric: true }));
 
-    let sourceId = (screenSources[displayIdx] || screenSources[0])?.id || null;
+    // Prefer matching the cursor's display by id — source order and display
+    // order need not agree, so the index alone can pick the wrong screen.
+    const byId = cursorDisplayId
+      ? screenSources.find((s) => String(s.display_id) === String(cursorDisplayId))
+      : null;
+    let sourceId = (byId || screenSources[displayIdx] || screenSources[0])?.id || null;
     if (!sourceId) {
       try { sourceId = await window.api.getDesktopSourceId(); } catch {}
     }
@@ -4378,7 +4492,7 @@ async function startVoice() {
       numberOfInputs: 1,
       numberOfOutputs: 1,
       outputChannelCount: [1],
-      processorOptions: { format: "int16", batchSize: 1600 },
+      processorOptions: { format: "int16", batchSize: 640 },
     });
     ctx.createMediaStreamSource(dest.stream).connect(processor);
     const sink = ctx.createGain();
@@ -4394,7 +4508,7 @@ async function startVoice() {
         await window.api.startMicDeepgramStream({ apiKey, language: txCfg.language || "auto" });
         micProcessor = new AudioWorkletNode(ctx, "capture-processor", {
           numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
-          processorOptions: { format: "int16", batchSize: 1600 },
+          processorOptions: { format: "int16", batchSize: 640 },
         });
         ctx.createMediaStreamSource(micDest.stream).connect(micProcessor);
         const micSink = ctx.createGain(); micSink.gain.value = 0;
@@ -6433,6 +6547,9 @@ function onScreenShareState(on, msg) {
   if (!on) clearScreenView("The speaker is not sharing the screen.");
   else if (!(screenVideoEl && screenVideoEl.srcObject)) setScreenStatus("Waiting for the speaker's screen…", true);
   else describeScreen();
+  // Control was taken but the link dropped (new connection = no control on the
+  // speaker's side): ask for it again now the screen is back, so it resumes.
+  if (on && controlWanted && controlState !== "on") requestControl();
 }
 
 // One picture card per display of the speaker's (none with one display).
@@ -6645,6 +6762,7 @@ function syncScreenViewer() {
 // speaker's computer (main.js controlInput turns the picture's 0..1 spots into
 // pixels on the shared display). Either side can end it at any time.
 let controlState = "off"; // off | asked | on
+let controlWanted = false; // the supporter wants control (kept across a drop, so it resumes on reconnect)
 function setControlState(st, reason, quiet) {
   const prev = controlState;
   controlState = st === "on" || st === "asked" ? st : "off";
@@ -6659,10 +6777,12 @@ function setControlState(st, reason, quiet) {
 }
 function requestControl() {
   if (!window.api.sendSignaling) return;
+  controlWanted = true;
   window.api.sendSignaling({ type: "control-request" });
   setControlState("asked", "", true);
 }
 function releaseControl() {
+  controlWanted = false;
   if (window.api.sendSignaling) window.api.sendSignaling({ type: "control-release" });
   setControlState("off", "", true);
 }
@@ -6762,15 +6882,15 @@ function wireViewerControl(w, d, stage, v) {
     e.preventDefault();
     e.stopPropagation();
     const code = codeOf(e);
-    const modifier = /^(Shift|Control|Alt|Meta)(Left|Right)$/.test(code);
-    const altGr = e.getModifierState && e.getModifierState("AltGraph");
-    const typed = !modifier && e.key && e.key.length === 1 && (altGr || (!e.ctrlKey && !e.altKey && !e.metaKey));
-    // Characters go as text (whatever the speaker's keyboard layout); keys
-    // and shortcuts as keys.
-    if (typed) { push(["t", e.key], true); return; }
-    if (!code) return;
-    sentKeys.add(code);
-    push(["k", code, 1], true);
+    // Every key goes as a key event (the speaker turns it into a scan code), so
+    // it reaches VM guests, terminals and games that ignore Unicode injection.
+    // Only a character with no physical key (IME / compose) falls back to text.
+    if (code) {
+      sentKeys.add(code);
+      push(["k", code, 1], true);
+    } else if (e.key && e.key.length === 1) {
+      push(["t", e.key], true);
+    }
   }, true);
   d.addEventListener("keyup", (e) => {
     const code = codeOf(e);

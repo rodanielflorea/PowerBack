@@ -1,6 +1,6 @@
 {
   "name": "ace",
-  "version": "2.7.8",
+  "version": "2.7.9",
   "description": "Answer Coaching Engine",
   "main": "main.js",
   "scripts": {
@@ -153,7 +153,11 @@
     },
     "nsis": {
       "artifactName": "${productName}-${version}-setup.${ext}",
-      "oneClick": true,
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "license": "build/about.txt",
       "guid": "9e66c056-626c-529e-98cc-8d2fc0aeb8d8",
       "include": "build/installer.nsh",
       "createDesktopShortcut": true,
