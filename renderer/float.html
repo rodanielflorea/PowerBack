@@ -19,9 +19,10 @@
     .btn {
       -webkit-app-region: no-drag;
       width: 100%; height: 100%; border-radius: 50%; border: none; cursor: pointer;
-      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+      background: radial-gradient(circle at 30% 25%, #262a36 0%, #13151b 75%);
       color: #fff; font: 700 15px/1 system-ui, -apple-system, 'Segoe UI', sans-serif;
-      box-shadow: 0 4px 12px rgba(15,18,34,.28), 0 0 0 2px rgba(255,255,255,.9);
+      box-shadow: 0 4px 12px rgba(0,0,0,.35), 0 0 0 2px #7c6cff;
+      padding: 0;
       display: flex; align-items: center; justify-content: center;
       transition: transform .12s ease, filter .12s ease;
     }
@@ -31,12 +32,15 @@
     body.manual-drag .btn { cursor: grab; }
     body.manual-drag .btn:active { cursor: grabbing; }
     /* Main window hidden: dim the button so the state is obvious. */
-    body.main-hidden .btn { background: linear-gradient(135deg, #64748b, #475569); }
+    .btn svg { width: 56%; height: 56%; display: block; pointer-events: none; }
+    /* Main window hidden: dim the button so the state is obvious. */
+    body.main-hidden .btn { box-shadow: 0 4px 12px rgba(0,0,0,.35), 0 0 0 2px #59607a; }
+    body.main-hidden .btn svg { opacity: .55; }
   </style>
 </head>
 <body>
   <div class="ring">
-    <button class="btn" id="btn" title="Click: show / hide the app (Ctrl+Alt+H) · Drag: move this button">A</button>
+    <button class="btn" id="btn" title="Click: show / hide the app (Ctrl+Alt+H) · Drag: move this button"><svg viewBox="0 0 100 100" aria-hidden="true"><path fill="#eceaff" d="M50 8 92 92H75L50 42 25 92H8Z"/><path fill="#8b7dff" d="M50 58 67 92H53L50 86 47 92H33Z"/></svg></button>
   </div>
   <script>
     const btn = document.getElementById('btn');

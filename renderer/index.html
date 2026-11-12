@@ -3,58 +3,59 @@
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src 'self' blob: mediastream:; connect-src 'self' blob:; img-src 'self' data: blob:;" />
+  <script src="theme.js"></script>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="cable-nudge iv-btn" id="cableNudge" hidden>
-    <span class="cable-nudge-text">&#128161; Install VB-Cable so the meeting can hear you</span>
+    <span class="cable-nudge-text"><i data-icon="lightbulb"></i> Install VB-Cable so the meeting can hear you</span>
     <button class="cable-nudge-action" id="cableNudgeGet">Get VB-Cable</button>
-    <button class="cable-nudge-dismiss" id="cableNudgeDismiss" title="Dismiss">&times;</button>
+    <button class="cable-nudge-dismiss" id="cableNudgeDismiss" title="Dismiss"><i data-icon="x"></i></button>
   </div>
 
   <header class="titlebar">
-    <div class="app-logo" title="Ace" aria-hidden="true">A</div>
-    <button class="btn rec-indicator iv-btn" id="recIndicator" title="Start recording (screen + audio)">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6.5" width="12" height="11" rx="2.5" /><path d="M15 10 l5.5 -3 v10 l-5.5 -3 z" /></svg>
-      <span class="rec-dot-live"></span>
-    </button>
+    <div class="app-logo" title="Ace"><svg class="ace-mark" viewBox="0 0 100 100" aria-hidden="true"><path class="logo-ink" d="M50 8 92 92H75L50 42 25 92H8Z"/><path class="logo-accent" d="M50 58 67 92H53L50 86 47 92H33Z"/></svg></div>
+    <div class="tb-group iv-btn" id="recGroup">
+      <button class="btn tb-btn rec-indicator" id="recIndicator" title="Start recording (screen + audio)">
+        <i data-icon="video"></i>
+        <span class="rec-dot-live"></span>
+      </button>
+      <button class="btn tb-btn tb-caret" id="recDisplayBtn" title="Screen to record" hidden><i data-icon="chevron-down"></i></button>
+    </div>
     <span class="net-status-pill iv-btn" id="netStatusPill" hidden>--</span>
-    <button class="btn supporter-invite-btn iv-btn" id="supporterInviteBtn" title="Supporter: let someone join from another computer">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>
+    <button class="btn tb-btn supporter-invite-btn iv-btn" id="supporterInviteBtn" title="Supporter: let someone join from another computer">
+      <i data-icon="headset"></i>
       <span class="supporter-invite-dot"></span>
     </button>
     <div class="drag"></div>
     <div class="slider" id="slider" title="Click and drag horizontally to change opacity">
       <div class="slider-fill" id="sliderFill"></div>
     </div>
-    <button class="btn stealth-btn" id="stealthBtn" title="Toggle stealth (hidden from screen capture)">
-      <svg class="stealth-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <path class="eye-body" d="M2.5 12 C5 7.5 8.3 5.5 12 5.5 C15.7 5.5 19 7.5 21.5 12 C19 16.5 15.7 18.5 12 18.5 C8.3 18.5 5 16.5 2.5 12 Z" />
-        <circle class="eye-pupil" cx="12" cy="12" r="3" />
-        <path class="eye-slash" d="M4 20 L20 4" />
-      </svg>
+    <button class="btn tb-btn stealth-btn" id="stealthBtn" title="Toggle stealth (hidden from screen capture)">
+      <i data-icon="eye-off" class="st-hidden"></i><i data-icon="eye" class="st-visible"></i>
     </button>
-    <button class="btn clickthrough-btn" id="clickThroughBtn" title="Toggle click-through (Alt+Q) — when on, mouse passes through this window">
-      <svg class="cursor-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <path class="cursor-body" d="M5 3 L5 17.5 L8.8 13.8 L11.3 19.5 L13.6 18.5 L11.1 12.9 L16.5 12.5 Z" />
-        <path class="cursor-through" d="M15 5 h6 M15 8.5 h6" />
-      </svg>
+    <button class="btn tb-btn clickthrough-btn" id="clickThroughBtn" title="Toggle click-through (Alt+Q) — when on, mouse passes through this window">
+      <i data-icon="pointer" class="ct-off"></i><i data-icon="pointer-through" class="ct-on"></i>
     </button>
     <!-- The "To A" mic-mode pill is retired (supporters change their mic on their own screen); kept hidden for renderer bindings. -->
     <button class="btn mic-pill iv-btn" id="micPill" hidden>
       <span class="mic-pill-icon" id="micPillIcon">🔒</span><span class="mic-pill-label" id="micPillLabel">TO A</span>
     </button>
-    <button class="btn end-btn iv-btn" id="endBtn" title="End session — back to the start screen">
-      <svg class="end-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 v9" /><path d="M6.4 6.4 a8 8 0 1 0 11.2 0" /></svg>
+    <button class="btn tb-btn end-btn iv-btn" id="endBtn" title="End session — back to the start screen">
+      <i data-icon="phone-off"></i>
     </button>
-    <button class="btn" id="hideBtn" title="Hide (Ctrl+Alt+H)">&minus;</button>
-    <button class="btn" id="quitBtn" title="Quit">&times;</button>
+    <span class="tb-sep" aria-hidden="true"></span>
+    <button class="btn win-btn" id="hideBtn" title="Hide (Ctrl+Alt+H)"><i data-icon="win-min" class="ico-thin"></i></button>
+    <button class="btn win-btn win-close" id="quitBtn" title="Quit"><i data-icon="win-close" class="ico-thin"></i></button>
   </header>
+
+  <!-- The record button's display menu (renderer.js fills it). -->
+  <div class="menu-pop" id="recDisplayMenu" role="menu" hidden></div>
 
   <div class="supporter-panel" id="supporterPanel" hidden>
     <div class="supporter-panel-head">
-      <span>Supporter</span>
-      <button class="btn" id="supporterPanelClose" title="Close">&times;</button>
+      <span class="supporter-panel-title"><i data-icon="headset"></i> Supporter</span>
+      <button class="icon-btn" id="supporterPanelClose" title="Close"><i data-icon="x"></i></button>
     </div>
     <p class="supporter-panel-lead">On the other computer, open Ace, choose <b>Join as supporter</b> and enter:</p>
     <div class="supporter-panel-row"><span class="supporter-panel-key">IP address</span><span class="supporter-panel-val" id="supporterPanelAddr">&nbsp;</span></div>
@@ -65,14 +66,8 @@
   </div>
 
   <aside class="right-rail iv-btn" id="rightRail">
-    <button class="rail-btn" id="settingsBtn" title="Settings &amp; user guide">&#9881;</button>
-    <button class="rail-btn rec-btn" id="recBtn" title="Start transcription (Alt+C)">
-      <svg class="mic-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="9" y="3" width="6" height="11" rx="3" />
-        <path d="M6 11 a6 6 0 0 0 12 0" fill="none" />
-        <path d="M12 17 v3 M9 20 h6" fill="none" />
-      </svg>
-    </button>
+    <button class="rail-btn" id="settingsBtn" title="Settings &amp; user guide"><i data-icon="settings"></i></button>
+    <button class="rail-btn rec-btn" id="recBtn" title="Start transcription (Alt+C)"><i data-icon="mic" class="mic-icon"></i></button>
     <button class="rail-btn rail-model-btn" id="railModelBtn" title="Select answer model">M</button>
     <div class="rail-speed-wrap" title="Typing speed (1=slow · 5=fast)">
       <span class="rail-speed-label">5</span>
@@ -86,18 +81,27 @@
    <div class="settings-modal" role="dialog" aria-modal="true" aria-label="Settings">
     <div class="settings-header">
       <span>Settings</span>
-      <button class="btn" id="settingsCloseBtn" title="Close settings">&times;</button>
+      <button class="icon-btn" id="settingsCloseBtn" title="Close settings"><i data-icon="x"></i></button>
     </div>
     <nav class="settings-tabs" id="settingsTabs">
       <button class="tab-btn active" data-tab="apikeys" type="button">Providers</button>
       <button class="tab-btn" data-tab="hotkeys" type="button">Hotkeys</button>
       <button class="tab-btn" data-tab="diag" type="button">Check</button>
       <button class="tab-btn" data-tab="vscode" type="button">VS Code</button>
-      <button class="tab-btn" data-tab="help" type="button">User guide</button>
+      <button class="tab-btn" data-tab="help" type="button">Guide</button>
     </nav>
     <div class="settings-body">
 
       <div class="settings-tab" data-tab="apikeys">
+        <section class="settings-section">
+          <h3>Appearance</h3>
+          <div class="theme-seg" id="themeSeg" role="radiogroup" aria-label="Theme">
+            <button type="button" data-theme-pref="dark" role="radio">Dark</button>
+            <button type="button" data-theme-pref="light" role="radio">Light</button>
+            <button type="button" data-theme-pref="system" role="radio">System</button>
+          </div>
+        </section>
+
         <section class="settings-section">
           <!-- Deepgram is the only engine; kept as a hidden input for existing bindings. -->
           <input type="radio" name="engine" value="deepgram" id="engineDeepgram" checked hidden />
@@ -114,15 +118,16 @@
           <div class="field-row">
             <label class="checkbox"><input type="checkbox" id="shareScreen" /> Share my screen with the supporter</label>
           </div>
-          <p class="hint">Your whole screen as the call sees it (this app and its notes are not in the picture). Changes apply at once, also during a call.</p>
+          <p class="hint">Your whole screen as the call sees it (this app and its notes are not in the picture). With more than one display, the supporter picks which one they see. Changes apply at once, also during a call.</p>
           <div class="field">
             <label class="checkbox"><input type="checkbox" id="recordSession" /> Record the session (screen + audio) and save it when the interview ends</label>
             <p class="hint">The video, transcript, CV, job description and every uploaded document are saved to one folder in your Documents, named date-time-company-role, and the folder opens when you press End. On macOS this needs Screen &amp; System Audio Recording permission.</p>
           </div>
-          <div class="field" id="recordDisplayField" hidden>
+          <div class="field" id="recordDisplayField">
             <label for="recordDisplaySelect">Screen to record</label>
             <select id="recordDisplaySelect"></select>
-            <p class="hint">Shown when more than one display is connected. Changing it during a recording carries on with the new screen in a second video file; both are saved with the session.</p>
+            <div class="disp-cards disp-cards--field" id="recordDisplayCards" role="group" aria-label="Screen to record"></div>
+            <p class="hint">During a session the arrow next to the record button picks it too. Changing it during a recording carries on with the new screen in a second video file; both are saved with the session.</p>
           </div>
           <div class="field">
             <label class="checkbox"><input type="checkbox" id="uploadSession" /> Upload the saved session folder to gofile.io and show the share link</label>
@@ -350,7 +355,8 @@
             <li>On the helper's computer, open Ace and choose <b>Join as supporter</b>. Enter the IP address, then click <b>Connect</b>.</li>
             <li>The helper hears your microphone and the call, and sees your answer panel as it changes: the transcript bubbles and every answer.</li>
             <li>The helper's <b>AI</b> button (or Ctrl+Enter) presses Send on your Ace for you: your AI answers the current transcript, in the mode the helper picked, and the answer shows on both screens.</li>
-            <li>When the helper joins, your window and theirs widen by a <b>Private chat</b> column. What they send shows there, and you reply in its message box. The <b>&times;</b> closes it again; the trash button clears it on both sides.</li>
+            <li>When the helper joins, your window and theirs widen by a <b>Private chat</b> column and can be resized. When they leave, both windows go back to the normal size. What they send shows there, and you reply in its message box. The <b>&times;</b> closes it again; the trash button clears it on both sides.</li>
+            <li>The helper sees your screen in a small picture above the chat. A double-click (or the pop-out button) opens it in a window of its own that can be made full screen or moved to another monitor. If you have more than one display, the numbered buttons pick which one they see.</li>
             <li>The helper's speaker button mutes and unmutes the call sound on their side.</li>
             <li>The helper's microphone starts off. With <b>Talk to them</b>, only you hear them; the meeting does not.</li>
           </ol>
@@ -363,9 +369,9 @@
             <li><b>Blue bubbles</b> are what the interviewer said. When a question ends, the answer appears underneath it.</li>
             <li>On each bubble: <b>↻</b> answers it again, <b>✎</b> lets you fix the transcript and then answer, <b>×</b> removes it.</li>
             <li>Type your own question in the box at the bottom and press <b>Enter</b> (or the arrow) — for example when you want to prepare an answer before they ask.</li>
-            <li><b>Text / Code / Diagram</b> choose the answer format. Use <b>Code</b> for coding questions and <b>Diagram</b> for architecture questions.</li>
+            <li>The format buttons above the answers (<b>Text</b>, <b>Code</b>, <b>Diagram</b>, <b>Project</b>; hover for the name) choose the answer format. Use <b>Code</b> for coding questions and <b>Diagram</b> for architecture questions.</li>
             <li>The drop-down at the top switches the meeting type mid-call if the tone changes.</li>
-            <li><b>Clear</b> removes all bubbles and answers (your materials stay).</li>
+            <li>The <b>trash</b> button next to the format buttons removes all bubbles and answers (your materials stay).</li>
           </ul>
         </section>
 
@@ -468,12 +474,12 @@
       <div class="setup-topbar">
         <span class="setup-topbar-spacer"></span>
         <button class="setup-gear-btn" id="historyBtn" title="Session history — resume a saved interview">
-          <svg class="history-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12 a8.5 8.5 0 1 0 2.6 -6.1" /><path d="M3 4.5 v4.5 h4.5" /><path d="M12 8 v4.5 l3 2" /></svg>
+          <i data-icon="history"></i>
         </button>
-        <button class="setup-gear-btn" id="modeSelectSettingsBtn" title="Settings &amp; user guide">&#9881;</button>
+        <button class="setup-gear-btn" id="modeSelectSettingsBtn" title="Settings &amp; user guide"><i data-icon="settings"></i></button>
       </div>
       <div class="welcome-hero">
-        <div class="welcome-logo" aria-hidden="true">A</div>
+        <div class="welcome-logo" aria-hidden="true"><svg class="ace-mark" viewBox="0 0 100 100" aria-hidden="true"><path class="logo-ink" d="M50 8 92 92H75L50 42 25 92H8Z"/><path class="logo-accent" d="M50 58 67 92H53L50 86 47 92H33Z"/></svg></div>
         <h1 class="welcome-heading">Welcome to Ace</h1>
         <p class="welcome-meta"><span id="welcomeVersion">&nbsp;</span><span class="welcome-dot">·</span><span id="welcomeUpdated">&nbsp;</span></p>
       </div>
@@ -484,7 +490,7 @@
             <span class="mode-choice-name">Interview mode</span>
             <span class="mode-choice-desc">Live answer coaching while you are in the call</span>
           </span>
-          <span class="mode-choice-arrow" aria-hidden="true">&#8250;</span>
+          <span class="mode-choice-arrow" aria-hidden="true"><i data-icon="chevron-right"></i></span>
         </button>
         <button class="mode-choice-card" id="modeSupporterBtn">
           <span class="mode-choice-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg></span>
@@ -492,7 +498,7 @@
             <span class="mode-choice-name">Join as supporter</span>
             <span class="mode-choice-desc">Help someone in their call: hear it, watch their screen, send them notes</span>
           </span>
-          <span class="mode-choice-arrow" aria-hidden="true">&#8250;</span>
+          <span class="mode-choice-arrow" aria-hidden="true"><i data-icon="chevron-right"></i></span>
         </button>
       </div>
       <p class="welcome-foot">New here? <button class="link-btn" id="welcomeTourBtn">Take the tour</button> <span class="welcome-dot">·</span> <button class="link-btn" id="welcomeHelpBtn">Read the user guide</button></p>
@@ -503,9 +509,9 @@
   <section class="setup-overlay" id="joinOverlay" hidden>
     <div class="setup-card">
       <div class="setup-topbar">
-        <button class="setup-back-btn" id="joinBackBtn" title="Back">&#8592;</button>
+        <button class="setup-back-btn" id="joinBackBtn" title="Back"><i data-icon="arrow-left"></i></button>
         <h2 class="setup-title">Join as supporter</h2>
-        <button class="setup-gear-btn" id="joinSettingsBtn" title="Settings &amp; user guide">&#9881;</button>
+        <button class="setup-gear-btn" id="joinSettingsBtn" title="Settings &amp; user guide"><i data-icon="settings"></i></button>
       </div>
       <p class="setup-intro">You hear their call, see their screen and their answer panel live, can ask their AI for an answer, and can chat with them. Both computers must be on the same network. In their Ace, the headset button at the top shows their IP address.</p>
       <div class="profile-inputs profile-inputs--vertical">
@@ -524,9 +530,9 @@
   <section class="setup-overlay" id="stageOverlay" hidden>
     <div class="setup-card">
       <div class="setup-topbar">
-        <button class="setup-back-btn" id="stageBackBtn" title="Back">&#8592;</button>
+        <button class="setup-back-btn" id="stageBackBtn" title="Back"><i data-icon="arrow-left"></i></button>
         <h2 class="setup-title">Meeting type</h2>
-        <button class="setup-gear-btn" id="stageSettingsBtn" title="Settings &amp; user guide">&#9881;</button>
+        <button class="setup-gear-btn" id="stageSettingsBtn" title="Settings &amp; user guide"><i data-icon="settings"></i></button>
       </div>
       <p class="setup-intro">What kind of call is it? Your answers are written to fit it. Not sure? Think of who is on the call.</p>
       <details class="stage-group" name="meetingGroup" data-kind="hiring">
@@ -590,23 +596,23 @@
   <section class="setup-overlay" id="profileOverlay" hidden>
     <div class="setup-card">
       <div class="setup-topbar">
-        <button class="setup-back-btn" id="profileBackBtn" title="Back">&#8592;</button>
+        <button class="setup-back-btn" id="profileBackBtn" title="Back"><i data-icon="arrow-left"></i></button>
         <h2 class="setup-title">Your profile</h2>
-        <button class="setup-gear-btn" id="profileSettingsBtn" title="Settings &amp; user guide">&#9881;</button>
+        <button class="setup-gear-btn" id="profileSettingsBtn" title="Settings &amp; user guide"><i data-icon="settings"></i></button>
       </div>
       <p class="setup-intro">Choose a saved profile or fill in a new one. Answers speak as this person, and the info panel uses the location.</p>
       <div class="setup-profile-row">
         <p class="setup-roles-label">Saved profiles</p>
         <div class="profile-picker">
           <select id="profileSelect" class="profile-input"></select>
-          <button id="profileSaveNewBtn" class="profile-mini-btn" title="Save current fields as a new profile">＋</button>
-          <button id="profileUpdateBtn" class="profile-mini-btn" title="Update the selected profile with current fields">⟳</button>
+          <button id="profileSaveNewBtn" class="profile-mini-btn" title="Save current fields as a new profile"><i data-icon="plus"></i></button>
+          <button id="profileUpdateBtn" class="profile-mini-btn" title="Update the selected profile with current fields"><i data-icon="refresh"></i></button>
           <button id="profileDeleteBtn" class="profile-mini-btn profile-mini-btn--danger" title="Delete the selected profile"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="m6 7 1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg></button>
         </div>
         <div class="profile-saverow" id="profileSaveRow" hidden>
           <input type="text" id="profileLabelInput" class="profile-input" placeholder="Profile name (e.g. profile1)" spellcheck="false" />
-          <button id="profileSaveConfirm" class="profile-mini-btn" title="Save">✓</button>
-          <button id="profileSaveCancel" class="profile-mini-btn" title="Cancel">✕</button>
+          <button id="profileSaveConfirm" class="profile-mini-btn" title="Save"><i data-icon="check"></i></button>
+          <button id="profileSaveCancel" class="profile-mini-btn" title="Cancel"><i data-icon="x"></i></button>
         </div>
         <div class="profile-inputs profile-inputs--vertical">
           <label class="field-label" for="profileName">Name</label>
@@ -631,9 +637,9 @@
   <section class="setup-overlay" id="setupOverlay" hidden>
     <div class="setup-card interview-setup">
       <div class="setup-topbar">
-        <button class="setup-back-btn" id="setupBackBtn" title="Back">&#8592;</button>
+        <button class="setup-back-btn" id="setupBackBtn" title="Back"><i data-icon="arrow-left"></i></button>
         <h2 class="setup-title">Materials</h2>
-        <button class="setup-gear-btn" id="setupSettingsBtn" title="Settings &amp; user guide">&#9881;</button>
+        <button class="setup-gear-btn" id="setupSettingsBtn" title="Settings &amp; user guide"><i data-icon="settings"></i></button>
       </div>
       <p class="setup-intro">Upload whatever you have — CV, job description, support material. That is what answers are built from. Missing files are fine.</p>
 
@@ -677,7 +683,7 @@
   <section class="setup-overlay continue-overlay" id="continueOverlay" hidden>
     <div class="setup-card continue-card">
       <div class="setup-topbar">
-        <button class="setup-back-btn" id="continueBackBtn" title="Back">&#8592;</button>
+        <button class="setup-back-btn" id="continueBackBtn" title="Back"><i data-icon="arrow-left"></i></button>
         <h2 class="setup-title">Continue a Session</h2>
       </div>
       <div class="continue-body">
@@ -698,7 +704,7 @@
   <div class="modal-overlay" id="endModal" hidden>
     <div class="modal-card">
       <div class="modal-header">
-        <div class="modal-icon">&#9209;</div>
+        <div class="modal-icon"><i data-icon="stop"></i></div>
         <h3 class="modal-title">End session?</h3>
       </div>
       <div class="modal-body">
@@ -721,7 +727,7 @@
   <div class="modal-overlay" id="updateModal" hidden>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="updateModalTitle">
       <div class="modal-header">
-        <div class="modal-icon modal-icon--info">&#8593;</div>
+        <div class="modal-icon modal-icon--info"><i data-icon="download"></i></div>
         <h3 class="modal-title" id="updateModalTitle">Update available</h3>
       </div>
       <div class="modal-body">
@@ -783,23 +789,24 @@
         </select>
       </div>
       <div class="mode-seg" id="modeSeg">
-        <button class="mode-seg-btn mode-seg-btn--active" data-mode="ANSWER" title="Plain text answer">Text</button>
-        <button class="mode-seg-btn" data-mode="CODE" title="Force code answer">Code</button>
-        <button class="mode-seg-btn" data-mode="DIAGRAM" title="Force diagram answer">Diagram</button>
-        <button class="mode-seg-btn mode-seg-btn--project" data-mode="PROJECT" id="modeProjectBtn" title="VS Code is not connected (Settings &rarr; VS Code)">Project</button>
+        <button class="mode-seg-btn mode-seg-btn--active" data-mode="ANSWER" title="Text: a spoken answer" aria-label="Text"><i data-icon="text"></i></button>
+        <button class="mode-seg-btn" data-mode="CODE" title="Code: answer with code" aria-label="Code"><i data-icon="code"></i></button>
+        <button class="mode-seg-btn" data-mode="DIAGRAM" title="Diagram: answer with a diagram" aria-label="Diagram"><i data-icon="diagram"></i></button>
+        <button class="mode-seg-btn mode-seg-btn--project" data-mode="PROJECT" id="modeProjectBtn" title="VS Code is not connected (Settings &rarr; VS Code)" aria-label="Project"><i data-icon="project"></i></button>
       </div>
-      <button id="answerClearBtn" class="answer-clear-btn" title="Clear answers">Clear</button>
+      <button id="answerClearBtn" class="answer-clear-btn" title="Clear all bubbles and answers"><i data-icon="trash"></i></button>
     </div>
     <div class="answer-history" id="answerHistory">
       <div class="answer-empty" id="answerEmpty">Meeting talk shows as bubbles. Type your own question below — answers use your knowledge base.</div>
     </div>
+    <button class="answer-jump" id="answerJump" type="button" hidden><i data-icon="arrow-down"></i><span>New transcript</span></button>
     <div class="answer-composer">
       <div class="composer-img-strip" id="composerImgStrip" hidden></div>
       <div class="composer-row">
         <textarea id="composerInput" rows="2" spellcheck="false" placeholder="Your question (from your knowledge base)…"></textarea>
-        <button id="getAnswerBtn" class="answer-send-btn" title="Get answer (Ctrl+Enter)" disabled>&#10148;</button>
+        <button id="getAnswerBtn" class="answer-send-btn" title="Get answer (Ctrl+Enter)" disabled><i data-icon="send"></i></button>
         <button id="supporterChatBtn" class="answer-send-btn supporter-chat-send" type="button" title="Send to them (Enter)">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg>
+          <i data-icon="message"></i>
         </button>
       </div>
     </div>
@@ -807,56 +814,63 @@
 
   <section class="chat-main" id="chatMain" hidden>
     <div class="supporter-bar">
-      <span class="supporter-bar-dot" id="supporterBarDot"></span>
-      <span class="supporter-bar-text" id="supporterBarText">Connecting…</span>
-      <div class="supporter-mic-seg" role="group" aria-label="Your microphone">
-        <button class="supporter-mic-btn" data-mic="mute" type="button" title="Nobody hears you">Mic off</button>
-        <button class="supporter-mic-btn" data-mic="aOnly" type="button" title="Only the person you support hears you, not the meeting">Talk to them</button>
+      <div class="supporter-bar-row">
+        <span class="supporter-bar-dot" id="supporterBarDot"></span>
+        <span class="supporter-bar-text" id="supporterBarText">Connecting…</span>
       </div>
-      <button class="supporter-sound-btn" id="supporterSoundBtn" type="button" title="Mute the call">
-        <svg class="snd-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10v4a1 1 0 0 0 1 1h3l5 4V5L7 9H4a1 1 0 0 0-1 1z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M18.5 6.5a7.5 7.5 0 0 1 0 11"/></svg>
-        <svg class="snd-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10v4a1 1 0 0 0 1 1h3l5 4V5L7 9H4a1 1 0 0 0-1 1z"/><path d="m16 9 6 6"/><path d="m22 9-6 6"/></svg>
-      </button>
-      <label class="supporter-vol" title="Call volume">
-        <input type="range" id="supporterVolume" min="0" max="100" step="5" />
-      </label>
+      <div class="supporter-bar-row">
+        <div class="supporter-mic-seg" role="group" aria-label="Your microphone">
+          <button class="supporter-mic-btn" data-mic="mute" type="button" title="Nobody hears you"><i data-icon="mic-off"></i>Mic off</button>
+          <button class="supporter-mic-btn" data-mic="aOnly" type="button" title="Only the person you support hears you, not the meeting"><i data-icon="mic"></i>Talk to them</button>
+        </div>
+        <button class="supporter-sound-btn" id="supporterSoundBtn" type="button" title="Mute the call">
+          <i data-icon="volume" class="snd-on"></i><i data-icon="volume-off" class="snd-off"></i>
+        </button>
+        <label class="supporter-vol" title="Call volume">
+          <input type="range" id="supporterVolume" min="0" max="100" step="5" />
+        </label>
+      </div>
     </div>
     <div class="mic-mode-banner mode-mute" id="micModeBanner">
-      <span class="mic-mode-banner-icon" id="micModeBannerIcon">&#128263;</span>
+      <span class="mic-mode-banner-icon" id="micModeBannerIcon"><i data-icon="mic-off"></i></span>
       <span class="mic-mode-banner-text" id="micModeBannerText">Your mic is off. Nobody hears you.</span>
     </div>
-    <div class="screen-view" id="screenView">
+    <div class="screen-view no-video" id="screenView">
       <div class="screen-view-bar">
-        <span class="screen-view-title" id="screenStatus">Waiting for the speaker's screen&hellip;</span>
+        <span class="screen-view-title"><i data-icon="monitor"></i><span id="screenStatus">Speaker's screen</span></span>
         <span class="screen-view-actions">
-          <button class="screen-view-btn" id="screenFullBtn" title="Full screen (Esc to leave)">&#x26F6;</button>
-          <button class="screen-view-btn" id="screenToggleBtn" title="Hide / show the screen">&#x25B4;</button>
+          <button class="screen-view-btn" id="screenPopBtn" type="button" title="Open in its own window (or double-click the picture)"><i data-icon="external"></i></button>
+          <button class="screen-view-btn" id="screenToggleBtn" type="button" title="Hide the picture"><i data-icon="chevron-up"></i></button>
         </span>
       </div>
-      <video id="screenVideo" autoplay muted playsinline></video>
+      <div class="screen-stage" id="screenStage" title="Double-click to open in its own window">
+        <video id="screenVideo" autoplay muted playsinline></video>
+        <div class="screen-empty"><i data-icon="monitor"></i><span id="screenEmptyText">Waiting for the speaker's screen&hellip;</span></div>
+      </div>
+      <div class="screen-picker disp-cards" id="screenDisplays" role="group" aria-label="Their displays" hidden></div>
     </div>
     <div class="chat-header">
-      <svg class="chat-header-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg>
+      <i data-icon="message" class="chat-header-ico"></i>
       <span class="chat-header-title">Private chat</span>
       <span class="chat-header-status" id="chatHeaderStatus">&nbsp;</span>
       <button class="chat-clear-btn" id="chatClearBtn" type="button" title="Clear the chat on both sides">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="m6 7 1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>
+        <i data-icon="trash"></i>
       </button>
-      <button class="chat-pane-close" id="chatPaneClose" type="button" title="Close the chat (the window gets narrower again)">&times;</button>
+      <button class="chat-pane-close" id="chatPaneClose" type="button" title="Close the chat (the window gets narrower again)"><i data-icon="x"></i></button>
     </div>
     <div class="chat-history" id="chatHistory">
       <div class="chat-empty" id="chatEmpty">No messages yet</div>
     </div>
     <div class="chat-input-area">
-      <textarea id="chatInput" rows="2" placeholder="Type a message and press Enter to send (Shift+Enter for newline)" spellcheck="false"></textarea>
+      <textarea id="chatInput" rows="2" placeholder="Message to the supporter… (Enter)" spellcheck="false"></textarea>
       <div class="chat-actions">
         <input type="file" id="chatFileInput" accept="image/*" hidden />
-        <button class="chat-attach-btn" id="chatAttachBtn" title="Attach image">&#128206;</button>
-        <button class="chat-send-btn" id="chatSendBtn" title="Send (Enter)">Send</button>
+        <button class="chat-attach-btn" id="chatAttachBtn" title="Attach an image"><i data-icon="paperclip"></i></button>
+        <button class="chat-send-btn" id="chatSendBtn" title="Send (Enter; Shift+Enter for a new line)"><i data-icon="send"></i></button>
       </div>
     </div>
     <div class="chat-drop-overlay" id="chatDropOverlay" hidden>
-      <div class="chat-drop-message">&#128247; Drop image to send</div>
+      <div class="chat-drop-message"><i data-icon="image"></i> Drop image to send</div>
     </div>
   </section>
 
@@ -891,10 +905,10 @@
   <!-- Full-window zoom/pan viewer for diagrams -->
   <div class="diagram-overlay" id="diagramOverlay" hidden>
     <div class="diagram-overlay-toolbar">
-      <button class="diagram-ov-btn" id="diagramZoomOut" title="Zoom out">&minus;</button>
+      <button class="diagram-ov-btn" id="diagramZoomOut" title="Zoom out"><i data-icon="zoom-out"></i></button>
       <button class="diagram-ov-btn" id="diagramZoomFit" title="Fit to screen">Fit</button>
-      <button class="diagram-ov-btn" id="diagramZoomIn" title="Zoom in">+</button>
-      <button class="diagram-ov-btn diagram-ov-close" id="diagramOverlayClose" title="Close (Esc)">&times;</button>
+      <button class="diagram-ov-btn" id="diagramZoomIn" title="Zoom in"><i data-icon="zoom-in"></i></button>
+      <button class="diagram-ov-btn diagram-ov-close" id="diagramOverlayClose" title="Close (Esc)"><i data-icon="x"></i></button>
     </div>
     <div class="diagram-overlay-stage" id="diagramOverlayStage"></div>
     <div class="diagram-overlay-hint">Scroll to zoom &middot; drag to pan &middot; double-click to reset</div>
@@ -915,7 +929,7 @@
    <div class="settings-modal" role="dialog" aria-modal="true" aria-label="Session history">
     <div class="settings-header">
       <span>Session history</span>
-      <button class="btn" id="historyCloseBtn" title="Close">&times;</button>
+      <button class="icon-btn" id="historyCloseBtn" title="Close"><i data-icon="x"></i></button>
     </div>
     <div class="settings-body history-body">
       <input type="search" id="historySearch" class="profile-input history-search" placeholder="Search company, position, name, timezone…" spellcheck="false" />
@@ -940,6 +954,7 @@
     </div>
   </div>
 
+  <script src="icons.js"></script>
   <script src="geo.js"></script>
   <script src="read-marker.js"></script>
   <script src="renderer.js"></script>

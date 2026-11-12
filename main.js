@@ -125,8 +125,11 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 })();
 
 const STATE_FILE = path.join(app.getPath('userData'), 'state.json');
-// Pixels a supporter's chat column added to the window (left out when saved).
+// The main window has one fixed size (DEFAULT_STATE) while no supporter is
+// connected. A supporter's chat column widens it by sidePaneExtra pixels and
+// lets it be resized; when the column closes it goes back to the fixed size.
 let sidePaneExtra = 0;
+let sidePaneShiftX = 0; // how far the window moved left to fit the column on screen
 const LOG_FILE = path.join(app.getPath('userData'), 'activity.log');
 const LOG_MAX_LINES_RETURNED = 500;
 
@@ -443,9 +446,18 @@ function onScreenBounds(b) {
   return { x, y, width: w, height: h };
 }
 
+// The fixed size of the main window, made to fit the display it is on.
+function baseWindowSize(b) {
+  let wa = null;
+  try { wa = screen.getDisplayMatching(b).workArea; } catch {}
+  const w = DEFAULT_STATE.width, h = DEFAULT_STATE.height;
+  return wa ? { width: Math.min(w, wa.width), height: Math.min(h, wa.height) } : { width: w, height: h };
+}
+
 function createWindow() {
   loadState();
-  const startBounds = onScreenBounds({ x: state.x, y: state.y, width: state.width, height: state.height });
+  // Only the place is restored: the size is always the fixed one.
+  const startBounds = onScreenBounds({ x: state.x, y: state.y, width: DEFAULT_STATE.width, height: DEFAULT_STATE.height });
 
   // Bypass OS proxy auto-detection (WPAD). On Windows "Automatically detect
   // settings" is on by default; with no WPAD server every request waits for that
@@ -461,8 +473,10 @@ function createWindow() {
   session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
       // The session recording takes its video from here on Windows, so this is
-      // the screen chosen for recording. System audio does not depend on it.
-      const src = pickRecordSource(sources);
+      // the screen chosen for recording, unless the page asked for another one
+      // for this capture (the screen a supporter watches). System audio does
+      // not depend on it.
+      const src = sourceForDisplay(sources, captureDisplayOverride) || pickRecordSource(sources);
       // Chromium supports system-audio loopback capture only on Windows.
       if (src) callback({ video: src, audio: process.platform === 'win32' ? 'loopback' : undefined });
       else callback({});
@@ -475,15 +489,14 @@ function createWindow() {
     y: startBounds.y,
     width: startBounds.width,
     height: startBounds.height,
-    minWidth: 360,
-    minHeight: 200,
     useContentSize: true,
     frame: false,
     transparent: LINUX_CSS_OPACITY,
     backgroundColor: LINUX_CSS_OPACITY ? '#00ffffff' : '#ffffff',
     skipTaskbar: true,
     alwaysOnTop: true,
-    resizable: true,
+    resizable: false,
+    maximizable: false,
     show: false,
     focusable: !noActivate(),
     icon: path.join(__dirname, 'build', 'icon.png'),
@@ -513,6 +526,16 @@ function createWindow() {
   if (state.clickThrough) try { win.setIgnoreMouseEvents(true, { forward: true }); } catch {}
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  // The supporter's window for the speaker's screen (renderer.js opens it with
+  // window.open, so the page can hand it the video stream). Anything else
+  // opens as before.
+  win.webContents.setWindowOpenHandler(({ frameName }) => {
+    if (frameName === SCREEN_VIEWER_NAME) return { action: 'allow', overrideBrowserWindowOptions: screenViewerOptions() };
+    return { action: 'allow' };
+  });
+  win.webContents.on('did-create-window', (child, details) => {
+    if (details && details.frameName === SCREEN_VIEWER_NAME) setupScreenViewer(child);
+  });
   // Embedded web AI removed — answers come from the selected provider API
   // into the in-app Answer panel, so we no longer create the WebContentsView.
   let shown = false;
@@ -538,6 +561,7 @@ function createWindow() {
   win.on('closed', () => {
     typeThroughRelease();
     selectionCopyEnd();
+    if (screenViewerWin && !screenViewerWin.isDestroyed()) { try { screenViewerWin.close(); } catch {} }
     if (floatWin && !floatWin.isDestroyed()) { try { floatWin.close(); } catch {} }
     stopSpeakerWatch();
     win = null;
@@ -607,6 +631,7 @@ function setStealth(value) {
   win.setContentProtection(state.stealth);
   if (stickyWin && !stickyWin.isDestroyed()) { try { stickyWin.setContentProtection(state.stealth); } catch {} }
   if (infoWin && !infoWin.isDestroyed()) { try { infoWin.setContentProtection(state.stealth); } catch {} }
+  if (screenViewerWin && !screenViewerWin.isDestroyed()) { try { screenViewerWin.setContentProtection(state.stealth); } catch {} }
   if (floatWin && !floatWin.isDestroyed()) { try { floatWin.setContentProtection(state.stealth); } catch {} }
   saveState();
   win.webContents.send('stealth-changed', state.stealth);
@@ -2753,13 +2778,72 @@ function macNoScreenSources() {
 // the main display when none is chosen or the chosen one is unplugged.
 // desktopCapturer sources carry the display id on Windows and macOS; Linux
 // gives one source for the whole desktop, so there is nothing to choose there.
+function sourceForDisplay(sources, id) {
+  if (!sources || !id) return null;
+  return sources.find((s) => String(s.display_id) === String(id)) || null;
+}
 function pickRecordSource(sources) {
   if (!sources || !sources.length) return null;
-  const byDisplay = (id) => sources.find((s) => id && String(s.display_id) === String(id));
   const chosen = String((state.transcription && state.transcription.recordDisplay) || '');
   let main = '';
   try { main = String(screen.getPrimaryDisplay().id); } catch {}
-  return byDisplay(chosen) || byDisplay(main) || sources[0];
+  return sourceForDisplay(sources, chosen) || sourceForDisplay(sources, main) || sources[0];
+}
+// A display the page wants for its next getDisplayMedia call instead of the
+// recording's ('' = the recording's). renderer.js sets it around each call,
+// one call at a time, so a recording started meanwhile is not affected.
+let captureDisplayOverride = '';
+ipcMain.handle('set-capture-display', (_e, id) => {
+  captureDisplayOverride = id ? String(id) : '';
+  return true;
+});
+
+// ── The supporter's window for the speaker's screen ─────────────────────────
+// An ordinary window (title bar, resizable, can be maximized or moved to
+// another monitor). It opens where it was last closed, or large and centered
+// on the display Ace is on.
+const SCREEN_VIEWER_NAME = 'aceScreenViewer';
+let screenViewerWin = null;
+function screenViewerOptions() {
+  const saved = state.screenViewer;
+  let b = null;
+  if (saved && saved.width >= 480 && saved.height >= 320 && typeof saved.x === 'number') b = onScreenBounds(saved);
+  if (!b) {
+    let wa = null;
+    try { wa = (win && !win.isDestroyed() ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay()).workArea; } catch {}
+    wa = wa || { x: 0, y: 0, width: 1280, height: 800 };
+    const w = Math.round(wa.width * 0.72), h = Math.round(wa.height * 0.8);
+    b = { x: wa.x + Math.round((wa.width - w) / 2), y: wa.y + Math.round((wa.height - h) / 2), width: w, height: h };
+  }
+  return {
+    ...b,
+    minWidth: 480, minHeight: 320,
+    title: "Speaker's screen — Ace",
+    backgroundColor: '#0b0d12',
+    frame: true, autoHideMenuBar: true,
+    resizable: true, maximizable: true, minimizable: true, fullscreenable: true,
+    alwaysOnTop: false, skipTaskbar: false, focusable: true, show: true,
+    icon: path.join(__dirname, 'build', 'icon.png'),
+  };
+}
+function setupScreenViewer(child) {
+  if (screenViewerWin && screenViewerWin !== child && !screenViewerWin.isDestroyed()) { try { screenViewerWin.close(); } catch {} }
+  screenViewerWin = child;
+  try { child.setMenu(null); } catch {}
+  try { child.setContentProtection(!!state.stealth); } catch {}
+  if (state.screenViewer && state.screenViewer.maximized) { try { child.maximize(); } catch {} }
+  let t = null;
+  const remember = () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      if (child.isDestroyed() || child.isMinimized() || child.isFullScreen()) return;
+      const nb = child.getNormalBounds();
+      state.screenViewer = { x: nb.x, y: nb.y, width: nb.width, height: nb.height, maximized: child.isMaximized() };
+      saveState();
+    }, 400);
+  };
+  for (const ev of ['move', 'resize', 'maximize', 'unmaximize']) child.on(ev, remember);
+  child.on('closed', () => { clearTimeout(t); if (screenViewerWin === child) screenViewerWin = null; });
 }
 function recordableDisplays() {
   if (process.platform === 'linux') return [];
@@ -2775,6 +2859,20 @@ function recordableDisplays() {
     });
 }
 ipcMain.handle('list-displays', () => recordableDisplays());
+// A small picture of each display, so a display can be recognised by eye:
+// [{ id: display id, src: JPEG data URL }]. Ace's own windows are not in it
+// while stealth is on (content protection).
+ipcMain.handle('display-thumbnails', async (_e, opts) => {
+  const width = Math.max(64, Math.min(480, parseInt(opts && opts.width, 10) || 320));
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width, height: Math.round(width * 0.625) } });
+    return sources
+      .filter((s) => s.display_id && s.thumbnail && !s.thumbnail.isEmpty())
+      .map((s) => ({ id: String(s.display_id), src: 'data:image/jpeg;base64,' + s.thumbnail.toJPEG(68).toString('base64') }));
+  } catch {
+    return [];
+  }
+});
 let displayEventsBound = false;
 function bindDisplayEvents() {
   if (displayEventsBound) return;
@@ -2784,12 +2882,12 @@ function bindDisplayEvents() {
     try { screen.on(ev, tell); } catch {}
   }
 }
-ipcMain.handle('get-desktop-source-id', async () => {
+ipcMain.handle('get-desktop-source-id', async (_e, displayId) => {
   macScreenPermissionWarn();
   try {
     const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
     if (!sources[0]) macNoScreenSources();
-    const src = pickRecordSource(sources);
+    const src = sourceForDisplay(sources, displayId) || pickRecordSource(sources);
     return src ? src.id : null;
   } catch {
     macNoScreenSources();
@@ -2882,6 +2980,39 @@ let deepgramKeepAlive = null;     // interval id
 let deepgramReconnectTimer = null;
 let deepgramReconnectAttempts = 0;
 
+// Audio that arrives while a Deepgram socket is down (a drop, a reconnect) is
+// kept, up to 20 s, and sent first once the socket is back: a dropped
+// connection then delays those words instead of losing them.
+const DG_BYTES_PER_MS = 32; // 16 kHz, mono, 16-bit
+const DG_BACKLOG_MAX = 20000 * DG_BYTES_PER_MS;
+function makeAudioBacklog() {
+  return {
+    parts: [], bytes: 0,
+    push(buf) {
+      const n = (buf && (buf.byteLength || buf.length)) || 0;
+      if (!n) return;
+      this.parts.push(buf);
+      this.bytes += n;
+      while (this.bytes > DG_BACKLOG_MAX && this.parts.length) {
+        const d = this.parts.shift();
+        this.bytes -= (d.byteLength || d.length || 0);
+      }
+    },
+    // Sends what was kept; returns how many milliseconds of audio that was.
+    flush(ws) {
+      const ms = Math.round(this.bytes / DG_BYTES_PER_MS);
+      for (const p of this.parts) { try { ws.send(p); } catch {} }
+      this.clear();
+      return ms;
+    },
+    clear() { this.parts = []; this.bytes = 0; },
+  };
+}
+const deepgramBacklog = makeAudioBacklog();
+const micDgBacklog = makeAudioBacklog();
+// A connection attempt that has not opened by then is dropped and retried.
+const DG_CONNECT_TIMEOUT_MS = 6000;
+
 function clearDeepgramTimers() {
   if (deepgramKeepAlive) { clearInterval(deepgramKeepAlive); deepgramKeepAlive = null; }
   if (deepgramReconnectTimer) { clearTimeout(deepgramReconnectTimer); deepgramReconnectTimer = null; }
@@ -2889,7 +3020,8 @@ function clearDeepgramTimers() {
 
 function scheduleDeepgramReconnect() {
   if (!deepgramActive || deepgramReconnectTimer || deepgramWs) return;
-  const delay = Math.min(5000, 800 * Math.pow(2, deepgramReconnectAttempts));
+  // At once the first time (the audio meanwhile is kept), then backing off.
+  const delay = deepgramReconnectAttempts === 0 ? 0 : Math.min(4000, 250 * Math.pow(2, deepgramReconnectAttempts));
   deepgramReconnectAttempts++;
   appendLogLine(`[deepgram] connection lost — reconnecting in ${delay}ms`);
   deepgramReconnectTimer = setTimeout(() => {
@@ -3083,13 +3215,26 @@ function startDeepgramWs(apiKey, language) {
   params.set('model', 'nova-2');
   params.set('language', (language && language !== 'auto') ? language : 'en-US');
 
-  deepgramWs = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, {
+  const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, {
     headers: { Authorization: `Token ${apiKey}` },
   });
+  deepgramWs = ws;
+  const startedAt = Date.now();
+  const connectTimer = setTimeout(() => {
+    if (ws.readyState === WebSocket.CONNECTING) {
+      appendLogLine(`[deepgram] no answer after ${DG_CONNECT_TIMEOUT_MS} ms — trying again`);
+      try { ws.terminate(); } catch {}
+    }
+  }, DG_CONNECT_TIMEOUT_MS);
   let handshakeFailed = false;
   deepgramWs.on('open', () => {
-    appendLogLine('[deepgram] connected');
-    deepgramT0 = Date.now();
+    clearTimeout(connectTimer);
+    if (deepgramWs !== ws) { try { ws.close(); } catch {} return; } // replaced meanwhile
+    // The audio kept while the socket was down goes first; Deepgram's clock
+    // starts at its first byte, so the session clock starts that much earlier.
+    const heldMs = deepgramBacklog.flush(ws);
+    deepgramT0 = Date.now() - heldMs;
+    appendLogLine(`[deepgram] connected in ${Date.now() - startedAt} ms` + (heldMs > 200 ? ` (sent ${heldMs} ms of audio held meanwhile)` : ''));
     deepgramReconnectAttempts = 0;
     // Periodic KeepAlive so Deepgram doesn't idle-close the socket during brief
     // silences or throttle gaps (it drops connections after ~10s of no audio).
@@ -3154,9 +3299,18 @@ function startDeepgramWs(apiKey, language) {
     if (handshakeFailed) return; // friendlier message already sent above
     appendLogLine('[deepgram] error: ' + e.message);
   });
-  deepgramWs.on('close', () => {
+  deepgramWs.on('close', (code, reason) => {
+    clearTimeout(connectTimer);
+    // A socket already replaced (stop then start, or a retry) finishing its
+    // close must not touch the current one. Before this check, its late close
+    // cleared the new socket and opened yet another, which left a socket with
+    // no audio that Deepgram dropped ~10 s later, whose close did the same:
+    // a drop every 10-20 s for the rest of the session.
+    if (deepgramWs !== ws) return;
     if (deepgramKeepAlive) { clearInterval(deepgramKeepAlive); deepgramKeepAlive = null; }
     deepgramWs = null;
+    // Why it closed, for the log (Deepgram puts its error code in the reason).
+    if (deepgramActive) appendLogLine(`[deepgram] closed: ${code}${reason && reason.length ? ' ' + reason.toString().slice(0, 160) : ''}`);
     // If the user is still recording, transparently reconnect.
     if (deepgramActive && !handshakeFailed) scheduleDeepgramReconnect();
   });
@@ -3289,7 +3443,9 @@ function startXaiWs(apiKey, language) {
     if (handshakeFailed) return;
     appendLogLine('[xai] error: ' + e.message);
   });
+  const thisXaiWs = xaiWs;
   xaiWs.on('close', () => {
+    if (xaiWs !== thisXaiWs) return; // replaced meanwhile: leave the current one alone
     xaiWs = null;
     xaiReady = false;
     if (xaiActive && !handshakeFailed) scheduleXaiReconnect();
@@ -3322,12 +3478,14 @@ ipcMain.handle('start-deepgram-stream', (_e, { apiKey, language }) => {
   deepgramAuth = { apiKey, language };
   deepgramReconnectAttempts = 0;
   clearDeepgramTimers();
+  deepgramBacklog.clear();
   startDeepgramWs(apiKey, language);
 });
 ipcMain.handle('stop-deepgram-stream', () => {
   deepgramActive = false;        // prevents the close handler from reconnecting
   stopSpeakerWatch();
   clearDeepgramTimers();
+  deepgramBacklog.clear();
   if (deepgramWs) {
     try { deepgramWs.send(JSON.stringify({ type: 'CloseStream' })); } catch {}
     try { deepgramWs.close(); } catch {}
@@ -3336,6 +3494,7 @@ ipcMain.handle('stop-deepgram-stream', () => {
 });
 ipcMain.on('audio-chunk', (_e, buf) => {
   if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) deepgramWs.send(buf);
+  else if (deepgramActive) deepgramBacklog.push(buf); // reconnecting: keep it
   else if (xaiWs && xaiWs.readyState === WebSocket.OPEN && xaiReady) xaiWs.send(buf);
 });
 
@@ -3355,8 +3514,13 @@ function startMicDeepgramWs(apiKey, language) {
   });
   params.set('model', 'nova-2');
   params.set('language', (language && language !== 'auto') ? language : 'en-US');
-  micDgWs = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, { headers: { Authorization: `Token ${apiKey}` } });
+  const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, { headers: { Authorization: `Token ${apiKey}` } });
+  micDgWs = ws;
+  const connectTimer = setTimeout(() => { if (ws.readyState === WebSocket.CONNECTING) { try { ws.terminate(); } catch {} } }, DG_CONNECT_TIMEOUT_MS);
   micDgWs.on('open', () => {
+    clearTimeout(connectTimer);
+    if (micDgWs !== ws) { try { ws.close(); } catch {} return; } // replaced meanwhile
+    micDgBacklog.flush(ws); // the voice heard while it was reconnecting
     if (micDgKeepAlive) clearInterval(micDgKeepAlive);
     micDgKeepAlive = setInterval(() => { if (micDgWs && micDgWs.readyState === WebSocket.OPEN) { try { micDgWs.send(JSON.stringify({ type: 'KeepAlive' })); } catch {} } }, 7000);
   });
@@ -3369,10 +3533,16 @@ function startMicDeepgramWs(apiKey, language) {
       if (text && win && !win.isDestroyed()) win.webContents.send('transcript-mic', { text, isFinal: !!msg.is_final });
     } catch {}
   });
-  micDgWs.on('close', () => {
+  micDgWs.on('close', (code) => {
+    clearTimeout(connectTimer);
+    // Only the current socket reconnects (see the system-audio socket above).
+    if (micDgWs !== ws) return;
     if (micDgKeepAlive) { clearInterval(micDgKeepAlive); micDgKeepAlive = null; }
     micDgWs = null;
-    if (micDgActive) setTimeout(() => { if (micDgActive && !micDgWs && micDgAuth) startMicDeepgramWs(micDgAuth.apiKey, micDgAuth.language); }, 1000);
+    if (micDgActive) {
+      appendLogLine(`[deepgram mic] closed: ${code} — reconnecting`);
+      setTimeout(() => { if (micDgActive && !micDgWs && micDgAuth) startMicDeepgramWs(micDgAuth.apiKey, micDgAuth.language); }, 250);
+    }
   });
   micDgWs.on('error', () => {});
   micDgWs.on('unexpected-response', (_r, res) => { res.resume(); micDgActive = false; try { if (micDgWs) micDgWs.terminate(); } catch {} micDgWs = null; });
@@ -3396,13 +3566,17 @@ ipcMain.handle('extract-jd-info', async () => {
     return { company: String((d && d.company) || '').trim(), role: String((d && d.role) || '').trim() };
   } catch { return { company: '', role: '' }; }
 });
-ipcMain.handle('start-mic-deepgram-stream', (_e, { apiKey, language } = {}) => { micDgActive = true; micDgAuth = { apiKey, language }; startMicDeepgramWs(apiKey, language); });
+ipcMain.handle('start-mic-deepgram-stream', (_e, { apiKey, language } = {}) => { micDgActive = true; micDgAuth = { apiKey, language }; micDgBacklog.clear(); startMicDeepgramWs(apiKey, language); });
 ipcMain.handle('stop-mic-deepgram-stream', () => {
   micDgActive = false;
+  micDgBacklog.clear();
   if (micDgKeepAlive) { clearInterval(micDgKeepAlive); micDgKeepAlive = null; }
   if (micDgWs) { try { micDgWs.send(JSON.stringify({ type: 'CloseStream' })); } catch {} try { micDgWs.close(); } catch {} micDgWs = null; }
 });
-ipcMain.on('mic-audio-chunk', (_e, buf) => { if (micDgWs && micDgWs.readyState === WebSocket.OPEN) micDgWs.send(buf); });
+ipcMain.on('mic-audio-chunk', (_e, buf) => {
+  if (micDgWs && micDgWs.readyState === WebSocket.OPEN) micDgWs.send(buf);
+  else if (micDgActive) micDgBacklog.push(buf); // reconnecting: keep it
+});
 ipcMain.on('session-log-add', (_e, entry) => { sessionLog.push(entry); });
 ipcMain.handle('clear-session-log', () => { sessionLog = []; });
 // Where each finished interview's folder goes.
@@ -5388,21 +5562,37 @@ ipcMain.handle('remote-submit', (_e, mode) => {
   if (state.network.role !== 'supporter' || !wsClient || wsClient.readyState !== WebSocket.OPEN) return false;
   try { wsClient.send(JSON.stringify({ type: 'remote-submit', mode: String(mode || '') })); return true; } catch { return false; }
 });
-// Supporter: the window grows to the right by the chat column, and back.
+// Both sides, while a supporter is connected: the window grows to the right by
+// the chat column and can be resized. Closed (the supporter left, or the
+// column was closed): back to the fixed size, which cannot be resized.
 ipcMain.handle('set-side-pane', (_e, open, width) => {
   if (!win || win.isDestroyed()) return false;
   const b = win.getBounds();
+  const base = baseWindowSize(b);
+  const wa = screen.getDisplayMatching(b).workArea;
   if (open && !sidePaneExtra) {
     const extra = Math.max(200, Math.min(600, parseInt(width, 10) || 300));
-    const wa = screen.getDisplayMatching(b).workArea;
-    const w = b.width + extra;
+    const w = Math.min(base.width + extra, wa.width);
     const x = b.x + w > wa.x + wa.width ? Math.max(wa.x, wa.x + wa.width - w) : b.x;
     sidePaneExtra = extra;
-    win.setBounds({ x, y: b.y, width: w, height: b.height });
+    sidePaneShiftX = b.x - x;
+    win.setResizable(true);
+    win.setMinimumSize(Math.min(w, 360 + extra), Math.min(base.height, 360));
+    win.setBounds({ x, y: b.y, width: w, height: base.height });
   } else if (!open && sidePaneExtra) {
-    const w = Math.max(200, b.width - sidePaneExtra);
     sidePaneExtra = 0;
-    win.setBounds({ x: b.x, y: b.y, width: w, height: b.height });
+    const x = Math.min(Math.max(b.x + sidePaneShiftX, wa.x), wa.x + wa.width - base.width);
+    const y = Math.min(Math.max(b.y, wa.y), wa.y + wa.height - base.height);
+    sidePaneShiftX = 0;
+    if (win.isMaximized()) win.unmaximize();
+    win.setMinimumSize(1, 1);
+    // Resizing off first: on Windows, switching it changes the frame, which
+    // would otherwise grow the window by the resize border after setBounds.
+    win.setResizable(false);
+    const want = { x, y, width: base.width, height: base.height };
+    win.setBounds(want);
+    const got = win.getBounds();
+    if (got.width !== want.width || got.height !== want.height || got.x !== want.x) win.setBounds(want);
   }
   return true;
 });
