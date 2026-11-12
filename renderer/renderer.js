@@ -2060,7 +2060,7 @@ const HOTKEY_LABELS = {
   scrollDown: "Scroll answers down",
   reloadSite: "Reload window",
   toggleStealth: "Toggle stealth",
-  toggleRecording: "Start/stop voice transcription",
+  toggleRecording: "Supporter: take/release control of the screen",
   pushToTalk: "Push-to-talk (toggle supporter mic)",
   closeSticky: "Close sticky note",
   openSticky: "Open sticky note",
@@ -2072,6 +2072,7 @@ const HOTKEY_LABELS = {
   areaSnip: "Area snip to composer",
   toggleClickThrough: "Toggle click-through (mouse passes through)",
   clearTranscriptBubble: "Clear current transcript bubble",
+  stopRemoteControl: "Stop the supporter's remote control",
 };
 
 function eventToBinding(e) {
@@ -5223,8 +5224,11 @@ window.api.onSignaling((msg) => {
         } catch {}
       }
       stopLevelMeter();
+      setControlState("off", "", true);
       clearScreenView("Connection to the speaker closed.");
     }
+  } else if (type === "control-state") {
+    if (netCfg && netCfg.role === "supporter") setControlState(msg.state, msg.reason);
   } else if (type === "screen") {
     if (netCfg && netCfg.role === "supporter") onScreenShareState(!!msg.on, msg);
   } else if (type === "screen-select") {
@@ -6524,6 +6528,18 @@ const VIEWER_CSS = `
   .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center;
     padding: 24px; color: #8b93a7; font-size: 14px; }
   :fullscreen .bar { display: none; }
+  .ctl { height: 32px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border-radius: 8px;
+    border: 1px solid #2a3040; background: #1b1f29; color: #d5d9e3; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .ctl:hover { background: #262c3a; color: #fff; }
+  .ctl:disabled { opacity: .45; cursor: default; }
+  .ctl svg { width: 15px; height: 15px; }
+  .ctl.asked { border-color: #f59e0b; color: #fcd34d; }
+  .ctl.on { background: #ef4444; border-color: #ef4444; color: #fff; }
+  .stage.controlling { outline: 2px solid #ef4444; outline-offset: -2px; cursor: default; }
+  .ctl-hint { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); z-index: 2; pointer-events: none;
+    padding: 4px 10px; border-radius: 99px; background: rgba(239,68,68,.92); color: #fff; font-size: 12px; font-weight: 600;
+    opacity: 0; transition: opacity .3s ease; }
+  .stage.controlling .ctl-hint.show { opacity: 1; }
 `;
 function viewerIsOpen() {
   if (screenViewer && screenViewer.closed) screenViewer = null;
@@ -6541,10 +6557,11 @@ function openScreenViewer() {
 <header class="bar">
   <span class="live" id="live"></span><span class="title" id="title">Speaker's screen</span><span class="grow"></span>
   <span class="group" id="dispGroup" hidden><span class="lbl">Display</span><span class="cards" id="disps"></span></span>
+  <button type="button" class="ctl" id="ctl" title="Use the speaker's mouse and keyboard (the speaker must allow it)">${aceIcon("pointer")}<span id="ctlText">Take control</span></button>
   <span class="seg" id="zoom"><button type="button" data-z="fit" class="active" title="Fit the picture to the window">Fit</button><button type="button" data-z="actual" title="Actual size: one screen pixel per pixel (scroll to move around)">100%</button></span>
   <button type="button" class="icon" id="full" title="Full screen (F11 or double-click; Esc to leave)">${aceIcon("maximize")}</button>
 </header>
-<main class="stage fit" id="stage"><video id="v" autoplay muted playsinline></video><div class="empty" id="empty"></div></main>
+<main class="stage fit" id="stage"><video id="v" autoplay muted playsinline></video><div class="ctl-hint" id="ctlHint">Your mouse and keyboard now work on the speaker's screen</div><div class="empty" id="empty"></div></main>
 </body></html>`);
   d.close();
 
@@ -6568,9 +6585,20 @@ function openScreenViewer() {
     else d.documentElement.requestFullscreen().catch(() => {});
   };
   d.getElementById("full").addEventListener("click", toggleFull);
-  stage.addEventListener("dblclick", toggleFull);
+  // While controlling, a double-click is the speaker's (F11 still toggles full screen).
+  stage.addEventListener("dblclick", () => { if (controlState !== "on") toggleFull(); });
   d.addEventListener("keydown", (e) => { if (e.key === "F11") { e.preventDefault(); toggleFull(); } });
-  w.addEventListener("pagehide", () => { if (screenViewer === w) screenViewer = null; setTimeout(syncThumbPolling, 0); });
+  d.getElementById("ctl").addEventListener("click", () => {
+    if (controlState === "on" || controlState === "asked") releaseControl();
+    else requestControl();
+  });
+  wireViewerControl(w, d, stage, v);
+  w.addEventListener("pagehide", () => {
+    if (screenViewer === w) screenViewer = null;
+    // No window to control from: control ends.
+    if (controlState !== "off") releaseControl();
+    setTimeout(syncThumbPolling, 0);
+  });
   syncScreenViewer();
   syncThumbPolling();
   try { w.focus(); } catch {}
@@ -6594,12 +6622,194 @@ function syncScreenViewer() {
   empty.hidden = screenHasVideo;
   renderDisplayButtons(d.getElementById("disps"));
   d.getElementById("dispGroup").hidden = remoteDisplays.length < 2;
+  const ctl = d.getElementById("ctl");
+  ctl.disabled = !screenHasVideo && controlState === "off";
+  ctl.classList.toggle("asked", controlState === "asked");
+  ctl.classList.toggle("on", controlState === "on");
+  d.getElementById("ctlText").textContent = controlState === "on" ? "Stop control" : controlState === "asked" ? "Taking control…" : "Take control";
+  ctl.title = controlState === "on" ? "Give the mouse and keyboard back to the speaker"
+    : controlState === "asked" ? "Taking control… (click to cancel)"
+    : "Use the speaker's mouse and keyboard (the speaker must allow it)";
+  const stage = d.getElementById("stage");
+  const was = stage.classList.contains("controlling");
+  stage.classList.toggle("controlling", controlState === "on");
+  if (controlState === "on" && !was) {
+    const hint = d.getElementById("ctlHint");
+    hint.classList.add("show");
+    setTimeout(() => hint.classList.remove("show"), 3500);
+  }
 }
+// ── Remote control, supporter side ──────────────────────────────────────────
+// "Take control" asks the speaker; their Ace shows Allow / Deny. Once allowed,
+// the mouse and keyboard over the picture in the screen window work on the
+// speaker's computer (main.js controlInput turns the picture's 0..1 spots into
+// pixels on the shared display). Either side can end it at any time.
+let controlState = "off"; // off | asked | on
+function setControlState(st, reason, quiet) {
+  const prev = controlState;
+  controlState = st === "on" || st === "asked" ? st : "off";
+  if (!quiet) {
+    if (st === "denied") toast(reason && reason !== "denied" ? reason : "The speaker didn't allow remote control.", "info");
+    else if (st === "unsupported") toast(reason || "Remote control isn't available on the speaker's computer.", "err");
+    else if (st === "on" && prev !== "on") toast("You're controlling the speaker's screen.", "info");
+    else if (controlState === "off" && prev === "on") toast("Remote control ended" + (reason ? ": " + reason + "." : "."), "info");
+    else if (controlState === "off" && prev === "asked" && reason) toast(reason, "info");
+  }
+  syncScreenViewer();
+}
+function requestControl() {
+  if (!window.api.sendSignaling) return;
+  window.api.sendSignaling({ type: "control-request" });
+  setControlState("asked", "", true);
+}
+function releaseControl() {
+  if (window.api.sendSignaling) window.api.sendSignaling({ type: "control-release" });
+  setControlState("off", "", true);
+}
+// Alt+C on the supporter's side: take control, or release it if already on.
+// Opens the screen window first so there is somewhere to drive from.
+if (window.api.onSupporterToggleControl) window.api.onSupporterToggleControl(() => {
+  if (!netCfg || netCfg.role !== "supporter") return;
+  if (controlState === "on") { releaseControl(); return; }
+  if (!viewerIsOpen()) openScreenViewer();
+  requestControl();
+});
+// The mouse and keyboard in the screen window, while control is on.
+function wireViewerControl(w, d, stage, v) {
+  const on = () => controlState === "on" && screenHasVideo;
+  const isMac = /Mac/i.test(navigator.platform || "");
+  const sentKeys = new Set(); // keys sent as key-down, owed a key-up
+  const buttonsDown = new Set();
+  let queue = [];
+  let timer = 0;
+  let move = null;
+  let last = null;
+  const flush = () => {
+    timer = 0;
+    if (move) { queue.push(["m", move[0], move[1]]); move = null; }
+    if (!queue.length) return;
+    const ev = queue;
+    queue = [];
+    try { window.api.sendSignaling({ type: "ci", ev }); } catch {}
+  };
+  const soon = () => { if (!timer) timer = w.setTimeout(flush, 16); }; // about 60 a second
+  const push = (e, now) => {
+    if (move) { queue.push(["m", move[0], move[1]]); move = null; }
+    queue.push(e);
+    if (now) { if (timer) { w.clearTimeout(timer); timer = 0; } flush(); } else soon();
+  };
+  // A spot on the speaker's screen, 0..1 across and down, from where the
+  // picture is drawn inside the video element (letterboxed in Fit).
+  const spot = (e) => {
+    const vw = v.videoWidth, vh = v.videoHeight;
+    if (!vw || !vh) return null;
+    const r = v.getBoundingClientRect();
+    const k = Math.min(r.width / vw, r.height / vh);
+    const cw = vw * k, ch = vh * k;
+    const x = (e.clientX - (r.left + (r.width - cw) / 2)) / cw;
+    const y = (e.clientY - (r.top + (r.height - ch) / 2)) / ch;
+    if (x < 0 || y < 0 || x > 1 || y > 1) return null;
+    return [Math.round(x * 10000) / 10000, Math.round(y * 10000) / 10000];
+  };
+  const letGo = () => {
+    if (!sentKeys.size && !buttonsDown.size) return;
+    sentKeys.clear();
+    buttonsDown.clear();
+    push(["r"], true);
+  };
+  const btn = (e) => (e.button === 2 ? 2 : e.button === 1 ? 1 : 0);
+  d.addEventListener("mousemove", (e) => {
+    if (!on()) return;
+    const p = spot(e);
+    if (!p) return;
+    last = p;
+    move = p;
+    soon();
+  });
+  stage.addEventListener("mousedown", (e) => {
+    if (!on()) return;
+    const p = spot(e);
+    if (!p) return;
+    e.preventDefault();
+    last = p;
+    try { w.focus(); } catch {}
+    buttonsDown.add(btn(e));
+    push(["b", btn(e), 1, p[0], p[1]], true);
+  });
+  d.addEventListener("mouseup", (e) => {
+    if (!on() || !buttonsDown.has(btn(e))) return;
+    e.preventDefault();
+    buttonsDown.delete(btn(e));
+    const p = spot(e) || last;
+    push(["b", btn(e), 0, p ? p[0] : null, p ? p[1] : null], true);
+  });
+  stage.addEventListener("contextmenu", (e) => { if (on()) e.preventDefault(); });
+  stage.addEventListener("auxclick", (e) => { if (on()) e.preventDefault(); });
+  stage.addEventListener("wheel", (e) => {
+    if (!on()) return;
+    e.preventDefault();
+    const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1.2; // 120 = one notch
+    push(["w", Math.round(-e.deltaX * unit), Math.round(-e.deltaY * unit)]);
+  }, { passive: false });
+  const codeOf = (e) => {
+    let c = e.code || "";
+    // A Mac's Command does what Ctrl does on the speaker's Windows.
+    if (isMac) c = c.replace(/^Meta(Left|Right)$/, "Control$1");
+    return c;
+  };
+  d.addEventListener("keydown", (e) => {
+    if (!on() || e.key === "F11") return;
+    e.preventDefault();
+    e.stopPropagation();
+    const code = codeOf(e);
+    const modifier = /^(Shift|Control|Alt|Meta)(Left|Right)$/.test(code);
+    const altGr = e.getModifierState && e.getModifierState("AltGraph");
+    const typed = !modifier && e.key && e.key.length === 1 && (altGr || (!e.ctrlKey && !e.altKey && !e.metaKey));
+    // Characters go as text (whatever the speaker's keyboard layout); keys
+    // and shortcuts as keys.
+    if (typed) { push(["t", e.key], true); return; }
+    if (!code) return;
+    sentKeys.add(code);
+    push(["k", code, 1], true);
+  }, true);
+  d.addEventListener("keyup", (e) => {
+    const code = codeOf(e);
+    if (!sentKeys.has(code)) return;
+    e.preventDefault();
+    sentKeys.delete(code);
+    push(["k", code, 0], true);
+  }, true);
+  // Keys or buttons held while the window loses focus would stay down.
+  w.addEventListener("blur", letGo);
+}
+
 function closeScreenViewer() {
   if (viewerIsOpen()) { try { screenViewer.close(); } catch {} }
   screenViewer = null;
 }
 window.addEventListener("beforeunload", closeScreenViewer);
+
+// ── Remote control, speaker side: the banner ────────────────────────────────
+const controlBanner = document.getElementById("controlBanner");
+let speakerControlState = "off";
+function showControlBanner(v) {
+  if (!controlBanner) return;
+  const st = (v && v.state) || "off";
+  const prev = speakerControlState;
+  speakerControlState = st;
+  controlBanner.hidden = st !== "on";
+  controlBanner.classList.toggle("is-on", st === "on");
+  const key = v && v.hotkey ? String(v.hotkey).replace(/\+/g, " + ") : "";
+  if (st === "on") {
+    document.getElementById("controlText").textContent =
+      `Your supporter is controlling your screen.${key ? " " + key + " stops it." : ""}`;
+  }
+  if (prev === "on" && st !== "on") toast("Remote control ended. The mouse and keyboard are yours again.", "info");
+}
+if (window.api.onControlState) window.api.onControlState(showControlBanner);
+if (controlBanner) {
+  document.getElementById("controlStopBtn").addEventListener("click", () => window.api.controlStop());
+}
 
 // ── Supporter mode ──────────────────────────────────────────────────────────
 // The welcome screen's "Join as supporter" opens the join screen (the IP

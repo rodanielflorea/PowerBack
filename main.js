@@ -64,6 +64,7 @@ const {
   friendlyAnswerError, modelAbbr,
 } = require('./llm-providers');
 const { createKeyInjector, pasteKeystroke } = require('./platform-input');
+const { createRemoteInput, vkFor } = require('./remote-input');
 const license = require('./license');
 const { uploadFolder } = require('./gofile');
 const { signatureDistance } = require('./speaker-detect');
@@ -145,19 +146,29 @@ const HOTKEY_DEFAULTS = {
   scrollDown: 'Ctrl+Down',
   reloadSite: 'Ctrl+R',
   toggleStealth: 'Ctrl+H',
+  // Supporter only: take / release control of the speaker's screen. Registered
+  // just in supporter mode (registerHotkeys), so it never steals Alt+C from the
+  // speaker, who toggles transcription with the title-bar button instead.
   toggleRecording: 'Alt+C',
   pushToTalk: 'Ctrl+B',
   closeSticky: 'Ctrl+Shift+Left',
   openSticky: 'Ctrl+Shift+Right',
-  stickyScrollUp: 'Shift+Up',
-  stickyScrollDown: 'Shift+Down',
+  // These are global shortcuts, so a plain-key combo (Shift+Z, Shift+Up) would
+  // be intercepted everywhere and the user could not type it in any app. They
+  // default to unset; the user can bind a combo with Ctrl/Alt in Settings.
+  stickyScrollUp: '',
+  stickyScrollDown: '',
   helpRequest: 'Super+Shift+/',
   submitPrompt: 'CommandOrControl+Return',
   screenshotToAI: 'Alt+A',
   areaSnip: 'Alt+S',
   toggleClickThrough: 'Alt+Q',
-  clearTranscriptBubble: 'Shift+Z',
+  clearTranscriptBubble: '',
+  stopRemoteControl: 'Ctrl+Alt+Esc',
 };
+// Old defaults that, as global shortcuts, swallowed ordinary keystrokes
+// (capital Z, Shift+arrow selection). Cleared on load so they stop doing so.
+const BAD_HOTKEY_DEFAULTS = { clearTranscriptBubble: 'Shift+Z', stickyScrollUp: 'Shift+Up', stickyScrollDown: 'Shift+Down' };
 
 const DEFAULT_STATE = {
   x: null, y: null, width: 380, height: 800,
@@ -320,6 +331,13 @@ function loadState() {
   // Answers are manual only (Send / Ctrl+Enter); drop the retired auto-answer
   // choice that older versions saved.
   if (state.transcription) delete state.transcription.autoAnswer;
+  // Clear the old plain-key global hotkeys (Shift+Z etc.) still saved from
+  // before, so typing those keys works again. The user can rebind in Settings.
+  if (state.hotkeys) {
+    for (const [action, bad] of Object.entries(BAD_HOTKEY_DEFAULTS)) {
+      if (state.hotkeys[action] === bad) state.hotkeys[action] = '';
+    }
+  }
   // Click-through is a transient mode: never start a session with it on, or
   // every click (including the tour's Next) passes through the window.
   state.clickThrough = false;
@@ -1952,7 +1970,10 @@ const HOTKEY_HANDLERS = {
   scrollUp: () => { if (win && !win.isDestroyed()) win.webContents.send('scroll-answer', -1); },
   scrollDown: () => { if (win && !win.isDestroyed()) win.webContents.send('scroll-answer', 1); },
   toggleStealth: () => setStealth(!state.stealth),
-  toggleRecording: () => { if (win) win.webContents.send('toggle-recording'); },
+  // Supporter only (registered just in supporter mode): take or release control
+  // of the speaker's screen. The speaker toggles transcription from the title
+  // bar, so Alt+C is free for them.
+  toggleRecording: () => { if (win && state.network.role === 'supporter') win.webContents.send('supporter-toggle-control'); },
   pushToTalk: () => cycleMicModeFromHotkey(),
   closeSticky: () => closeStickyWindow(),
   openSticky: () => openStickyWindow(),
@@ -1965,6 +1986,7 @@ const HOTKEY_HANDLERS = {
   toggleClickThrough: () => setClickThrough(!state.clickThrough),
   reloadSite: () => { if (win && !win.isDestroyed()) win.webContents.send('reload-site'); },
   clearTranscriptBubble: () => { if (win && !win.isDestroyed()) win.webContents.send('clear-meet-bubble'); },
+  stopRemoteControl: () => controlStop('the speaker took it back'),
 };
 
 function setClickThrough(value) {
@@ -2180,6 +2202,9 @@ function startSignalingServer() {
         setSupporterMicMode(id, msg.mode);
         return;
       }
+      if (msg && msg.type === 'control-request') { controlRequest(id); return; }
+      if (msg && msg.type === 'control-release') { if (control.connId === id) controlStop('the supporter let go'); return; }
+      if (msg && msg.type === 'ci') { controlInput(id, msg.ev); return; }
       if (msg && msg.type === 'remote-submit') {
         const text = typeof msg.text === 'string' ? msg.text.slice(0, 4000) : '';
         if (win) win.webContents.send('remote-submit', { connId: id, mode: msg.mode, text });
@@ -2211,6 +2236,7 @@ function startSignalingServer() {
       if (!id) return;
       const cur = supporterConns.get(id);
       if (cur && cur.ws === ws) supporterConns.delete(id);
+      if (control.connId === id) controlStop('the supporter left');
       appendLogLine(`[supporter] #${id} left`);
       if (win) win.webContents.send('signaling-in', { connId: id, type: 'closed' });
       broadcastNetworkStatus();
@@ -2328,8 +2354,118 @@ function connectSignalingClient() {
   broadcastNetworkStatus();
 }
 
+// ── Remote control: the supporter uses this computer's mouse and keyboard ────
+// Speaker side. The supporter takes control from the speaker's-screen window
+// (or with the Alt+C hotkey on their side) and it begins at once, with no
+// prompt — anyone admitted as the supporter is trusted to drive. The speaker
+// still sees a banner while it is on, with Stop; the stopRemoteControl hotkey,
+// the supporter leaving and the screen no longer being shared end it too.
+// Input lands on the display being shared, and keys or buttons still held when
+// it ends are let go. Windows only (remote-input.js).
+const remoteInput = createRemoteInput((m) => appendLogLine('[control] ' + m));
+const control = { connId: null, state: 'off', keys: new Set(), buttons: new Set() };
+let sharedDisplayId = '';
+
+function controlSendTo(connId, payload) {
+  const entry = connId ? supporterConns.get(connId) : null;
+  if (!entry || !entry.ws || entry.ws.readyState !== WebSocket.OPEN) return;
+  try { entry.ws.send(JSON.stringify({ type: 'control-state', ...payload })); } catch {}
+}
+function controlShow() {
+  if (win && !win.isDestroyed()) win.webContents.send('control-state', { state: control.state, hotkey: (state.hotkeys && state.hotkeys.stopRemoteControl) || '' });
+}
+function controlRelease() {
+  for (const vk of control.keys) remoteInput.send(`K ${vk} 0`);
+  for (const b of control.buttons) remoteInput.send(`B ${b} 0`);
+  control.keys.clear();
+  control.buttons.clear();
+}
+function controlStop(reason) {
+  if (control.state === 'off') return;
+  const connId = control.connId;
+  controlRelease();
+  control.state = 'off';
+  control.connId = null;
+  controlSendTo(connId, { state: 'off', reason: reason || '' });
+  controlShow();
+  appendLogLine(`[control] ended: ${reason || 'stopped'}`);
+  // The input helper only runs while it may be needed.
+  setTimeout(() => { if (control.state === 'off') remoteInput.stop(); }, 3000);
+}
+// The supporter takes control. No prompt: it begins at once (the supporter was
+// already admitted to the session). Still needs the speaker on Windows and the
+// screen shared, and the speaker can stop it any time.
+function controlRequest(connId) {
+  if (process.platform !== 'win32') { controlSendTo(connId, { state: 'unsupported', reason: 'Remote control works when the speaker is on Windows.' }); return; }
+  if (!sharedDisplayId) { controlSendTo(connId, { state: 'off', reason: 'The speaker is not sharing the screen.' }); return; }
+  if (control.connId === connId && control.state === 'on') { controlSendTo(connId, { state: 'on' }); return; }
+  if (control.state !== 'off') controlStop('another supporter took over');
+  control.connId = connId;
+  control.state = 'on';
+  remoteInput.start();
+  controlSendTo(connId, { state: 'on' });
+  controlShow();
+  appendLogLine(`[control] supporter #${connId} took control (no prompt)`);
+}
+// A spot on the supporter's picture (0..1 across and down) -> the physical
+// pixel on the shared display.
+function controlPoint(nx, ny) {
+  let d = null;
+  try { d = screen.getAllDisplays().find((x) => String(x.id) === sharedDisplayId) || screen.getPrimaryDisplay(); } catch { return null; }
+  const b = d.bounds;
+  const fx = Math.min(1, Math.max(0, Number(nx) || 0));
+  const fy = Math.min(1, Math.max(0, Number(ny) || 0));
+  const dip = { x: b.x + fx * (b.width - 1), y: b.y + fy * (b.height - 1) };
+  let p = dip;
+  try { if (screen.dipToScreenPoint) p = screen.dipToScreenPoint(dip); } catch {}
+  return { x: Math.round(p.x), y: Math.round(p.y) };
+}
+// A batch of the supporter's input: ['m', x, y] move, ['b', button, down, x, y],
+// ['w', dx, dy] wheel, ['k', code, down] key, ['t', text], ['r'] let go of all.
+function controlInput(connId, events) {
+  if (control.state !== 'on' || control.connId !== connId || !Array.isArray(events)) return;
+  for (const ev of events.slice(0, 200)) {
+    if (!Array.isArray(ev)) continue;
+    const kind = ev[0];
+    if (kind === 'm' || kind === 'b') {
+      const x = kind === 'm' ? ev[1] : ev[3];
+      const y = kind === 'm' ? ev[2] : ev[4];
+      if (x != null && y != null) {
+        const p = controlPoint(x, y);
+        if (p) remoteInput.send(`M ${p.x} ${p.y}`);
+      }
+      if (kind === 'b') {
+        const b = ev[1] === 1 || ev[1] === 2 ? ev[1] : 0;
+        const down = ev[2] ? 1 : 0;
+        if (down) control.buttons.add(b); else control.buttons.delete(b);
+        remoteInput.send(`B ${b} ${down}`);
+      }
+    } else if (kind === 'w') {
+      const clamp = (v) => Math.max(-2400, Math.min(2400, Math.round(Number(v) || 0)));
+      const dx = clamp(ev[1]), dy = clamp(ev[2]);
+      if (dx || dy) remoteInput.send(`W ${dx} ${dy}`);
+    } else if (kind === 'k') {
+      const vk = vkFor(String(ev[1] || ''));
+      if (!vk) continue;
+      const down = ev[2] ? 1 : 0;
+      if (down) control.keys.add(vk); else control.keys.delete(vk);
+      remoteInput.send(`K ${vk} ${down}`);
+    } else if (kind === 't') {
+      const text = String(ev[1] || '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 64);
+      if (text) remoteInput.send(`T ${encodeURIComponent(text)}`);
+    } else if (kind === 'r') {
+      controlRelease();
+    }
+  }
+}
+ipcMain.handle('control-stop', () => { controlStop('the speaker took it back'); return true; });
+
 function sendSignaling(msg) {
   if (state.network.role === 'speaker') {
+    if (msg && msg.type === 'screen') {
+      sharedDisplayId = msg.on ? String(msg.display || '') : '';
+      if (!msg.on) controlStop('the screen is no longer shared');
+    }
     const id = msg.connId;
     const entry = id ? supporterConns.get(id) : null;
     if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
@@ -2367,6 +2503,9 @@ function registerHotkeys() {
   globalShortcut.unregisterAll();
   for (const action of Object.keys(HOTKEY_HANDLERS)) {
     delete hotkeyFailures[action];
+    // Alt+C (take/release control) is for the supporter only; the speaker's
+    // Alt+C is left alone so it reaches other apps as usual.
+    if (action === 'toggleRecording' && state.network.role !== 'supporter') continue;
     const combo = state.hotkeys[action];
     if (!combo) continue;
     try {
@@ -6255,6 +6394,8 @@ ipcMain.handle('set-network-config', (_e, cfg) => {
     state.network.address = state.network.supporterAddress || '172.16.98.11:2000';
   }
   saveState();
+  // The role decides whether Alt+C (supporter take-control) is registered.
+  registerHotkeys();
   broadcastNetworkStatus();
 });
 ipcMain.handle('start-network', () => { startNetwork(); });
@@ -6275,6 +6416,7 @@ ipcMain.handle('join-as-supporter', (_e, { address } = {}) => {
   stopSignalingServer();
   state.network = { ...state.network, role: 'supporter', supporterAddress: addr, address: addr };
   saveState();
+  registerHotkeys(); // supporter now: Alt+C takes/releases control
   supporterAdmitted = false;
   supporterOwnMicMode = 'mute';
   connectSignalingClient();
@@ -6497,6 +6639,8 @@ ipcMain.handle('get-network-status', () => {
 ipcMain.on('signaling-out', (_e, msg) => sendSignaling(msg));
 
 app.on('will-quit', () => {
+  controlStop('Ace is closing');
+  remoteInput.stop();
   globalShortcut.unregisterAll();
   stopSignalingServer();
   disconnectSignalingClient();

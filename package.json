@@ -35,6 +35,7 @@
       "build/icon.ico",
       "package.json",
       "platform-input.js",
+      "remote-input.js",
       "license.js",
       "license-public.key",
       "watchdog.js"

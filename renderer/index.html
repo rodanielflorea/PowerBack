@@ -40,6 +40,15 @@
     <button class="btn win-btn" id="hideBtn" title="Hide (Ctrl+Alt+H)"><i data-icon="win-min" class="ico-thin"></i></button>
     <button class="btn win-btn win-close" id="quitBtn" title="Quit"><i data-icon="win-close" class="ico-thin"></i></button>
   </header>
+  <!-- Remote control (speaker): shown while the supporter is controlling the
+       screen, with Stop to take it back. -->
+  <div class="control-banner" id="controlBanner" role="alert" aria-live="assertive" hidden>
+    <span class="control-dot"></span>
+    <span class="control-text" id="controlText"></span>
+    <span class="control-actions">
+      <button type="button" class="control-btn control-btn--stop" id="controlStopBtn">Stop</button>
+    </span>
+  </div>
 
   <!-- How see-through the window is: opened from the title bar's button. -->
   <div class="menu-pop opacity-pop" id="opacityPop" role="dialog" aria-label="See-through" hidden>
@@ -369,6 +378,7 @@
             <li>The helper hears your microphone and the call, and sees your answer panel as it changes: the transcript bubbles and every answer.</li>
             <li>The box under the answers asks your AI: what the helper types there is answered on your Ace as a question (empty, your AI answers what was just said), in the mode the helper picked, and the answer shows on both screens. Messages between you go in the chat column, which has its own box on both sides.</li>
             <li>When the helper joins, your window and theirs widen by a <b>Private chat</b> column and can be resized. When they leave, both windows go back to the normal size. What they send shows there, and you reply in its message box. The <b>&times;</b> closes it again; the trash button clears it on both sides.</li>
+            <li><b>Remote control:</b> in the screen window the helper can press <b>Take control</b> (or Alt+C on their side) and their mouse and keyboard work on the screen you share straight away — no prompt, so only share your IP with someone you trust. A red banner shows while it's on; press <b>Stop</b> on it, or Ctrl+Alt+Esc, to take control back at any time. Works when your computer is on Windows.</li>
             <li>The helper sees your screen in a small picture above the chat. A double-click (or the pop-out button) opens it in a window of its own that can be made full screen or moved to another monitor. If you have more than one display, the numbered buttons pick which one they see.</li>
             <li>The helper's speaker button mutes and unmutes the call sound on their side.</li>
             <li>The helper's microphone starts off. With <b>Talk to them</b>, only you hear them. The meeting never hears the helper.</li>
