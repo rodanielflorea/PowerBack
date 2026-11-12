@@ -7,12 +7,6 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="cable-nudge iv-btn" id="cableNudge" hidden>
-    <span class="cable-nudge-text"><i data-icon="lightbulb"></i> Install VB-Cable so the meeting can hear you</span>
-    <button class="cable-nudge-action" id="cableNudgeGet">Get VB-Cable</button>
-    <button class="cable-nudge-dismiss" id="cableNudgeDismiss" title="Dismiss"><i data-icon="x"></i></button>
-  </div>
-
   <header class="titlebar">
     <div class="app-logo" title="Ace"><svg class="ace-mark" viewBox="0 0 100 100" aria-hidden="true"><path class="logo-ink" d="M50 8 92 92H75L50 42 25 92H8Z"/><path class="logo-accent" d="M50 58 67 92H53L50 86 47 92H33Z"/></svg></div>
     <div class="tb-group iv-btn" id="recGroup">
@@ -254,7 +248,7 @@
             <div class="level-meter"><div class="level-fill" id="incomingLevelFill"></div></div>
             <div class="hint" style="margin:4px 0 0">Bar moves when audio is actually flowing from the peer.</div>
           </div>
-          <p class="hint">Two-way audio is always on. The mic-mode pill in the header cycles B's mic between <b>🔇 Mute</b>, <b>🔒 Speaks to A only</b>, and <b>📢 Speaks to A + C (live)</b>. Either A or B can change it.</p>
+          <p class="hint">The supporter's mic is either off or heard by you only. The meeting never hears the supporter.</p>
         </section>
 
         <section class="settings-section">
@@ -358,7 +352,7 @@
             <li>When the helper joins, your window and theirs widen by a <b>Private chat</b> column and can be resized. When they leave, both windows go back to the normal size. What they send shows there, and you reply in its message box. The <b>&times;</b> closes it again; the trash button clears it on both sides.</li>
             <li>The helper sees your screen in a small picture above the chat. A double-click (or the pop-out button) opens it in a window of its own that can be made full screen or moved to another monitor. If you have more than one display, the numbered buttons pick which one they see.</li>
             <li>The helper's speaker button mutes and unmutes the call sound on their side.</li>
-            <li>The helper's microphone starts off. With <b>Talk to them</b>, only you hear them; the meeting does not.</li>
+            <li>The helper's microphone starts off. With <b>Talk to them</b>, only you hear them. The meeting never hears the helper.</li>
           </ol>
           <p>Both computers must be on the same network, and one supporter can join at a time. Anyone on the network who enters this computer's IP address can join while your session runs, so check who joined in the headset panel. On Windows, allow the firewall prompt the first time. To stop, click <b>Disconnect the supporter</b> in the headset panel, or <b>End</b> on the helper's side.</p>
         </section>
@@ -886,7 +880,6 @@
         <li><b>Voice mode:</b> transcribes the call audio live; questions come from what is said.</li>
         <li><b>Stealth shield</b> in the header hides the window from screen-recording / meeting share-screen.</li>
         <li><b>Opacity slider</b> in the header — click and drag to fade the window.</li>
-        <li><b>For meeting relay (A speaks to a Zoom/Meet/Teams call):</b> install the free VB-Cable driver and pick "CABLE Input" in Network settings.</li>
         <li><b>Hotkeys</b> — see Settings &rarr; Hotkeys for the full list. Defaults: <code>Ctrl+Alt+H</code> hide, <code>Ctrl+H</code> stealth, <code>Alt+C</code> start/stop active mode.</li>
       </ul>
       <button class="welcome-dismiss" id="welcomeDismiss">Got it, let's go</button>

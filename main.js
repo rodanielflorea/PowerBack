@@ -1798,7 +1798,9 @@ let supporterOwnMicMode = 'mute';
 // let in reconnects by itself after a drop.
 let supporterAdmitted = false;
 let supporterRefused = '';
-const MIC_MODES = ['mute', 'aOnly', 'aAndC'];
+// The supporter's microphone: off, or heard by the speaker only. It never
+// reaches the meeting (an older Ace asking for "aAndC" gets "aOnly").
+const MIC_MODES = ['mute', 'aOnly'];
 function nextMicMode(m) { const i = MIC_MODES.indexOf(m); return MIC_MODES[(i + 1) % MIC_MODES.length] || 'aOnly'; }
 
 function supporterListSnapshot() {
@@ -3012,6 +3014,40 @@ const deepgramBacklog = makeAudioBacklog();
 const micDgBacklog = makeAudioBacklog();
 // A connection attempt that has not opened by then is dropped and retried.
 const DG_CONNECT_TIMEOUT_MS = 6000;
+// After a drop: one retry at once, then one every 5 s for as long as it takes
+// (the network may be gone for a while). The renderer also asks for a retry
+// at once when the computer's network comes back ('network-online').
+const DG_RETRY_MS = 5000;
+// While a socket is open it is checked every 5 s with a ping. Deepgram answers
+// a ping in under a second and sends about one message a second even during
+// silence, so 12 s with neither means the connection is dead though it has not
+// closed (a lost network often leaves the socket looking open): end it, and
+// the close handler reconnects.
+const DG_WATCH_MS = 5000;
+const DG_DEAD_MS = 12000;
+function watchDeepgramSocket(ws, label) {
+  let alive = Date.now();
+  const mark = () => { alive = Date.now(); };
+  ws.on('pong', mark);
+  ws.on('message', mark);
+  const timer = setInterval(() => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    const quiet = Date.now() - alive;
+    if (quiet > DG_DEAD_MS) {
+      appendLogLine(`[${label}] no answer for ${Math.round(quiet / 1000)} s — the connection is dead, reconnecting`);
+      clearInterval(timer);
+      try { ws.terminate(); } catch {}
+      return;
+    }
+    try { ws.ping(); } catch {}
+  }, DG_WATCH_MS);
+  ws.on('close', () => clearInterval(timer));
+}
+// Tells the page when transcription loses its connection and when it is back.
+let deepgramLost = false;
+function notifyTranscriptConnection(state) {
+  if (win && !win.isDestroyed()) win.webContents.send('transcript-connection', { state });
+}
 
 function clearDeepgramTimers() {
   if (deepgramKeepAlive) { clearInterval(deepgramKeepAlive); deepgramKeepAlive = null; }
@@ -3020,10 +3056,15 @@ function clearDeepgramTimers() {
 
 function scheduleDeepgramReconnect() {
   if (!deepgramActive || deepgramReconnectTimer || deepgramWs) return;
-  // At once the first time (the audio meanwhile is kept), then backing off.
-  const delay = deepgramReconnectAttempts === 0 ? 0 : Math.min(4000, 250 * Math.pow(2, deepgramReconnectAttempts));
+  // At once the first time (the audio meanwhile is kept), then every 5 s.
+  const delay = deepgramReconnectAttempts === 0 ? 0 : DG_RETRY_MS;
   deepgramReconnectAttempts++;
-  appendLogLine(`[deepgram] connection lost — reconnecting in ${delay}ms`);
+  if (deepgramReconnectAttempts === 1) {
+    appendLogLine('[deepgram] connection lost — reconnecting now, then every 5 s until it is back');
+    if (!deepgramLost) { deepgramLost = true; notifyTranscriptConnection('lost'); }
+  } else if (deepgramReconnectAttempts % 6 === 0) {
+    appendLogLine(`[deepgram] still not connected after ${deepgramReconnectAttempts} attempts — retrying every 5 s`);
+  }
   deepgramReconnectTimer = setTimeout(() => {
     deepgramReconnectTimer = null;
     if (deepgramActive && !deepgramWs && deepgramAuth) {
@@ -3227,15 +3268,19 @@ function startDeepgramWs(apiKey, language) {
     }
   }, DG_CONNECT_TIMEOUT_MS);
   let handshakeFailed = false;
+  let opened = false;
   deepgramWs.on('open', () => {
     clearTimeout(connectTimer);
     if (deepgramWs !== ws) { try { ws.close(); } catch {} return; } // replaced meanwhile
+    opened = true;
     // The audio kept while the socket was down goes first; Deepgram's clock
     // starts at its first byte, so the session clock starts that much earlier.
     const heldMs = deepgramBacklog.flush(ws);
     deepgramT0 = Date.now() - heldMs;
     appendLogLine(`[deepgram] connected in ${Date.now() - startedAt} ms` + (heldMs > 200 ? ` (sent ${heldMs} ms of audio held meanwhile)` : ''));
     deepgramReconnectAttempts = 0;
+    watchDeepgramSocket(ws, 'deepgram');
+    if (deepgramLost) { deepgramLost = false; notifyTranscriptConnection('connected'); }
     // Periodic KeepAlive so Deepgram doesn't idle-close the socket during brief
     // silences or throttle gaps (it drops connections after ~10s of no audio).
     if (deepgramKeepAlive) clearInterval(deepgramKeepAlive);
@@ -3297,6 +3342,8 @@ function startDeepgramWs(apiKey, language) {
   });
   deepgramWs.on('error', (e) => {
     if (handshakeFailed) return; // friendlier message already sent above
+    // While offline every retry fails the same way: log the first, then one in six.
+    if (!opened && deepgramReconnectAttempts > 1 && deepgramReconnectAttempts % 6 !== 0) return;
     appendLogLine('[deepgram] error: ' + e.message);
   });
   deepgramWs.on('close', (code, reason) => {
@@ -3310,7 +3357,7 @@ function startDeepgramWs(apiKey, language) {
     if (deepgramKeepAlive) { clearInterval(deepgramKeepAlive); deepgramKeepAlive = null; }
     deepgramWs = null;
     // Why it closed, for the log (Deepgram puts its error code in the reason).
-    if (deepgramActive) appendLogLine(`[deepgram] closed: ${code}${reason && reason.length ? ' ' + reason.toString().slice(0, 160) : ''}`);
+    if (deepgramActive && opened) appendLogLine(`[deepgram] closed: ${code}${reason && reason.length ? ' ' + reason.toString().slice(0, 160) : ''}`);
     // If the user is still recording, transparently reconnect.
     if (deepgramActive && !handshakeFailed) scheduleDeepgramReconnect();
   });
@@ -3477,6 +3524,7 @@ ipcMain.handle('start-deepgram-stream', (_e, { apiKey, language }) => {
   startSpeakerWatch();
   deepgramAuth = { apiKey, language };
   deepgramReconnectAttempts = 0;
+  deepgramLost = false;
   clearDeepgramTimers();
   deepgramBacklog.clear();
   startDeepgramWs(apiKey, language);
@@ -3486,6 +3534,7 @@ ipcMain.handle('stop-deepgram-stream', () => {
   stopSpeakerWatch();
   clearDeepgramTimers();
   deepgramBacklog.clear();
+  if (deepgramLost) { deepgramLost = false; notifyTranscriptConnection('stopped'); }
   if (deepgramWs) {
     try { deepgramWs.send(JSON.stringify({ type: 'CloseStream' })); } catch {}
     try { deepgramWs.close(); } catch {}
@@ -3497,6 +3546,19 @@ ipcMain.on('audio-chunk', (_e, buf) => {
   else if (deepgramActive) deepgramBacklog.push(buf); // reconnecting: keep it
   else if (xaiWs && xaiWs.readyState === WebSocket.OPEN && xaiReady) xaiWs.send(buf);
 });
+// The computer's network is back (the page's "online" event): retry now
+// instead of waiting for the next 5 s retry.
+ipcMain.on('network-online', () => {
+  if (deepgramActive && !deepgramWs && deepgramAuth) {
+    if (deepgramReconnectTimer) { clearTimeout(deepgramReconnectTimer); deepgramReconnectTimer = null; }
+    appendLogLine('[deepgram] network is back — reconnecting now');
+    startDeepgramWs(deepgramAuth.apiKey, deepgramAuth.language);
+  }
+  if (micDgActive && !micDgWs && micDgAuth) {
+    if (micDgRetryTimer) { clearTimeout(micDgRetryTimer); micDgRetryTimer = null; }
+    startMicDeepgramWs(micDgAuth.apiKey, micDgAuth.language);
+  }
+});
 
 // ── Microphone transcription (separate Deepgram socket) ──────────────────────
 // The candidate's own voice must NOT appear as interviewer bubbles; it is
@@ -3504,6 +3566,7 @@ ipcMain.on('audio-chunk', (_e, buf) => {
 // saved transcript), never the bubble pipeline. Both mic and system audio are
 // still recorded to the video by the renderer.
 let micDgWs = null, micDgActive = false, micDgAuth = null, micDgKeepAlive = null;
+let micDgRetryTimer = null, micDgAttempts = 0;
 function startMicDeepgramWs(apiKey, language) {
   if (micDgWs) return;
   const params = new URLSearchParams({
@@ -3521,6 +3584,8 @@ function startMicDeepgramWs(apiKey, language) {
     clearTimeout(connectTimer);
     if (micDgWs !== ws) { try { ws.close(); } catch {} return; } // replaced meanwhile
     micDgBacklog.flush(ws); // the voice heard while it was reconnecting
+    micDgAttempts = 0;
+    watchDeepgramSocket(ws, 'deepgram mic');
     if (micDgKeepAlive) clearInterval(micDgKeepAlive);
     micDgKeepAlive = setInterval(() => { if (micDgWs && micDgWs.readyState === WebSocket.OPEN) { try { micDgWs.send(JSON.stringify({ type: 'KeepAlive' })); } catch {} } }, 7000);
   });
@@ -3539,9 +3604,15 @@ function startMicDeepgramWs(apiKey, language) {
     if (micDgWs !== ws) return;
     if (micDgKeepAlive) { clearInterval(micDgKeepAlive); micDgKeepAlive = null; }
     micDgWs = null;
-    if (micDgActive) {
-      appendLogLine(`[deepgram mic] closed: ${code} — reconnecting`);
-      setTimeout(() => { if (micDgActive && !micDgWs && micDgAuth) startMicDeepgramWs(micDgAuth.apiKey, micDgAuth.language); }, 250);
+    if (micDgActive && !micDgRetryTimer) {
+      // At once the first time, then every 5 s until it is back.
+      const delay = micDgAttempts === 0 ? 0 : DG_RETRY_MS;
+      micDgAttempts++;
+      if (micDgAttempts === 1) appendLogLine(`[deepgram mic] closed: ${code} — reconnecting now, then every 5 s`);
+      micDgRetryTimer = setTimeout(() => {
+        micDgRetryTimer = null;
+        if (micDgActive && !micDgWs && micDgAuth) startMicDeepgramWs(micDgAuth.apiKey, micDgAuth.language);
+      }, delay);
     }
   });
   micDgWs.on('error', () => {});
@@ -3566,10 +3637,11 @@ ipcMain.handle('extract-jd-info', async () => {
     return { company: String((d && d.company) || '').trim(), role: String((d && d.role) || '').trim() };
   } catch { return { company: '', role: '' }; }
 });
-ipcMain.handle('start-mic-deepgram-stream', (_e, { apiKey, language } = {}) => { micDgActive = true; micDgAuth = { apiKey, language }; micDgBacklog.clear(); startMicDeepgramWs(apiKey, language); });
+ipcMain.handle('start-mic-deepgram-stream', (_e, { apiKey, language } = {}) => { micDgActive = true; micDgAuth = { apiKey, language }; micDgAttempts = 0; micDgBacklog.clear(); startMicDeepgramWs(apiKey, language); });
 ipcMain.handle('stop-mic-deepgram-stream', () => {
   micDgActive = false;
   micDgBacklog.clear();
+  if (micDgRetryTimer) { clearTimeout(micDgRetryTimer); micDgRetryTimer = null; }
   if (micDgKeepAlive) { clearInterval(micDgKeepAlive); micDgKeepAlive = null; }
   if (micDgWs) { try { micDgWs.send(JSON.stringify({ type: 'CloseStream' })); } catch {} try { micDgWs.close(); } catch {} micDgWs = null; }
 });
