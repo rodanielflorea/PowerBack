@@ -59,3 +59,6 @@ defaults/*.zip
 # VS Code extension: packaged .vsix files and its own node_modules
 vscode-extension/*.vsix
 vscode-extension/node_modules/
+
+# Personal AI-tool-usage interview notes, bundled in the build but not committed
+defaults/ai-usage.md

@@ -200,6 +200,7 @@ contextBridge.exposeInMainWorld('api', {
   getCursorScreenSourceId: () => ipcRenderer.invoke('get-cursor-screen-source-id'),
   getCursorDisplayIndex: () => ipcRenderer.invoke('get-cursor-display-index'),
   getCursorDisplayId: () => ipcRenderer.invoke('get-cursor-display-id'),
+  captureDisplayImage: (displayId) => ipcRenderer.invoke('capture-display-image', displayId),
   getAllScreenSourceIds: () => ipcRenderer.invoke('get-all-screen-source-ids'),
   // Latency optimizations
   warmApiConnection: () => ipcRenderer.invoke('warm-api-connection'),

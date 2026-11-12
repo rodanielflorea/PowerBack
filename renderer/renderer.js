@@ -3133,75 +3133,33 @@ function clearAttachedImages() {
 // Captured entirely in the renderer using getUserMedia (chromeMediaSource:'desktop')
 // — the same mechanism used for system-audio capture — so no main-process IPC needed.
 async function doScreenshot() {
-  let stream = null;
-  let video  = null;
   try {
-    // Get all sources, the cursor's display id, and (as a fallback) its index.
-    let allSources = [], cursorDisplayId = "", displayIdx = 0;
-    try { allSources      = await window.api.getCursorScreenSourceId(); } catch {}
-    try { cursorDisplayId = await window.api.getCursorDisplayId();      } catch {}
-    try { displayIdx      = await window.api.getCursorDisplayIndex();   } catch {}
+    // The display the cursor is on, captured in the main process with
+    // desktopCapturer. This replaces a getUserMedia desktop capture that came
+    // back a solid green frame on one of two monitors on some GPUs; the
+    // desktopCapturer picture is correct on every display.
+    let cursorDisplayId = "";
+    try { cursorDisplayId = await window.api.getCursorDisplayId(); } catch {}
+    const pngDataUrl = window.api.captureDisplayImage ? await window.api.captureDisplayImage(cursorDisplayId) : null;
+    if (!pngDataUrl) { log("Screenshot: no desktop source available", "err"); return; }
 
-    // Filter to screen-only sources (IDs start with "screen:"), sort by name.
-    const screenSources = (allSources || [])
-      .filter((s) => s.id && s.id.startsWith("screen:"))
-      .sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { numeric: true }));
-
-    // Prefer matching the cursor's display by id — source order and display
-    // order need not agree, so the index alone can pick the wrong screen.
-    const byId = cursorDisplayId
-      ? screenSources.find((s) => String(s.display_id) === String(cursorDisplayId))
-      : null;
-    let sourceId = (byId || screenSources[displayIdx] || screenSources[0])?.id || null;
-    if (!sourceId) {
-      try { sourceId = await window.api.getDesktopSourceId(); } catch {}
-    }
-    if (!sourceId) { log("Screenshot: no desktop source available", "err"); return; }
-
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        mandatory: {
-          chromeMediaSource: "desktop",
-          chromeMediaSourceId: sourceId,
-          maxWidth: 3840,
-          maxHeight: 2160,
-        },
-      },
-    });
-
-    // Attach video to DOM — Chromium requires this to decode desktop capture frames.
-    video = document.createElement("video");
-    video.style.cssText = "position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;top:0;left:0;";
-    video.muted = true;
-    video.playsInline = true;
-    document.body.appendChild(video);
-    video.srcObject = stream;
-
+    // Re-encode the PNG to JPEG (about 10x smaller) so several screenshots pass
+    // through IPC cheaply. Decoding a data URL into an <img> has no GPU capture
+    // path, so it can never be green.
+    const img = new Image();
     await new Promise((resolve, reject) => {
-      video.onloadedmetadata = resolve;
-      video.onerror = (e) => reject(new Error("video error: " + (e.message || e)));
-      setTimeout(() => reject(new Error("metadata timeout")), 5000);
+      img.onload = resolve;
+      img.onerror = () => reject(new Error("decode failed"));
+      img.src = pngDataUrl;
     });
-    await video.play();
-    await new Promise((resolve) => setTimeout(resolve, 120));
-
     const canvas = document.createElement("canvas");
-    canvas.width  = video.videoWidth  || 1920;
-    canvas.height = video.videoHeight || 1080;
-    canvas.getContext("2d").drawImage(video, 0, 0);
-
-    // JPEG at 0.82 quality — roughly 10× smaller than PNG, safe to send through IPC
-    // even with multiple screenshots attached.
-    const dataUrl  = canvas.toDataURL("image/jpeg", 0.82);
-    const commaIdx = dataUrl.indexOf(",");
-    const b64      = dataUrl.slice(commaIdx + 1);
-    addAttachedImage(b64, "image/jpeg");
+    canvas.width = img.naturalWidth || 1920;
+    canvas.height = img.naturalHeight || 1080;
+    canvas.getContext("2d").drawImage(img, 0, 0);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+    addAttachedImage(dataUrl.slice(dataUrl.indexOf(",") + 1), "image/jpeg");
   } catch (e) {
     log("Screenshot failed: " + e.message, "err");
-  } finally {
-    if (stream) stream.getTracks().forEach((t) => t.stop());
-    if (video && video.parentNode) video.parentNode.removeChild(video);
   }
 }
 if (window.api.onTriggerScreenshot) window.api.onTriggerScreenshot(doScreenshot);
