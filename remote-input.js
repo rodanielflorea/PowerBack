@@ -10,6 +10,9 @@
 //   K vk 1|0    key down/up (Windows virtual-key code)
 //   T text      type text (URI-encoded), independent of the keyboard layout
 //   Q           print the pointer position ("POS x y"), for tests
+// Lines from the helper: "BLOCKED <program>" when the pointer stops obeying
+// (a program in front has taken the mouse and keyboard for itself, as a
+// virtual machine window does), "UNBLOCKED" when it obeys again.
 const { spawn } = require('child_process');
 
 const CS = `
@@ -25,6 +28,9 @@ public static class AceInput {
   [DllImport("user32.dll")] static extern uint MapVirtualKey(uint code, uint type);
   [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
   [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr value);
   static readonly int Size = Marshal.SizeOf(typeof(INPUT));
@@ -33,6 +39,7 @@ public static class AceInput {
   public static void Init() {
     try { if (!SetProcessDpiAwarenessContext(new IntPtr(-4))) SetProcessDPIAware(); }
     catch { try { SetProcessDPIAware(); } catch { } }
+    POINT p; if (GetCursorPos(out p)) { lastX = p.X; lastY = p.Y; } // a click before any move lands here
   }
   static void Send(params INPUT[] list) { SendInput((uint)list.Length, list, Size); }
   static INPUT Mouse(uint flags, int dx, int dy, int data) {
@@ -53,15 +60,56 @@ public static class AceInput {
     }
     return false;
   }
-  // To the exact pixel (SendInput's absolute coordinates round by one), then a
-  // zero move so programs that read raw input see the pointer move too.
-  public static void Move(int x, int y) {
-    SetCursorPos(x, y);
-    Send(Mouse(0x0001, 0, 0, 0));
+  // The last pixel the pointer was moved to, so a button press carries the
+  // exact position (VM guests read the position from the click event).
+  static int lastX, lastY;
+  // Normalize a physical pixel to the 0..65535 absolute range over the whole
+  // virtual desktop.
+  static int normX(int x) {
+    int vx = GetSystemMetrics(76), vw = GetSystemMetrics(78); // SM_XVIRTUALSCREEN, SM_CXVIRTUALSCREEN
+    return (int)Math.Round((x - vx) * 65535.0 / Math.Max(1, vw - 1));
   }
+  static int normY(int y) {
+    int vy = GetSystemMetrics(77), vh = GetSystemMetrics(79);
+    return (int)Math.Round((y - vy) * 65535.0 / Math.Max(1, vh - 1));
+  }
+  // Absolute mouse movement (MOVE | ABSOLUTE | VIRTUALDESK). VM guests and
+  // remote-desktop-style consumers track the absolute pointer; SetCursorPos
+  // teleports and is read as a jump, which breaks dragging in a VM guest and
+  // loses the pointer once a VM window grabs it. SetCursorPos too, so the host
+  // cursor lands on the exact pixel for apps that read GetCursorPos.
+  public static void Move(int x, int y) {
+    lastX = x; lastY = y;
+    bool ok = SetCursorPos(x, y);
+    Send(Mouse(0x0001 | 0x8000 | 0x4000, normX(x), normY(y), 0));
+    Obeyed(ok, x, y);
+  }
+  // Did the pointer go where it was put? A program that has taken the mouse
+  // for itself (a virtual machine window holding its "grab") refuses the move
+  // and swallows the event. Three refusals in a row are reported once, with
+  // the name of the program in front; the first move that works again clears it.
+  static int misses; static bool blocked;
+  static void Obeyed(bool ok, int x, int y) {
+    POINT p; GetCursorPos(out p);
+    bool off = !ok || Math.Abs(p.X - x) > 3 || Math.Abs(p.Y - y) > 3;
+    if (!off) {
+      misses = 0;
+      if (blocked) { blocked = false; Console.Out.WriteLine("UNBLOCKED"); Console.Out.Flush(); }
+      return;
+    }
+    if (++misses == 3 && !blocked) {
+      blocked = true;
+      string name = "";
+      try { uint pid; GetWindowThreadProcessId(GetForegroundWindow(), out pid); name = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName; } catch { }
+      Console.Out.WriteLine("BLOCKED " + name); Console.Out.Flush();
+    }
+  }
+  // Press/release at the current pixel, carried as an absolute position in the
+  // same event, so a VM guest sees the button exactly where the pointer is and
+  // a down-move-up sequence reads as a real drag.
   public static void Button(int b, bool down) {
-    uint f = b == 2 ? (down ? 0x0008u : 0x0010u) : b == 1 ? (down ? 0x0020u : 0x0040u) : (down ? 0x0002u : 0x0004u);
-    Send(Mouse(f, 0, 0, 0));
+    uint act = b == 2 ? (down ? 0x0008u : 0x0010u) : b == 1 ? (down ? 0x0020u : 0x0040u) : (down ? 0x0002u : 0x0004u);
+    Send(Mouse(act | 0x0001 | 0x8000 | 0x4000, normX(lastX), normY(lastY), 0));
   }
   public static void Wheel(int dx, int dy) {
     if (dy != 0) Send(Mouse(0x0800, 0, 0, dy));
@@ -129,7 +177,8 @@ function vkFor(code) {
   return Object.prototype.hasOwnProperty.call(VK, code) ? VK[code] : 0;
 }
 
-function createRemoteInput(log) {
+// onEvent('blocked', program) / onEvent('unblocked'): see the top of this file.
+function createRemoteInput(log, onEvent) {
   let proc = null;
   let ready = null;
   let onLine = null;
@@ -150,6 +199,8 @@ function createRemoteInput(log) {
           const line = buf.slice(0, i).trim();
           buf = buf.slice(i + 1);
           if (line === 'ACE_READY') { clearTimeout(t); resolve(true); }
+          else if (/^BLOCKED\b/.test(line)) { if (onEvent) onEvent('blocked', line.slice(8).trim()); }
+          else if (line === 'UNBLOCKED') { if (onEvent) onEvent('unblocked', ''); }
           else if (line && onLine) onLine(line);
         }
       });

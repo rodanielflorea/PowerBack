@@ -333,8 +333,9 @@ window.api.onClickThroughChanged((v) => updateClickThrough(v));
   const report = (v) => { if (over === v) return; over = v; window.api.clickThroughHover(v); };
   bar.addEventListener("mouseenter", () => report(true));
   bar.addEventListener("mouseleave", () => report(false));
-  // the update question takes clicks as well, or it could not be answered
-  document.addEventListener("mousemove", (e) => report(!!e.target.closest && !!e.target.closest(".titlebar, #updateModal")));
+  // The update question and the remote-control banner take clicks too, so they
+  // can be answered / Stop can be pressed while click-through is on.
+  document.addEventListener("mousemove", (e) => report(!!e.target.closest && !!e.target.closest(".titlebar, #updateModal, #controlBanner")));
   // The app takes the report only while click-through is on: after a switch
   // it is made again with the next move of the pointer.
   window.api.onClickThroughChanged(() => { over = false; });
@@ -5339,10 +5340,14 @@ window.api.onSignaling((msg) => {
       }
       stopLevelMeter();
       setControlState("off", "", true);
+      setControlBlocked("");
       clearScreenView("Connection to the speaker closed.");
     }
   } else if (type === "control-state") {
-    if (netCfg && netCfg.role === "supporter") setControlState(msg.state, msg.reason);
+    if (netCfg && netCfg.role === "supporter") {
+      setControlState(msg.state, msg.reason);
+      if (msg.blocked !== undefined) setControlBlocked(msg.blocked);
+    }
   } else if (type === "screen") {
     if (netCfg && netCfg.role === "supporter") onScreenShareState(!!msg.on, msg);
   } else if (type === "screen-select") {
@@ -6750,11 +6755,17 @@ function syncScreenViewer() {
   const stage = d.getElementById("stage");
   const was = stage.classList.contains("controlling");
   stage.classList.toggle("controlling", controlState === "on");
-  if (controlState === "on" && !was) {
-    const hint = d.getElementById("ctlHint");
+  const hint = d.getElementById("ctlHint");
+  if (controlState === "on" && controlBlocked) {
+    // Stays up for as long as the input is refused.
+    hint.textContent = controlBlocked + " has taken the mouse and keyboard there: your input is not getting through";
     hint.classList.add("show");
-    setTimeout(() => hint.classList.remove("show"), 3500);
+  } else if (controlState === "on" && (!was || hint.dataset.blocked)) {
+    hint.textContent = "Your mouse and keyboard now work on the speaker's screen";
+    hint.classList.add("show");
+    setTimeout(() => { if (!controlBlocked) hint.classList.remove("show"); }, 3500);
   }
+  hint.dataset.blocked = controlState === "on" && controlBlocked ? "1" : "";
 }
 // ── Remote control, supporter side ──────────────────────────────────────────
 // "Take control" asks the speaker; their Ace shows Allow / Deny. Once allowed,
@@ -6772,6 +6783,20 @@ function setControlState(st, reason, quiet) {
     else if (st === "on" && prev !== "on") toast("You're controlling the speaker's screen.", "info");
     else if (controlState === "off" && prev === "on") toast("Remote control ended" + (reason ? ": " + reason + "." : "."), "info");
     else if (controlState === "off" && prev === "asked" && reason) toast(reason, "info");
+  }
+  syncScreenViewer();
+}
+// The speaker's computer says a program there (a virtual machine window) has
+// taken the mouse and keyboard and refuses this input: say so, in the screen
+// window too, until it obeys again.
+let controlBlocked = "";
+function setControlBlocked(program) {
+  const was = controlBlocked;
+  controlBlocked = controlState === "on" ? String(program || "") : "";
+  if (controlBlocked && controlBlocked !== was) {
+    toast(`${controlBlocked} on the speaker's computer has taken the mouse and keyboard, so your input is not getting through. Ask the speaker to press Ctrl+Alt in it.`, "err");
+  } else if (!controlBlocked && was) {
+    toast("Your mouse and keyboard work on the speaker's screen again.", "info");
   }
   syncScreenViewer();
 }
@@ -6921,8 +6946,9 @@ function showControlBanner(v) {
   controlBanner.classList.toggle("is-on", st === "on");
   const key = v && v.hotkey ? String(v.hotkey).replace(/\+/g, " + ") : "";
   if (st === "on") {
-    document.getElementById("controlText").textContent =
-      `Your supporter is controlling your screen.${key ? " " + key + " stops it." : ""}`;
+    document.getElementById("controlText").textContent = v && v.blocked
+      ? `${v.blocked} has taken the mouse and keyboard, so your supporter's input is not getting through.${v.release ? " Press " + v.release + " in it to give them back." : ""}`
+      : `Your supporter is controlling your screen.${key ? " " + key + " stops it." : ""}`;
   }
   if (prev === "on" && st !== "on") toast("Remote control ended. The mouse and keyboard are yours again.", "info");
 }
