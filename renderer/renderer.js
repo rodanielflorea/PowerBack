@@ -1600,7 +1600,7 @@ function openSettings() {
   refreshMeetingUI();
   loadAvoidPhrases();
   refreshMicList();
-  refreshDisplayList();
+  refreshDisplayList(true);
   refreshHotkeysUI();
   refreshNetworkUI();
   refreshSupporterSettings();
@@ -1777,14 +1777,108 @@ if (recordSessionEl) recordSessionEl.addEventListener("change", () => persistTx(
 const uploadSessionEl = document.getElementById("uploadSession");
 if (uploadSessionEl) uploadSessionEl.addEventListener("change", () => persistTx({ uploadSession: uploadSessionEl.checked }));
 
-// Which display the recording captures. Only offered with two or more displays.
+// ── Appearance: Dark / Light / System (theme.js applies it) ────────────────
+const themeSegEl = document.getElementById("themeSeg");
+function syncThemeSeg() {
+  if (!themeSegEl || !window.aceTheme) return;
+  const p = window.aceTheme.get();
+  themeSegEl.querySelectorAll("button[data-theme-pref]").forEach((b) => {
+    const on = b.dataset.themePref === p;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-checked", on ? "true" : "false");
+  });
+}
+if (themeSegEl) themeSegEl.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-theme-pref]");
+  if (!b || !window.aceTheme) return;
+  window.aceTheme.set(b.dataset.themePref);
+});
+window.addEventListener("ace-theme", syncThemeSeg);
+syncThemeSeg();
+
+// ── Display cards: a small picture of each display ─────────────────────────
+// Used wherever a display is picked (the recording's screen, the screen a
+// supporter watches), so the right one is recognised by eye. items:
+// [{ id, label, src }] where label is "Display 2: NAME, 1920×1080 (main)" and
+// src a picture (or none yet). Works in the supporter's pop-out window too.
+function parseDisplayLabel(label, i) {
+  const m = /^Display (\d+)(?::\s*([^,]*))?(?:,\s*(\d+\s*×\s*\d+))?/.exec(label || "");
+  return {
+    num: m ? m[1] : String(i + 1),
+    name: m && m[2] ? m[2].trim() : "",
+    size: m && m[3] ? m[3].replace(/\s/g, "") : "",
+    main: /\(main\)\s*$/.test(label || ""),
+  };
+}
+function renderDisplayCards(container, items, current, onPick) {
+  if (!container) return;
+  const doc = container.ownerDocument;
+  container.textContent = "";
+  items.forEach((it, i) => {
+    const p = parseDisplayLabel(it.label, i);
+    const b = doc.createElement("button");
+    b.type = "button";
+    b.className = "disp-card" + (it.id === current ? " active" : "");
+    b.title = it.label;
+    const th = doc.createElement("span");
+    th.className = "disp-thumb" + (it.src ? "" : " empty");
+    if (it.src) { const img = doc.createElement("img"); img.src = it.src; img.alt = ""; th.appendChild(img); }
+    const num = doc.createElement("span");
+    num.className = "disp-num";
+    num.textContent = p.num;
+    th.appendChild(num);
+    if (it.id === current) { const ok = doc.createElement("span"); ok.className = "disp-on"; ok.innerHTML = aceIcon("check"); th.appendChild(ok); }
+    const cap = doc.createElement("span");
+    cap.className = "disp-cap";
+    cap.textContent = [p.size || p.name || "Display " + p.num, p.main ? "main" : ""].filter(Boolean).join(" · ");
+    b.append(th, cap);
+    b.addEventListener("click", (e) => { e.stopPropagation(); onPick(it.id); });
+    container.appendChild(b);
+  });
+}
+
+// Which display the recording captures: in Settings, and (with two or more
+// displays) from the arrow next to the record button. Both show the displays
+// as pictures; '' means "the main display, whichever it is".
 const recordDisplaySel = document.getElementById("recordDisplaySelect");
-async function refreshDisplayList() {
+const recordDisplayCards = document.getElementById("recordDisplayCards");
+const recDisplayBtn = document.getElementById("recDisplayBtn");
+const recDisplayMenu = document.getElementById("recDisplayMenu");
+let recordDisplays = [];
+let recordThumbs = {};
+async function loadRecordThumbs() {
+  if (!window.api.displayThumbnails) return;
+  try { recordThumbs = Object.fromEntries(((await window.api.displayThumbnails({ width: 320 })) || []).map((t) => [t.id, t.src])); } catch {}
+}
+function recordCardItems() {
+  return recordDisplays.map((d) => ({ id: d.id, label: d.label, src: recordThumbs[d.id] }));
+}
+// The display id the recording really uses ('' resolves to the main one).
+function recordCurrentId() {
+  const v = recordDisplaySel ? recordDisplaySel.value : "";
+  return v || ((recordDisplays.find((d) => d.main) || recordDisplays[0] || {}).id || "");
+}
+function pickRecordDisplay(id) {
+  if (!recordDisplaySel) return;
+  const d = recordDisplays.find((x) => x.id === id);
+  const value = d && d.main ? "" : id;
+  if (recordDisplaySel.value !== value) {
+    recordDisplaySel.value = value;
+    recordDisplaySel.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  renderRecordCards();
+}
+function renderRecordCards() {
+  renderDisplayCards(recordDisplayCards, recordCardItems(), recordCurrentId(), pickRecordDisplay);
+}
+async function refreshDisplayList(withPictures) {
   if (!recordDisplaySel || !window.api.listDisplays) return;
   let list = [];
   try { list = (await window.api.listDisplays()) || []; } catch {}
+  recordDisplays = list;
   const field = document.getElementById("recordDisplayField");
-  if (field) field.hidden = list.length < 2;
+  if (field) field.hidden = list.length < 1;
+  if (recDisplayBtn) recDisplayBtn.hidden = list.length < 2;
   recordDisplaySel.innerHTML = "";
   const def = document.createElement("option");
   def.value = "";
@@ -1800,10 +1894,45 @@ async function refreshDisplayList() {
   try { cfg = (await window.api.getTranscriptionConfig()) || cfg; } catch {}
   const want = String((cfg && cfg.recordDisplay) || "");
   recordDisplaySel.value = list.some((d) => d.id === want) ? want : "";
-  if (typeof recordDisplaySel._cselRefresh === "function") recordDisplaySel._cselRefresh();
+  if (withPictures) await loadRecordThumbs();
+  renderRecordCards();
 }
+function closeRecDisplayMenu() {
+  if (recDisplayMenu) recDisplayMenu.hidden = true;
+  if (recDisplayBtn) recDisplayBtn.classList.remove("open");
+}
+function openRecDisplayMenu() {
+  if (!recDisplayMenu || !recDisplayBtn || !recordDisplaySel) return;
+  recDisplayMenu.textContent = "";
+  const head = document.createElement("div");
+  head.className = "menu-head";
+  head.textContent = "Screen to record";
+  const cards = document.createElement("div");
+  cards.className = "disp-cards";
+  recDisplayMenu.append(head, cards);
+  renderDisplayCards(cards, recordCardItems(), recordCurrentId(), (id) => { closeRecDisplayMenu(); pickRecordDisplay(id); });
+  const r = recDisplayBtn.getBoundingClientRect();
+  recDisplayMenu.hidden = false;
+  const w = recDisplayMenu.offsetWidth;
+  recDisplayMenu.style.left = `${Math.max(6, Math.min(r.left - 30, window.innerWidth - w - 6))}px`;
+  recDisplayMenu.style.top = `${r.bottom + 4}px`;
+  recDisplayBtn.classList.add("open");
+}
+if (recDisplayBtn) recDisplayBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (recDisplayMenu && !recDisplayMenu.hidden) closeRecDisplayMenu();
+  else refreshDisplayList(true).then(openRecDisplayMenu);
+});
+if (recDisplayMenu) recDisplayMenu.addEventListener("click", (e) => e.stopPropagation());
+document.addEventListener("click", closeRecDisplayMenu);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeRecDisplayMenu(); });
+window.addEventListener("blur", closeRecDisplayMenu);
+
 if (recordDisplaySel) recordDisplaySel.addEventListener("change", async () => {
   await persistTx({ recordDisplay: recordDisplaySel.value });
+  const chosen = recordDisplays.find((d) => d.id === recordDisplaySel.value);
+  renderRecordCards();
+  if (document.body.classList.contains("in-interview")) toast(`Recording ${chosen ? chosen.label.replace(/,.*$/, "") : "the main display"}.`, "info");
   // A running recording moves to the new screen: the file so far is closed
   // and a second one starts; End saves both with the session.
   if (typeof window.isRecording === "function" && window.isRecording()) {
@@ -1824,6 +1953,7 @@ window.__recIndicator = (on) => {
 if (recIndicatorEl) recIndicatorEl.addEventListener("click", async () => {
   if (typeof window.isRecording === "function" && window.isRecording()) {
     if (typeof window.stopRecording === "function") await window.stopRecording();
+    toast("Recording stopped. Click the camera to record again.", "warn");
   } else if (typeof window.startRecording === "function") {
     window.startRecording(true); // manual: record even if auto-record is off in Settings
   }
@@ -2229,19 +2359,19 @@ function addMeetBubble(lines, live) {
     b.type = "button";
     b.className = "meet-clear " + cls;
     b.title = title;
-    b.textContent = label;
+    b.innerHTML = aceIcon(label);
     b.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); onClick(); });
     actions.appendChild(b);
     return b;
   };
-  mkBtn("meet-retry", "Answer this again", "↻", () => {
+  mkBtn("meet-retry", "Answer this again", "refresh", () => {
     const t = bubbleText(el);
     if (!t) return;
     if (el === lastMeetEl) sealMeetBubble();
     resendTurn(t, []);
   });
-  mkBtn("meet-edit", "Edit this transcript, then answer", "✎", () => beginMeetEdit(el));
-  mkBtn("meet-remove", "Remove this transcript (Shift+Z)", "×", () => {
+  mkBtn("meet-edit", "Edit this transcript, then answer", "edit", () => beginMeetEdit(el));
+  mkBtn("meet-remove", "Remove this transcript (Shift+Z)", "x", () => {
     clearMeetBubble(el);
     el.remove();
     // Forget the removed bubble so the next transcript starts a new one
@@ -3020,26 +3150,99 @@ if (answerClearBtn) {
     if (answerEmpty) answerEmpty.hidden = false;
     // Reset spacer so first new turn starts flush
     if (answerSpacer) answerSpacer.style.height = "0px";
+    showAnswerJump(false);
     // Also wipe the remembered answers/code/diagrams used to ground follow-ups.
     if (window.api.clearAnswerMemory) window.api.clearAnswerMemory();
   });
 }
 
 // Bring a transcript bubble into view as it grows. A bubble taller than the
-// panel is lined up by its bottom edge so the newest words stay on screen;
-// scrollIntoView "nearest" would settle on its top and hide them.
+// panel is lined up by its bottom edge so the newest words stay on screen.
+//
+// While the newest answer is on screen it is being read, so new transcript
+// below it must not push it away: the panel scrolls only as far as keeps the
+// answer's top in place (an answer taller than the panel does not move at
+// all), and a "New transcript" button offers the rest. Clicking it, scrolling
+// down to the end yourself, or the next answer ends the hold.
+const answerJumpBtn = document.getElementById("answerJump");
+let answerHoldReleased = null; // the answer the reader chose to move on from
+// Read to the end (the reading marker has dimmed every phrase): no hold.
+function answerFullyRead(a) {
+  return !!a.querySelector(".read-s") && !a.querySelector(".read-s:not(.read-done)");
+}
+function latestAnswerBefore(el) {
+  const all = answerHistory.querySelectorAll(".answer-a");
+  const a = all[all.length - 1];
+  if (!a || a === answerHoldReleased) return null;
+  if (answerFullyRead(a)) { answerHoldReleased = a; return null; }
+  return a.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING ? a : null;
+}
+// The bar shows the newest words as they are heard, so the speech is on
+// screen at once even while the answer is held in place.
+function showAnswerJump(on, bubble) {
+  if (!answerJumpBtn) return;
+  if (on) {
+    const composer = document.querySelector(".answer-composer");
+    answerJumpBtn.style.bottom = `${(composer ? composer.offsetHeight : 60) + 10}px`;
+    const textEl = answerJumpBtn.querySelector("span");
+    const lines = bubble ? bubble.querySelectorAll(".meet-line") : [];
+    const lastLine = lines.length ? lines[lines.length - 1] : null;
+    const nameEl = lastLine && lastLine.querySelector(".meet-name"); // its " : " is drawn by CSS
+    const line = lastLine
+      ? (nameEl ? nameEl.textContent + ": " + lastLine.textContent.slice(nameEl.textContent.length) : lastLine.textContent)
+      : (bubble ? bubble.textContent : "");
+    const t = String(line || "").replace(/\s+/g, " ").trim();
+    // The newest words matter most: a long line keeps its end.
+    if (textEl) textEl.textContent = t ? (t.length > 80 ? "…" + t.slice(-80).replace(/^\S*\s/, "") : t) : "New transcript";
+    answerJumpBtn.title = "Show the new transcript";
+  }
+  answerJumpBtn.hidden = !on;
+}
 function revealMeetBubble(el) {
   if (!el || !answerHistory) return;
   try {
     const cRect = answerHistory.getBoundingClientRect();
     const r = el.getBoundingClientRect();
-    if (r.height > cRect.height) {
-      answerHistory.scrollTop += r.bottom - cRect.bottom;
-    } else {
-      el.scrollIntoView({ block: "nearest" });
+    let delta = 0;
+    if (r.height > cRect.height || r.bottom > cRect.bottom) delta = r.bottom - cRect.bottom;
+    else if (r.top < cRect.top) delta = r.top - cRect.top;
+    if (delta > 0) {
+      const a = latestAnswerBefore(el);
+      const ar = a && a.getBoundingClientRect();
+      if (ar && ar.bottom > cRect.top + 8 && ar.top < cRect.bottom - 8) {
+        const room = Math.max(0, ar.top - cRect.top - 8);
+        if (delta > room) { delta = room; showAnswerJump(true, el); }
+      } else if (answerJumpBtn && !answerJumpBtn.hidden) {
+        showAnswerJump(false); // the answer was read to the end, or left behind
+      }
     }
+    if (delta) answerHistory.scrollTop += delta;
   } catch {}
 }
+if (answerJumpBtn) answerJumpBtn.addEventListener("click", () => {
+  const all = answerHistory.querySelectorAll(".answer-a");
+  answerHoldReleased = all[all.length - 1] || null;
+  showAnswerJump(false);
+  // The newest bubble's bottom at the panel's bottom (not the scroll end: a
+  // spacer below the last turn would leave the panel blank).
+  const last = lastTurnEl();
+  if (!last) return;
+  const c = answerHistory.getBoundingClientRect();
+  const r = last.getBoundingClientRect();
+  if (r.bottom > c.bottom - 12) answerHistory.scrollTo({ top: answerHistory.scrollTop + r.bottom - c.bottom + 12, behavior: "smooth" });
+});
+if (answerHistory) answerHistory.addEventListener("scroll", () => {
+  if (!answerJumpBtn || answerJumpBtn.hidden) return;
+  const last = lastTurnEl();
+  if (!last) return;
+  const c = answerHistory.getBoundingClientRect();
+  // The reader scrolled down to the newest bubble: they have moved on.
+  if (last.getBoundingClientRect().bottom <= c.bottom + 4) {
+    const all = answerHistory.querySelectorAll(".answer-a");
+    answerHoldReleased = all[all.length - 1] || null;
+    showAnswerJump(false);
+  }
+});
 
 // Spacer div pinned at the bottom of answerHistory — always sized to the
 // panel height so there is always room to scroll any turn to the top,
@@ -3102,13 +3305,13 @@ function addAnswerTurn(question, imgs, mode, ts) {
     actions.className = "meet-actions";
     const mk = (cls, title, label, onClick) => {
       const b = document.createElement("button");
-      b.type = "button"; b.className = "meet-clear " + cls; b.title = title; b.textContent = label;
+      b.type = "button"; b.className = "meet-clear " + cls; b.title = title; b.innerHTML = aceIcon(label);
       b.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); onClick(); });
       actions.appendChild(b);
     };
-    mk("meet-retry", "Answer this again", "↻", () => resendTurn(question, imgs));
-    mk("meet-edit", "Edit this question, then answer", "✎", () => beginInlineEdit(q, question, imgs, turnMode));
-    mk("meet-remove", "Remove this question and its answer", "×", () => {
+    mk("meet-retry", "Answer this again", "refresh", () => resendTurn(question, imgs));
+    mk("meet-edit", "Edit this question, then answer", "edit", () => beginInlineEdit(q, question, imgs, turnMode));
+    mk("meet-remove", "Remove this question and its answer", "x", () => {
       turn.remove();
       if (answerHistory && !answerHistory.querySelector(".answer-turn, .meet-turn") && answerEmpty) answerEmpty.hidden = false;
     });
@@ -3157,6 +3360,7 @@ function addAnswerTurn(question, imgs, mode, ts) {
   // (the question, or the transcript) above for context. Measured from the
   // answer's TOP: on Submit a drafted answer is pasted in whole before this
   // runs, and measuring a bottom edge would open the bubble at its end.
+  showAnswerJump(false); // the new answer is what is read now
   requestAnimationFrame(() => requestAnimationFrame(() => {
     const cRect = answerHistory.getBoundingClientRect();
     const aTopInScroll = answerHistory.scrollTop + (a.getBoundingClientRect().top - cRect.top);
@@ -4591,7 +4795,7 @@ async function speakerHandleOpened(connId) {
         catch (e) { log(`Speaker[${connId}]: adding the screen failed: ${e.message}`, "err"); }
       }
     }
-    window.api.sendSignaling({ connId, type: "screen", on });
+    notifyScreenState(on, connId);
   });
   const speakerSeenStreams = new Set();
   const attachRemote = (remote, src) => {
@@ -4798,6 +5002,13 @@ window.api.onSignaling((msg) => {
       speakerHandleClosed(msg.connId);
       mirrorStop();
       chatSetStatus("The supporter left");
+      // No supporter: the chat column closes and the window is back to its
+      // fixed size. The next supporter starts on the default display.
+      if (speakerPeers.size === 0) {
+        stopScreenForSupporter();
+        shareDisplayId = "";
+        closeSidePane();
+      }
     }
     else if (netCfg && netCfg.role === "supporter") {
       if (supporterPeer) {
@@ -4815,7 +5026,13 @@ window.api.onSignaling((msg) => {
       clearScreenView("Connection to the speaker closed.");
     }
   } else if (type === "screen") {
-    if (netCfg && netCfg.role === "supporter") onScreenShareState(!!msg.on);
+    if (netCfg && netCfg.role === "supporter") onScreenShareState(!!msg.on, msg);
+  } else if (type === "screen-select") {
+    if (netCfg && netCfg.role === "speaker") switchShareDisplay(String(msg.display || ""));
+  } else if (type === "screen-thumbs-request") {
+    if (netCfg && netCfg.role === "speaker") sendDisplayThumbs(msg.connId);
+  } else if (type === "screen-thumbs") {
+    if (netCfg && netCfg.role === "supporter") onRemoteThumbs(msg.thumbs);
   } else if (type === "signal") {
     if (netCfg && netCfg.role === "speaker")
       speakerHandleSignal(msg.connId, msg.payload);
@@ -5155,23 +5372,22 @@ window.api.onMicModeChanged((info) => {
   updateMicPillUI(mode);
   updateMicModeBanner(mode);
   const role = (netCfg && netCfg.role) || "";
-  let icon = MIC_MODE_ICONS[mode] || "";
   let msg;
   if (mode === "mute")
     msg =
       role === "supporter"
-        ? `${icon} Your mic is off. Nobody hears you.`
-        : `${icon} The supporter's mic is off.`;
+        ? "Your mic is off. Nobody hears you."
+        : "The supporter's mic is off.";
   else if (mode === "aOnly")
     msg =
       role === "supporter"
-        ? `${icon} They hear you. The meeting does not.`
-        : `${icon} The supporter can talk to you. The meeting does not hear them.`;
+        ? "They hear you. The meeting does not."
+        : "The supporter can talk to you. The meeting does not hear them.";
   else if (mode === "aAndC")
     msg =
       role === "supporter"
-        ? `${icon} You are live: they and the meeting hear you.`
-        : `${icon} The supporter is live in the meeting.`;
+        ? "You are live: they and the meeting hear you."
+        : "The supporter is live in the meeting.";
   updateSupporterMicButtons(mode);
   toast(msg, mode);
   log(msg, "info");
@@ -5182,7 +5398,11 @@ function toast(message, kind) {
   if (!container) return;
   const el = document.createElement("div");
   el.className = "toast " + (kind ? "toast-" + kind : "toast-info");
-  el.textContent = message;
+  const TOAST_ICONS = { err: "alert", warn: "warning", mute: "mic-off", aOnly: "mic", aAndC: "mic" };
+  el.innerHTML = aceIcon(TOAST_ICONS[kind] || "info", "toast-ico");
+  const msgEl = document.createElement("span");
+  msgEl.textContent = message;
+  el.appendChild(msgEl);
   container.appendChild(el);
   setTimeout(() => el.classList.add("toast-out"), 2700);
   setTimeout(() => {
@@ -5199,7 +5419,7 @@ function updateMicModeBanner(mode) {
   if (!banner || !icon || !text) return;
   banner.classList.remove("mode-mute", "mode-aOnly", "mode-aAndC");
   banner.classList.add("mode-" + mode);
-  icon.textContent = MIC_MODE_ICONS[mode] || "";
+  icon.innerHTML = aceIcon(mode === "mute" ? "mic-off" : "mic");
   if (mode === "mute") text.textContent = "Your mic is off. Nobody hears you.";
   else if (mode === "aOnly")
     text.textContent = "They hear you. The meeting does not.";
@@ -5783,25 +6003,58 @@ syncProjectMode();
 // Speaker (B): the screen is captured the way the recorder does it and sent as
 // a video track on the same peer as the call's audio. B's own windows are
 // content-protected, so they are not in the picture. Supporter (A): the track
-// plays in the panel above the chat; a "screen" message says whether B shares.
+// plays in the panel above the chat; a "screen" message says whether B shares,
+// which displays B has and which one is shown. A picks the display; B swaps
+// the track's source without a new connection.
+
+// getDisplayMedia, one call at a time, each for a chosen display ('' = the
+// recording's). Main answers the call without a picker (main.js).
+(function serializeDisplayCapture() {
+  const md = navigator.mediaDevices;
+  if (!md || typeof md.getDisplayMedia !== "function") return;
+  const original = md.getDisplayMedia.bind(md);
+  let chain = Promise.resolve();
+  window.captureDisplayMedia = (displayId, constraints) => {
+    const run = chain.then(async () => {
+      if (window.api.setCaptureDisplay) await window.api.setCaptureDisplay(displayId || "").catch(() => {});
+      try { return await original(constraints); }
+      finally { if (window.api.setCaptureDisplay) await window.api.setCaptureDisplay("").catch(() => {}); }
+    });
+    chain = run.catch(() => {});
+    return run;
+  };
+  md.getDisplayMedia = (constraints) => window.captureDisplayMedia("", constraints);
+})();
 
 let speakerScreenStream = null;
+let speakerScreenDisplay = ""; // the display speakerScreenStream shows
+let shareDisplayId = "";       // the display the supporter picked ('' = the recording's)
 const SCREEN_FPS = 15;
 
-async function captureScreenForSupporter() {
-  if (speakerScreenStream && speakerScreenStream.getVideoTracks().some((t) => t.readyState === "live")) return speakerScreenStream;
-  stopScreenForSupporter();
+// This computer's displays, and the one the supporter is shown.
+async function shareDisplayInfo() {
+  let list = [];
+  try { list = (window.api.listDisplays && (await window.api.listDisplays())) || []; } catch {}
+  const has = (id) => !!id && list.some((d) => d.id === id);
+  const rec = String((txCfg && txCfg.recordDisplay) || "");
+  const fallback = has(rec) ? rec : ((list.find((d) => d.main) || list[0] || {}).id || "");
+  const current = has(speakerScreenDisplay) ? speakerScreenDisplay : has(shareDisplayId) ? shareDisplayId : fallback;
+  return { displays: list.map((d) => ({ id: d.id, label: d.label })), display: current };
+}
+
+// A new capture of one display (a fresh stream; the caller owns it).
+async function captureDisplayStream(displayId) {
   const video = { frameRate: { ideal: SCREEN_FPS, max: SCREEN_FPS }, width: { max: 1920 }, height: { max: 1080 } };
   let s = null;
   // Windows: getDisplayMedia gets a capturer of its own (see recorder.js); the
-  // main process answers it with the screen chosen for recording, no picker.
-  if (!IS_MAC && navigator.mediaDevices.getDisplayMedia) {
-    try { s = await navigator.mediaDevices.getDisplayMedia({ video, audio: false }); }
+  // main process answers it with the chosen screen, no picker.
+  if (!IS_MAC && window.captureDisplayMedia) {
+    try { s = await window.captureDisplayMedia(displayId, { video, audio: false }); }
     catch (e) { log("Screen for supporter: display capture unavailable (" + e.message + "), using desktop capture", "info"); }
   }
   if (!s) {
     try {
-      const id = window.api.getDesktopSourceId ? await window.api.getDesktopSourceId() : null;
+      const id = window.api.getDesktopSourceId ? await window.api.getDesktopSourceId(displayId) : null;
       if (!id) throw new Error("no screen source");
       s = await navigator.mediaDevices.getUserMedia({
         audio: false,
@@ -5815,10 +6068,31 @@ async function captureScreenForSupporter() {
   s.getAudioTracks().forEach((t) => t.stop());
   const vt = s.getVideoTracks()[0];
   if (!vt) { s.getTracks().forEach((t) => t.stop()); return null; }
-  speakerScreenStream = new MediaStream([vt]);
   const st = vt.getSettings ? vt.getSettings() : {};
-  log(`Screen for supporter: ${st.width || "?"}x${st.height || "?"} @ ${st.frameRate || SCREEN_FPS} fps`, "info");
-  vt.onended = () => { if (speakerScreenStream && speakerScreenStream.getVideoTracks()[0] === vt) { speakerScreenStream = null; notifyScreenState(false); } };
+  log(`Screen for supporter: ${st.width || "?"}x${st.height || "?"} @ ${st.frameRate || SCREEN_FPS} fps${displayId ? " (display " + displayId + ")" : ""}`, "info");
+  return new MediaStream([vt]);
+}
+
+function adoptScreenStream(stream, displayId) {
+  speakerScreenStream = stream;
+  speakerScreenDisplay = displayId || "";
+  const vt = stream.getVideoTracks()[0];
+  vt.onended = () => {
+    if (speakerScreenStream && speakerScreenStream.getVideoTracks()[0] === vt) {
+      speakerScreenStream = null;
+      speakerScreenDisplay = "";
+      notifyScreenState(false);
+    }
+  };
+}
+
+async function captureScreenForSupporter() {
+  if (speakerScreenStream && speakerScreenStream.getVideoTracks().some((t) => t.readyState === "live")) return speakerScreenStream;
+  stopScreenForSupporter();
+  const want = (await shareDisplayInfo()).display;
+  const s = await captureDisplayStream(shareDisplayId && want === shareDisplayId ? shareDisplayId : "");
+  if (!s) return null;
+  adoptScreenStream(s, want);
   return speakerScreenStream;
 }
 
@@ -5826,12 +6100,63 @@ function stopScreenForSupporter() {
   if (!speakerScreenStream) return;
   speakerScreenStream.getTracks().forEach((t) => { t.onended = null; t.stop(); });
   speakerScreenStream = null;
+  speakerScreenDisplay = "";
 }
 
-function notifyScreenState(on) {
+async function notifyScreenState(on, onlyConnId) {
+  const info = await shareDisplayInfo();
   speakerPeers.forEach((entry, connId) => {
-    try { window.api.sendSignaling({ connId, type: "screen", on: !!on }); } catch {}
+    if (onlyConnId && connId !== onlyConnId) return;
+    try { window.api.sendSignaling({ connId, type: "screen", on: !!on, ...info }); } catch {}
   });
+}
+
+// The supporter picked one of this computer's displays: the same video track
+// now shows that display (replaceTrack, no new offer).
+let switchingShareDisplay = false;
+async function switchShareDisplay(displayId) {
+  const info = await shareDisplayInfo();
+  const d = info.displays.find((x) => x.id === displayId);
+  if (!d || switchingShareDisplay) return;
+  shareDisplayId = displayId;
+  const live = speakerScreenStream && speakerScreenStream.getVideoTracks().some((t) => t.readyState === "live");
+  if (!live || speakerPeers.size === 0) { notifyScreenState(!!live); return; }
+  if (speakerScreenDisplay === displayId) { notifyScreenState(true); return; }
+  switchingShareDisplay = true;
+  try {
+    const fresh = await captureDisplayStream(displayId);
+    if (!fresh) { toast("That display could not be captured.", "err"); notifyScreenState(true); return; }
+    const oldVt = speakerScreenStream.getVideoTracks()[0];
+    const newVt = fresh.getVideoTracks()[0];
+    speakerPeers.forEach((entry, connId) => {
+      try { entry.peer.replaceTrack(oldVt, newVt, entry.stream); }
+      catch (e) { log(`Speaker[${connId}]: switching the screen failed: ${e.message}`, "err"); }
+    });
+    oldVt.onended = null;
+    oldVt.stop();
+    adoptScreenStream(fresh, displayId);
+    notifyScreenState(true);
+    toast(`The supporter now sees ${d.label.replace(/,.*$/, "")}.`, "info");
+  } finally {
+    switchingShareDisplay = false;
+  }
+}
+if (window.api.onDisplaysChanged)
+  window.api.onDisplaysChanged(() => { if (speakerPeers.size) notifyScreenState(!!speakerScreenStream); });
+
+// A small picture of each display for the supporter's display picker. Only
+// while the screen is shared, and only with more than one display.
+const thumbsSentAt = new Map();
+async function sendDisplayThumbs(connId) {
+  if (!connId || !speakerPeers.has(connId) || !window.api.displayThumbnails) return;
+  if (!(netCfg && netCfg.shareScreen !== false) || !speakerScreenStream) return;
+  const now = Date.now();
+  if (now - (thumbsSentAt.get(connId) || 0) < 1500) return;
+  thumbsSentAt.set(connId, now);
+  let thumbs = [];
+  try { thumbs = (await window.api.displayThumbnails({ width: 288 })) || []; } catch {}
+  if (thumbs.length < 2) return;
+  try { window.api.sendSignaling({ connId, type: "screen-thumbs", thumbs }); } catch {}
 }
 
 // The speaker's setting: on applies at once to every connected supporter.
@@ -5880,16 +6205,46 @@ async function refreshSupporterSettings() {
 refreshSupporterSettings();
 
 // ── Supporter side ──
+// The speaker's screen shows in a small preview at the top of the chat column.
+// Double-click it (or the pop-out button) to open it in a window of its own
+// that can be made as large as needed or moved to another monitor. When the
+// speaker has more than one display, the numbered buttons pick which one.
 const screenViewEl = document.getElementById("screenView");
 const screenVideoEl = document.getElementById("screenVideo");
 const screenStatusEl = document.getElementById("screenStatus");
+const screenEmptyTextEl = document.getElementById("screenEmptyText");
+const screenStageEl = document.getElementById("screenStage");
 const screenToggleBtn = document.getElementById("screenToggleBtn");
-const screenFullBtn = document.getElementById("screenFullBtn");
-let screenShareOn = null; // what B last said: true / false / null (unknown)
+const screenPopBtn = document.getElementById("screenPopBtn");
+const screenDisplaysEl = document.getElementById("screenDisplays");
+let screenShareOn = null;   // what B last said: true / false / null (unknown)
+let remoteDisplays = [];    // B's displays: [{ id, label }]
+let remoteDisplay = "";     // the one shown
+let remoteThumbs = {};      // a small picture of each: { id: data URL }
+let screenHasVideo = false;
+let screenStatusText = "Waiting for the speaker's screen…";
+
+function remoteDisplayName(id) {
+  const i = remoteDisplays.findIndex((d) => d.id === id);
+  if (i < 0) return "";
+  const m = /^Display \d+/.exec(remoteDisplays[i].label || "");
+  return m ? m[0] : `Display ${i + 1}`;
+}
 
 function setScreenStatus(text, noVideo) {
-  if (screenStatusEl) screenStatusEl.textContent = text;
+  screenHasVideo = !noVideo;
+  screenStatusText = text;
+  if (screenEmptyTextEl && noVideo) screenEmptyTextEl.textContent = text;
+  if (screenStatusEl) screenStatusEl.textContent = noVideo ? "Speaker's screen" : text;
   if (screenViewEl) screenViewEl.classList.toggle("no-video", !!noVideo);
+  syncScreenViewer();
+}
+
+function describeScreen() {
+  if (!screenVideoEl) return;
+  const w = screenVideoEl.videoWidth, h = screenVideoEl.videoHeight;
+  const name = (remoteDisplays.length > 1 && remoteDisplayName(remoteDisplay)) || "Speaker's screen";
+  setScreenStatus(w ? `${name} · ${w}×${h}` : name, false);
 }
 
 let screenTrackId = null;
@@ -5897,44 +6252,206 @@ function attachScreenTrack(track) {
   if (!screenVideoEl || !track) return;
   if (track.id === screenTrackId && screenVideoEl.srcObject) return; // the same track, told twice
   screenTrackId = track.id;
-  const ms = new MediaStream([track]);
-  screenVideoEl.srcObject = ms;
+  screenVideoEl.srcObject = new MediaStream([track]);
   const p = screenVideoEl.play();
   if (p && p.catch) p.catch(() => {});
-  const describe = () => {
-    const w = screenVideoEl.videoWidth, h = screenVideoEl.videoHeight;
-    setScreenStatus(w ? `Speaker's screen · ${w}×${h}` : "Speaker's screen", false);
-  };
-  screenVideoEl.onloadedmetadata = describe;
-  screenVideoEl.onresize = describe;
+  screenVideoEl.onloadedmetadata = describeScreen;
+  screenVideoEl.onresize = describeScreen;
   track.onended = () => clearScreenView("The speaker stopped sharing the screen.");
   track.onmute = () => { if (screenShareOn === false) clearScreenView("The speaker stopped sharing the screen."); };
-  track.onunmute = describe;
+  track.onunmute = describeScreen;
   screenShareOn = true;
-  describe();
+  describeScreen();
   log("Supporter: receiving the speaker's screen", "info");
 }
 
 function clearScreenView(text) {
   if (screenVideoEl) { try { screenVideoEl.srcObject = null; } catch {} }
+  screenTrackId = null;
   setScreenStatus(text || "No screen.", true);
 }
 
-function onScreenShareState(on) {
+function onScreenShareState(on, msg) {
   screenShareOn = on;
+  if (msg && Array.isArray(msg.displays)) {
+    remoteDisplays = msg.displays.filter((d) => d && d.id).map((d) => ({ id: String(d.id), label: String(d.label || "") }));
+    remoteDisplay = String(msg.display || "");
+    renderScreenDisplays();
+  }
   if (!on) clearScreenView("The speaker is not sharing the screen.");
   else if (!(screenVideoEl && screenVideoEl.srcObject)) setScreenStatus("Waiting for the speaker's screen…", true);
+  else describeScreen();
+}
+
+// One picture card per display of the speaker's (none with one display).
+function renderDisplayButtons(container) {
+  if (!container) return;
+  container.hidden = remoteDisplays.length < 2;
+  renderDisplayCards(container, remoteDisplays.map((d) => ({ id: d.id, label: d.label, src: remoteThumbs[d.id] })), remoteDisplay, pickRemoteDisplay);
+}
+function renderScreenDisplays() {
+  renderDisplayButtons(screenDisplaysEl);
+  syncScreenViewer();
+  syncThumbPolling();
+}
+// The pictures come from the speaker, every few seconds while a picker is on
+// screen (the preview shown, or the pop-out window open).
+let thumbTimer = null;
+function requestRemoteThumbs() {
+  try { window.api.sendSignaling({ type: "screen-thumbs-request" }); } catch {}
+}
+function syncThumbPolling() {
+  const shown = !!(screenViewEl && !screenViewEl.classList.contains("collapsed")) || viewerIsOpen();
+  const want = document.body.classList.contains("role-supporter") && remoteDisplays.length >= 2 && shown;
+  if (want && !thumbTimer) { requestRemoteThumbs(); thumbTimer = setInterval(requestRemoteThumbs, 4000); }
+  else if (!want && thumbTimer) { clearInterval(thumbTimer); thumbTimer = null; }
+}
+function onRemoteThumbs(list) {
+  if (!Array.isArray(list)) return;
+  remoteThumbs = Object.fromEntries(list.filter((t) => t && t.id && /^data:image\//.test(t.src || "")).map((t) => [String(t.id), t.src]));
+  renderDisplayButtons(screenDisplaysEl);
+  syncScreenViewer();
+}
+function pickRemoteDisplay(id) {
+  if (!id || id === remoteDisplay) return;
+  window.api.sendSignaling({ type: "screen-select", display: id });
+  remoteDisplay = id; // the speaker confirms with a "screen" message
+  renderScreenDisplays();
+  if (screenHasVideo) describeScreen();
 }
 
 if (screenToggleBtn) screenToggleBtn.addEventListener("click", () => {
   if (!screenViewEl) return;
   const collapsed = screenViewEl.classList.toggle("collapsed");
-  screenToggleBtn.innerHTML = collapsed ? "&#x25BE;" : "&#x25B4;";
-  screenToggleBtn.title = collapsed ? "Show the screen" : "Hide the screen";
+  screenToggleBtn.innerHTML = aceIcon(collapsed ? "chevron-down" : "chevron-up");
+  screenToggleBtn.title = collapsed ? "Show the picture" : "Hide the picture";
+  syncThumbPolling();
 });
-const goFull = () => { if (screenVideoEl && screenVideoEl.srcObject && screenVideoEl.requestFullscreen) screenVideoEl.requestFullscreen().catch(() => {}); };
-if (screenFullBtn) screenFullBtn.addEventListener("click", goFull);
-if (screenVideoEl) screenVideoEl.addEventListener("dblclick", goFull);
+if (screenPopBtn) screenPopBtn.addEventListener("click", () => openScreenViewer());
+if (screenStageEl) screenStageEl.addEventListener("dblclick", () => openScreenViewer());
+
+// ── The pop-out window ──
+// Opened with window.open, so it runs in this page's process and plays the
+// same MediaStream; main.js gives it a normal title bar and remembers where
+// it was. Built from here: it has no script of its own.
+let screenViewer = null;
+const VIEWER_CSS = `
+  [hidden] { display: none !important; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0b0d12; color: #e6e8ee; overflow: hidden;
+    font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  .bar { flex: none; height: 50px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px;
+    background: #12151c; border-bottom: 1px solid #232835; user-select: none; }
+  .live { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.18); flex: none; }
+  .live.off { background: #6b7280; box-shadow: none; }
+  .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .grow { flex: 1; }
+  .group { display: inline-flex; align-items: center; gap: 8px; }
+  .lbl { color: #8b93a7; font-size: 12px; }
+  .seg { display: inline-flex; padding: 2px; gap: 2px; background: #1b1f29; border: 1px solid #2a3040; border-radius: 8px; }
+  .seg button { font: inherit; font-size: 12px; font-weight: 600; min-width: 30px; height: 26px; padding: 0 10px;
+    border: 0; border-radius: 6px; background: transparent; color: #aab2c5; cursor: pointer; }
+  .seg button:hover { background: #262c3a; color: #fff; }
+  .seg button.active { background: #7c6cff; color: #fff; }
+  .cards { display: inline-flex; gap: 6px; }
+  .disp-card { position: relative; display: block; padding: 0; border: 0; background: none; cursor: pointer; }
+  .disp-thumb { position: relative; display: block; width: 62px; height: 35px; border-radius: 5px; overflow: hidden;
+    background: #1b1f29; outline: 1px solid #2a3040; }
+  .disp-card:hover .disp-thumb { outline-color: #59607a; }
+  .disp-card.active .disp-thumb { outline: 2px solid #7c6cff; }
+  .disp-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .disp-num { position: absolute; left: 3px; bottom: 2px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 4px;
+    background: rgba(0,0,0,.72); color: #fff; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; }
+  .disp-on, .disp-cap { display: none; }
+  .icon { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #2a3040;
+    border-radius: 8px; background: #1b1f29; color: #d5d9e3; cursor: pointer; padding: 0; }
+  .icon:hover { background: #262c3a; color: #fff; }
+  .icon svg { width: 16px; height: 16px; }
+  .ico { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .stage { position: relative; flex: 1; min-height: 0; background: #000; }
+  .stage.fit video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  .stage.actual { overflow: auto; display: grid; place-items: center; }
+  .stage.actual video { display: block; max-width: none; }
+  .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center;
+    padding: 24px; color: #8b93a7; font-size: 14px; }
+  :fullscreen .bar { display: none; }
+`;
+function viewerIsOpen() {
+  if (screenViewer && screenViewer.closed) screenViewer = null;
+  return !!screenViewer;
+}
+function openScreenViewer() {
+  if (viewerIsOpen()) { try { screenViewer.focus(); } catch {} return; }
+  let w = null;
+  try { w = window.open("about:blank", "aceScreenViewer"); } catch {}
+  if (!w) { toast("The screen window could not be opened.", "err"); return; }
+  screenViewer = w;
+  const d = w.document;
+  d.open();
+  d.write(`<!doctype html><html><head><meta charset="utf-8"><title>Speaker's screen — Ace</title><style>${VIEWER_CSS}</style></head><body>
+<header class="bar">
+  <span class="live" id="live"></span><span class="title" id="title">Speaker's screen</span><span class="grow"></span>
+  <span class="group" id="dispGroup" hidden><span class="lbl">Display</span><span class="cards" id="disps"></span></span>
+  <span class="seg" id="zoom"><button type="button" data-z="fit" class="active" title="Fit the picture to the window">Fit</button><button type="button" data-z="actual" title="Actual size: one screen pixel per pixel (scroll to move around)">100%</button></span>
+  <button type="button" class="icon" id="full" title="Full screen (F11 or double-click; Esc to leave)">${aceIcon("maximize")}</button>
+</header>
+<main class="stage fit" id="stage"><video id="v" autoplay muted playsinline></video><div class="empty" id="empty"></div></main>
+</body></html>`);
+  d.close();
+
+  const stage = d.getElementById("stage");
+  const v = d.getElementById("v");
+  const sizeActual = () => {
+    if (!stage.classList.contains("actual") || !v.videoWidth) { v.style.width = ""; return; }
+    v.style.width = `${v.videoWidth / (w.devicePixelRatio || 1)}px`;
+  };
+  d.getElementById("zoom").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-z]");
+    if (!b) return;
+    d.querySelectorAll("#zoom button").forEach((x) => x.classList.toggle("active", x === b));
+    stage.classList.toggle("fit", b.dataset.z === "fit");
+    stage.classList.toggle("actual", b.dataset.z === "actual");
+    sizeActual();
+  });
+  v.addEventListener("resize", sizeActual);
+  const toggleFull = () => {
+    if (d.fullscreenElement) d.exitFullscreen().catch(() => {});
+    else d.documentElement.requestFullscreen().catch(() => {});
+  };
+  d.getElementById("full").addEventListener("click", toggleFull);
+  stage.addEventListener("dblclick", toggleFull);
+  d.addEventListener("keydown", (e) => { if (e.key === "F11") { e.preventDefault(); toggleFull(); } });
+  w.addEventListener("pagehide", () => { if (screenViewer === w) screenViewer = null; setTimeout(syncThumbPolling, 0); });
+  syncScreenViewer();
+  syncThumbPolling();
+  try { w.focus(); } catch {}
+}
+function syncScreenViewer() {
+  if (!viewerIsOpen()) return;
+  const d = screenViewer.document;
+  const v = d.getElementById("v");
+  if (!v) return;
+  const src = (screenVideoEl && screenVideoEl.srcObject) || null;
+  if (v.srcObject !== src) {
+    v.srcObject = src;
+    if (src) { const p = v.play(); if (p && p.catch) p.catch(() => {}); }
+  }
+  const title = screenHasVideo ? screenStatusText : "Speaker's screen";
+  d.getElementById("title").textContent = title;
+  d.title = `${title} — Ace`;
+  d.getElementById("live").classList.toggle("off", !screenHasVideo);
+  const empty = d.getElementById("empty");
+  empty.textContent = screenStatusText;
+  empty.hidden = screenHasVideo;
+  renderDisplayButtons(d.getElementById("disps"));
+  d.getElementById("dispGroup").hidden = remoteDisplays.length < 2;
+}
+function closeScreenViewer() {
+  if (viewerIsOpen()) { try { screenViewer.close(); } catch {} }
+  screenViewer = null;
+}
+window.addEventListener("beforeunload", closeScreenViewer);
 
 // ── Supporter mode ──────────────────────────────────────────────────────────
 // The welcome screen's "Join as supporter" opens the join screen (the IP
@@ -6072,6 +6589,10 @@ function enterSupporterView() {
   updateSupporterMicButtons(currentMicMode);
   updateMicModeBanner(currentMicMode);
   screenShareOn = null;
+  remoteDisplays = [];
+  remoteDisplay = "";
+  remoteThumbs = {};
+  renderScreenDisplays();
   setScreenStatus("Waiting for the speaker's screen…", true);
   setTimeout(() => { try { composerInput && composerInput.focus(); } catch {} }, 50);
   log(`Supporting ${supporterAddress}`, "info");
@@ -6090,6 +6611,9 @@ async function leaveSupporterView(message) {
   await window.api.leaveSupporter().catch(() => {});
   teardownPeers();
   clearScreenView("No screen.");
+  closeScreenViewer();
+  remoteDisplays = [];
+  syncThumbPolling();
   try { netCfg = await window.api.getNetworkConfig(); } catch {}
   endBtn.title = "End session — back to the start screen";
   chatClearAll();

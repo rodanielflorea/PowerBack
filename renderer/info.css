@@ -1,8 +1,18 @@
-/* Info panel — light theme, matches the main window tokens. */
+/* Info panel: dark by default, light with <html data-theme="light"> (theme.js),
+   the same tokens as the main window. */
 :root {
-  --bg: #ffffff; --surface: #f6f7fb; --surface-2: #eceef4; --border: #e4e7ef; --border-hi: #c9cdd8;
-  --text: #0f1222; --muted: #6b7085; --accent: #2563eb; --accent-dim: rgba(37,99,235,.10);
-  --amber: #b45309; --shadow-sm: 0 1px 2px rgba(15,18,34,.04), 0 2px 8px rgba(15,18,34,.06);
+  --bg: #0f1116; --surface: #14171e; --surface-2: #1e222b; --border: #252a34; --border-hi: #353b48;
+  --text: #e7e9ef; --muted: #8b93a6; --accent: #a99dff; --accent-dim: rgba(124,108,255,.16);
+  --amber: #fbbf24; --shadow-sm: 0 1px 2px rgba(0,0,0,.35);
+  --warn-bg: rgba(245,158,11,.13); --warn-text: #fcd34d; --violet-bg: rgba(167,139,250,.14); --violet-text: #c4b5fd;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #ffffff; --surface: #f7f7fa; --surface-2: #eeeef3; --border: #e5e5ec; --border-hi: #d2d2dc;
+  --text: #14121f; --muted: #6b6880; --accent: #5b4cf0; --accent-dim: rgba(91,76,240,.09);
+  --amber: #b45309; --shadow-sm: 0 1px 2px rgba(20,18,31,.06);
+  --warn-bg: #fffaeb; --warn-text: #93370d; --violet-bg: #f4f3ff; --violet-text: #5925dc;
+  color-scheme: light;
 }
 * { box-sizing: border-box; }
 html, body {
@@ -40,7 +50,7 @@ body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 
 .info-clock {
   text-align: center; padding: 16px 8px 12px;
-  background: radial-gradient(360px 160px at 50% -40%, rgba(37,99,235,.10), transparent 70%);
+  background: radial-gradient(360px 160px at 50% -40%, var(--accent-dim), transparent 70%);
 }
 .info-time { font-size: 34px; font-weight: 700; letter-spacing: -0.5px; line-height: 1; font-variant-numeric: tabular-nums; }
 .info-date { font-size: 12px; color: var(--muted); margin-top: 5px; }
@@ -80,5 +90,5 @@ body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
   font-size: 10px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase;
   padding: 1px 6px; border-radius: 999px; background: var(--accent-dim); color: var(--accent);
 }
-.cv-mode--onsite { background: #fef3c7; color: #92400e; }
-.cv-mode--hybrid { background: #ede9fe; color: #5b21b6; }
+.cv-mode--onsite { background: var(--warn-bg); color: var(--warn-text); }
+.cv-mode--hybrid { background: var(--violet-bg); color: var(--violet-text); }
