@@ -1339,6 +1339,8 @@ const uploadModalLead = document.getElementById("uploadModalLead");
 function showUploadModal(r) {
   if (!uploadModal) return;
   uploadModalLink.value = r.link;
+  // Remember it until the user copies it, so it survives closing and reopening.
+  if (window.api.setPendingLink) window.api.setPendingLink(r.link);
   uploadModalList.innerHTML = "";
   const item = (text, cls) => {
     const li = document.createElement("li");
@@ -1346,21 +1348,28 @@ function showUploadModal(r) {
     li.textContent = text;
     uploadModalList.appendChild(li);
   };
-  item(`${r.uploaded.length} file${r.uploaded.length === 1 ? "" : "s"} uploaded`, "live");
-  for (const f of r.failed || []) item(`${f.name} — failed: ${f.error}`, "idle");
-  uploadModalLead.textContent =
-    "Link copied to the clipboard. Anyone with it can download the session files.";
+  if (r.pending) {
+    // Shown again because it was never copied (a later run, or the card was closed).
+    uploadModalLead.textContent = "Your last session's download link — it stays here until you press Copy link.";
+  } else {
+    item(`${(r.uploaded || []).length} file${(r.uploaded || []).length === 1 ? "" : "s"} uploaded`, "live");
+    for (const f of r.failed || []) item(`${f.name} — failed: ${f.error}`, "idle");
+    uploadModalLead.textContent = "Link copied to the clipboard. It stays here until you press Copy link, even if you close the app.";
+  }
   uploadModal.hidden = false;
   try { uploadModalLink.focus(); uploadModalLink.select(); } catch {}
 }
 
+// Close keeps the link (it comes back next time); only Copy clears it.
 function hideUploadModal() { if (uploadModal) uploadModal.hidden = true; }
 
 if (uploadModal) {
   document.getElementById("uploadModalClose").addEventListener("click", hideUploadModal);
   document.getElementById("uploadModalCopy").addEventListener("click", () => {
     if (window.api.copyText) window.api.copyText(uploadModalLink.value);
+    if (window.api.clearPendingLink) window.api.clearPendingLink();
     toast("Link copied", "info");
+    hideUploadModal();
   });
   document.getElementById("uploadModalOpen").addEventListener("click", () => {
     if (window.api.openExternal) window.api.openExternal(uploadModalLink.value);
@@ -1368,6 +1377,9 @@ if (uploadModal) {
 }
 if (window.api.onUploadProgress) {
   window.api.onUploadProgress((p) => log(`gofile: uploading ${p.index}/${p.total} — ${p.name}`));
+}
+if (window.api.getPendingLink) {
+  window.api.getPendingLink().then((link) => { if (link) showUploadModal({ link, pending: true }); }).catch(() => {});
 }
 
 async function uploadSessionToGofile(folder) {

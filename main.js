@@ -4332,6 +4332,12 @@ ipcMain.handle('save-session-bundle', async (_e, { role, company, transcript } =
 
 // Upload the saved session folder to gofile.io and return the share link.
 // Progress is streamed to the window so End can show which file is going up.
+// The last session's gofile share link stays until the user copies it, so it is
+// never lost when the window is closed and reopened, or the app is restarted.
+ipcMain.handle('get-pending-link', () => String(state.pendingUploadLink || ''));
+ipcMain.handle('set-pending-link', (_e, link) => { state.pendingUploadLink = String(link || ''); saveState(); });
+ipcMain.handle('clear-pending-link', () => { state.pendingUploadLink = ''; saveState(); });
+
 ipcMain.handle('upload-session-bundle', async (_e, folder) => {
   try {
     const r = await uploadFolder(folder, (p) => {

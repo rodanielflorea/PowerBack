@@ -3269,3 +3269,13 @@ body.meeting-hiring .team-only { display: none; }
 .upload-zone.required-missing { border-color: var(--danger); }
 .salary-row.required-missing .salary-amount { border-color: var(--danger); }
 .setup-required { margin: 10px 0 0; font-size: 12px; font-weight: 600; color: var(--danger); }
+
+/* The session share link: a floating card, not a blocking overlay — the rest of
+   the app stays clickable while it is shown. */
+#uploadModal.link-card {
+  background: transparent; backdrop-filter: none;
+  align-items: flex-start; justify-content: center;
+  padding-top: calc(var(--header-h) + 10px);
+  pointer-events: none; /* clicks fall through to the app */
+}
+#uploadModal.link-card .modal-card { pointer-events: auto; box-shadow: var(--shadow-lg); }

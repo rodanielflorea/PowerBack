@@ -181,6 +181,10 @@ contextBridge.exposeInMainWorld('api', {
   recChunk: (id, buf) => ipcRenderer.send('rec-chunk', id, buf),
   recEnd: (id) => ipcRenderer.invoke('rec-end', id),
   uploadSessionBundle: (folder) => ipcRenderer.invoke('upload-session-bundle', folder),
+  // The last session's share link, kept until the user copies it (across restarts too).
+  getPendingLink: () => ipcRenderer.invoke('get-pending-link'),
+  setPendingLink: (link) => ipcRenderer.invoke('set-pending-link', link),
+  clearPendingLink: () => ipcRenderer.invoke('clear-pending-link'),
   onUploadProgress: (cb) => ipcRenderer.on('upload-progress', (_e, p) => cb(p)),
   sessionFinalize: (company, position) => ipcRenderer.invoke('session-finalize', { company, position }),
   clearSessionLog: () => ipcRenderer.invoke('clear-session-log'),
