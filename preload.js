@@ -70,7 +70,7 @@ contextBridge.exposeInMainWorld('api', {
   onJoinRejected: (cb) => ipcRenderer.on('join-rejected', (_e, v) => cb(v)),
   mirrorOut: (payload) => ipcRenderer.send('mirror-out', payload),
   onMirrorIn: (cb) => ipcRenderer.on('mirror-in', (_e, v) => cb(v)),
-  remoteSubmit: (mode) => ipcRenderer.invoke('remote-submit', mode),
+  remoteSubmit: (mode, text) => ipcRenderer.invoke('remote-submit', mode, text || ''),
   onRemoteSubmit: (cb) => ipcRenderer.on('remote-submit', (_e, v) => cb(v)),
   remoteSubmitResult: (r) => ipcRenderer.send('remote-submit-result', r),
   onRemoteSubmitResult: (cb) => ipcRenderer.on('remote-submit-result', (_e, v) => cb(v)),
@@ -94,6 +94,9 @@ contextBridge.exposeInMainWorld('api', {
   onNetworkStatus: (cb) => ipcRenderer.on('network-status', (_e, v) => cb(v)),
   onNetworkError: (cb) => ipcRenderer.on('network-error', (_e, v) => cb(v)),
   openSticky: () => ipcRenderer.invoke('sticky-open'),
+  // A code / diagram note of its own: { kind: 'code', code, lang } |
+  // { kind: 'diagram', svg, w, h } | { kind: 'answer', html, mode, title }
+  openNote: (content) => ipcRenderer.invoke('note-open', content),
   closeSticky: () => ipcRenderer.invoke('sticky-close'),
   clearSticky: () => ipcRenderer.invoke('sticky-clear'),
   injectTestChat: (text) => ipcRenderer.invoke('inject-test-chat', text),
@@ -145,13 +148,14 @@ contextBridge.exposeInMainWorld('api', {
   onTriggerGetAnswer: (cb) => ipcRenderer.on('trigger-get-answer', () => cb()),
   onTriggerScreenshot: (cb) => ipcRenderer.on('trigger-screenshot', () => cb()),
   onSnipImage: (cb) => ipcRenderer.on('snip-image', (_e, v) => cb(v)),
+  startAreaSnip: () => ipcRenderer.invoke('start-area-snip'),
   getAvoidPhrases: () => ipcRenderer.invoke('get-avoid-phrases'),
   setAvoidPhrases: (text) => ipcRenderer.invoke('set-avoid-phrases', text),
   writeToIde: (code, speedFactor) => ipcRenderer.invoke('write-to-ide', { code, speedFactor }),
   stopIdeTyping:   () => ipcRenderer.invoke('stop-ide-typing'),
   onIdeTypingState: (cb) => ipcRenderer.on('ide-typing-state', (_e, s) => cb(s)),
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
-  showModelMenu: (anchor) => ipcRenderer.invoke('show-model-menu', anchor),
+  showModelMenu: (anchor, mode) => ipcRenderer.invoke('show-model-menu', anchor, mode),
   onModelSelected: (cb) => ipcRenderer.on('model-selected', (_e, id) => cb(id)),
   onAnswerConfigChanged: (cb) => ipcRenderer.on('answer-config-changed', (_e, cfg) => cb(cfg)),
   startDeepgramStream: (cfg) => ipcRenderer.invoke('start-deepgram-stream', cfg),
@@ -192,6 +196,10 @@ contextBridge.exposeInMainWorld('api', {
   speculativeStart: (opts) => ipcRenderer.invoke('speculative-start', opts),  // opts includes forcedMode
   speculativeCommit: (opts) => ipcRenderer.invoke('speculative-commit', opts),
   speculativeCancel: () => ipcRenderer.invoke('speculative-cancel'),
+  // Deepgram heard the speaker pause (its short end-of-speech signal).
+  onTranscriptSpeechFinal: (cb) => ipcRenderer.on('transcript-speech-final', () => cb()),
+  // Write answers to the likely questions in the background (interview start).
+  prepareAnswers: () => ipcRenderer.invoke('prepare-answers'),
   onAnswerCancelSpeculative: (cb) => ipcRenderer.on('answer-cancel-speculative', () => cb()),
   onAnswerCommitSpeculative: (cb) => ipcRenderer.on('answer-commit-speculative', () => cb()),
 });

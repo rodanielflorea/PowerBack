@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:" />
+  <script src="theme.js"></script>
+  <link rel="stylesheet" href="note.css" />
+</head>
+<body>
+  <!-- A note with one piece of code or one diagram, opened by double-clicking
+       it in an answer. Drag it by the top bar or the bottom strip (a diagram
+       note also by the picture); it can go past the top or bottom of the screen. -->
+  <header class="note-bar note-drag" id="noteTop">
+    <span class="note-kind" id="noteKind"></span>
+    <span class="note-title" id="noteTitle"></span>
+    <button class="note-btn" id="noteCopy" type="button" title="Copy the code" hidden><i data-icon="copy"></i><span class="note-copied" id="noteCopied">Copied</span></button>
+    <button class="note-btn" id="noteClose" type="button" title="Close this note"><i data-icon="win-close"></i></button>
+  </header>
+  <main class="note-body" id="noteBody"></main>
+  <footer class="note-grip note-drag" id="noteBottom" title="Drag to move"><span></span></footer>
+  <script src="icons.js"></script>
+  <script src="code-highlight.js"></script>
+  <script src="note.js"></script>
+</body>
+</html>
