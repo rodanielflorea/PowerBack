@@ -2075,7 +2075,14 @@ function controlPassPulse() {
   if (control.passTimer) clearTimeout(control.passTimer);
   control.passTimer = setTimeout(() => {
     control.passTimer = null;
-    if (control.buttons.size) { controlPassPulse(); return; } // a button is held: keep passing
+    // A held button keeps clicks passing so a drag isn't interrupted — but only
+    // while the supporter's input is still arriving. If it stopped (a lost
+    // mouse-up, a dropped data channel, the button released off-screen) a stuck
+    // entry in control.buttons would pin the window click-through forever and
+    // the speaker could never click again. So after a short quiet spell, let go
+    // of the stuck button(s) and catch clicks again.
+    if (control.buttons.size && (Date.now() - control.lastInputAt) < 1500) { controlPassPulse(); return; }
+    if (control.buttons.size) { appendLogLine('[control] input went quiet with a button held — releasing it so the speaker can click'); controlRelease(); }
     controlPassThrough(false);
   }, 500);
 }
@@ -2093,7 +2100,10 @@ ipcMain.handle('click-through-hover', (_e, overHeader) => {
   // Active for manual click-through and while the supporter is controlling, so
   // the speaker can reach Ace's title bar and the Stop banner (reclaim clicks
   // over them) without ending control; moving away passes clicks through again.
-  if (!win || win.isDestroyed() || !clickThroughActive()) return;
+  // Works for manual click-through AND while the supporter is controlling: in
+  // both the window is passing clicks, and hovering the header/banner must
+  // reclaim them so the speaker can reach the title bar and the Stop banner.
+  if (!win || win.isDestroyed() || (!clickThroughActive() && !control.passing)) return;
   try { win.setIgnoreMouseEvents(!overHeader, { forward: true }); } catch {}
 });
 
@@ -2488,7 +2498,7 @@ function connectSignalingClient() {
 // Input lands on the display being shared, and keys or buttons still held when
 // it ends are let go. Windows only (remote-input.js).
 const remoteInput = createRemoteInput((m) => appendLogLine('[control] ' + m), controlBlockedEvent);
-const control = { connId: null, state: 'off', keys: new Set(), buttons: new Set(), blocked: '', releaseAt: 0, passing: false, passTimer: null };
+const control = { connId: null, state: 'off', keys: new Set(), buttons: new Set(), blocked: '', releaseAt: 0, passing: false, passTimer: null, lastInputAt: 0 };
 
 // A program in front has taken the mouse and keyboard for itself and refuses
 // the supporter's input. Measured with VMware: while its guest holds the
@@ -2577,6 +2587,7 @@ function controlPoint(nx, ny) {
 // ['w', dx, dy] wheel, ['k', code, down] key, ['t', text], ['r'] let go of all.
 function controlInput(connId, events) {
   if (control.state !== 'on' || control.connId !== connId || !Array.isArray(events)) return;
+  control.lastInputAt = Date.now(); // freshness, so a held button doesn't pin click-through open forever
   let mouse = false;
   for (const ev of events.slice(0, 200)) {
     if (!Array.isArray(ev)) continue;
