@@ -2093,6 +2093,22 @@ function setClickThrough(value) {
   if (win) win.webContents.send('click-through-changed', state.clickThrough);
 }
 
+// Safety net against the window ever getting stuck not receiving clicks. If
+// nothing legitimately wants clicks passed through (no manual click-through, no
+// active control pass), make sure every window actually accepts them. This
+// catches any drift that would otherwise leave the app unclickable over a long
+// session, regardless of cause. It only ever RE-ENABLES clicks and never passes
+// them, so it cannot fight manual click-through or the hover-to-reclaim handler
+// (both of which make clickThroughActive()/control.passing true, short-circuiting
+// it here). A no-op in the normal case; near-zero cost.
+function enforceClickableSafety() {
+  if (clickThroughActive() || control.passing) return;
+  for (const w of clickThroughWindows()) {
+    try { if (w.isDestroyed && w.isDestroyed()) continue; w.setIgnoreMouseEvents(false, { forward: true }); } catch {}
+  }
+}
+setInterval(enforceClickableSafety, 5000);
+
 // While click-through is on, the header bar stays clickable: the renderer
 // reports when the pointer is over it (mouse moves are still forwarded to the
 // page) and mouse events are re-enabled just for that time.
@@ -2356,6 +2372,7 @@ function startSignalingServer() {
       if (!id) return;
       const cur = supporterConns.get(id);
       if (cur && cur.ws === ws) supporterConns.delete(id);
+      if (control.pending === id) control.pending = null;
       if (control.connId === id) controlStop('the supporter left');
       appendLogLine(`[supporter] #${id} left`);
       if (win) win.webContents.send('signaling-in', { connId: id, type: 'closed' });
@@ -2498,7 +2515,7 @@ function connectSignalingClient() {
 // Input lands on the display being shared, and keys or buttons still held when
 // it ends are let go. Windows only (remote-input.js).
 const remoteInput = createRemoteInput((m) => appendLogLine('[control] ' + m), controlBlockedEvent);
-const control = { connId: null, state: 'off', keys: new Set(), buttons: new Set(), blocked: '', releaseAt: 0, passing: false, passTimer: null, lastInputAt: 0 };
+const control = { connId: null, state: 'off', keys: new Set(), buttons: new Set(), blocked: '', releaseAt: 0, passing: false, passTimer: null, lastInputAt: 0, pending: null };
 
 // A program in front has taken the mouse and keyboard for itself and refuses
 // the supporter's input. Measured with VMware: while its guest holds the
@@ -2547,6 +2564,7 @@ function controlStop(reason) {
   control.state = 'off';
   control.connId = null;
   control.blocked = '';
+  control.pending = null;
   if (control.passTimer) { clearTimeout(control.passTimer); control.passTimer = null; }
   controlPassThrough(false); // Ace catches clicks again, unless the speaker turned it on
   controlSendTo(connId, { state: 'off', reason: reason || '' });
@@ -2560,7 +2578,16 @@ function controlStop(reason) {
 // screen shared, and the speaker can stop it any time.
 function controlRequest(connId) {
   if (process.platform !== 'win32') { controlSendTo(connId, { state: 'unsupported', reason: 'Remote control works when the speaker is on Windows.' }); return; }
-  if (!sharedDisplayId) { controlSendTo(connId, { state: 'off', reason: 'The speaker is not sharing the screen.' }); return; }
+  if (!sharedDisplayId) {
+    // Join-time race: the request can arrive before the speaker's own 'screen'
+    // message has set sharedDisplayId. Remember it and resume the moment sharing
+    // starts, instead of rejecting and forgetting (the supporter's retry only
+    // fires on a screen off->on edge, which may never come).
+    control.pending = connId;
+    controlSendTo(connId, { state: 'off', reason: 'The speaker is not sharing the screen.' });
+    return;
+  }
+  control.pending = null;
   if (control.connId === connId && control.state === 'on') { controlSendTo(connId, { state: 'on' }); return; }
   if (control.state !== 'off') controlStop('another supporter took over');
   control.connId = connId;
@@ -2632,6 +2659,11 @@ function sendSignaling(msg) {
     if (msg && msg.type === 'screen') {
       sharedDisplayId = msg.on ? String(msg.display || '') : '';
       if (!msg.on) controlStop('the screen is no longer shared');
+      else if (control.pending && control.state !== 'on' && supporterConns.has(control.pending)) {
+        const c = control.pending; control.pending = null;
+        appendLogLine('[control] screen now shared — resuming the control request that arrived before sharing');
+        controlRequest(c);
+      }
     }
     const id = msg.connId;
     const entry = id ? supporterConns.get(id) : null;
@@ -2964,7 +2996,7 @@ function startWatchdog() {
     if (appQuitting || state.antiClose === false) return;
     try { fs.writeFileSync(wdFile('app.pid'), String(process.pid)); } catch {}
     if (!guardianRunning()) spawnGuardian();
-  }, 2000);
+  }, 5000);
 }
 
 function stopWatchdog() {
@@ -5927,7 +5959,10 @@ async function warmApiConnection() {
     }
     await fetch(provider.warmUrl, { headers, signal: ac.signal });
   } catch {}
-  prefetchModelList(provider);
+  // The model list is stable per provider; fetch it once and cache it, instead
+  // of a network round-trip + JSON parse on every 20s warm tick for the whole
+  // session. Until the first fetch succeeds this still retries each tick.
+  if (!modelListCache[provider.id]) prefetchModelList(provider);
 }
 let warmLoopTimer = null;
 function startWarmLoop() {

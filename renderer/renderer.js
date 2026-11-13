@@ -4912,8 +4912,15 @@ function startLevelMeter(stream) {
     src.connect(levelAnalyser);
     levelSourceStream = stream;
     const data = new Uint8Array(levelAnalyser.fftSize);
-    const tick = () => {
+    // A level bar reads the same at ~20fps as at 60, so only recompute every
+    // ~50ms. With backgroundThrottling off this loop runs full-speed even when
+    // the window is hidden, so throttling it cuts real CPU for the whole call.
+    let lastDrawn = 0;
+    const tick = (ts) => {
       if (!levelAnalyser) return;
+      levelTickHandle = requestAnimationFrame(tick);
+      if (ts && ts - lastDrawn < 50) return;
+      lastDrawn = ts || 0;
       levelAnalyser.getByteTimeDomainData(data);
       let sum = 0;
       for (let i = 0; i < data.length; i++) {
@@ -4923,7 +4930,6 @@ function startLevelMeter(stream) {
       const rms = Math.sqrt(sum / data.length);
       const pct = Math.min(100, Math.round(rms * 250));
       if (incomingLevelFill) incomingLevelFill.style.width = pct + "%";
-      levelTickHandle = requestAnimationFrame(tick);
     };
     tick();
   } catch (e) {
