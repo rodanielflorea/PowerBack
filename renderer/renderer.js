@@ -3108,8 +3108,15 @@ function renderImgStrip() {
     rm.textContent = "×";
     rm.title = "Remove";
     rm.addEventListener("click", () => {
+      if (netCfg && netCfg.role === "supporter") {
+        // Not the owner of the list: ask the speaker to drop it.
+        if (window.api.sendSignaling) window.api.sendSignaling({ type: "pending-remove", index: idx });
+        return;
+      }
       attachedImages.splice(idx, 1);
       renderImgStrip();
+      broadcastPendingImages();
+      if (typeof syncSendEnabled === "function") syncSendEnabled();
     });
     wrap.appendChild(el);
     wrap.appendChild(rm);
@@ -3120,13 +3127,32 @@ function renderImgStrip() {
 function addAttachedImage(base64, mime) {
   attachedImages.push({ base64, mime: mime || "image/png" });
   renderImgStrip();
+  broadcastPendingImages();
   if (typeof syncSendEnabled === "function") syncSendEnabled();
 }
 
 function clearAttachedImages() {
   attachedImages = [];
   renderImgStrip();
+  broadcastPendingImages();
   if (typeof syncSendEnabled === "function") syncSendEnabled();
+}
+
+// The pending captures are shared so both the speaker and the supporter see what
+// is about to be asked. The speaker owns the list; it sends the current set to
+// the connected supporter whenever it changes.
+function broadcastPendingImages() {
+  if (!netCfg || netCfg.role !== "speaker" || !window.api.sendSignaling) return;
+  if (typeof speakerPeers === "undefined" || speakerPeers.size === 0) return;
+  const images = attachedImages.map((i) => ({ base64: i.base64, mime: i.mime }));
+  for (const connId of speakerPeers.keys()) {
+    try { window.api.sendSignaling({ connId, type: "pending-images", images }); } catch {}
+  }
+}
+// A supporter's capture of the speaker's screen, as { base64, mime }.
+function dataUrlToImage(dataUrl) {
+  const m = /^data:(image\/[\w+]+);base64,([\s\S]+)$/.exec(String(dataUrl || ""));
+  return m ? { base64: m[2], mime: m[1] } : null;
 }
 
 // Screenshot via Alt+A hotkey.
@@ -4848,6 +4874,7 @@ function attachPcDiagnostics(peer, label) {
   }
 }
 const speakerPeers = new Map();
+let sidePaneCloseTimer = null; // delays reverting the window width so a quick reconnect doesn't flap it
 let supporterPeer = null;
 let speakerLocalStream = null;
 let supporterMicStream = null;
@@ -5277,10 +5304,12 @@ window.api.onSignaling((msg) => {
   const type = msg.type;
   if (type === "opened") {
     if (netCfg && netCfg.role === "speaker" && msg.connId) {
+      if (sidePaneCloseTimer) { clearTimeout(sidePaneCloseTimer); sidePaneCloseTimer = null; } // a reconnect: keep the pane
       toast(`A supporter joined${msg.ip ? " from " + msg.ip : ""}.`, "info");
       speakerHandleOpened(msg.connId);
       mirrorStart();
       openSpeakerChatPane(msg.ip ? `Supporter connected · ${msg.ip}` : "Supporter connected");
+      broadcastPendingImages();
     }
   } else if (type === "closed") {
     if (netCfg && netCfg.role === "speaker" && msg.connId) {
@@ -5288,13 +5317,17 @@ window.api.onSignaling((msg) => {
       speakerHandleClosed(msg.connId);
       mirrorStop();
       chatSetStatus("The supporter left");
-      // No supporter: the chat column closes and the window is back to its
-      // fixed size. The next supporter starts on the default display.
-      if (speakerPeers.size === 0) {
+      // Only one supporter connects at a time, so a close means none are left:
+      // always return to the fixed width (a stale WebRTC peer from a previous
+      // connection must not keep it open). A short delay first, so a brief drop
+      // that reconnects does not flap the window; 'opened' above cancels it.
+      if (sidePaneCloseTimer) clearTimeout(sidePaneCloseTimer);
+      sidePaneCloseTimer = setTimeout(() => {
+        sidePaneCloseTimer = null;
         stopScreenForSupporter();
         shareDisplayId = "";
         closeSidePane();
-      }
+      }, 1500);
     }
     else if (netCfg && netCfg.role === "supporter") {
       if (supporterPeer) {
@@ -5312,6 +5345,26 @@ window.api.onSignaling((msg) => {
       setControlState("off", "", true);
       setControlBlocked("");
       clearScreenView("Connection to the speaker closed.");
+    }
+  } else if (type === "capture-image") {
+    // The supporter captured the speaker's screen: add it to the composer so
+    // the AI can use it, and it is shared back to the supporter below.
+    if (netCfg && netCfg.role === "speaker" && msg.dataUrl) {
+      const im = dataUrlToImage(msg.dataUrl);
+      if (im) { addAttachedImage(im.base64, im.mime); toast("Your supporter captured your screen.", "info"); }
+    }
+  } else if (type === "pending-remove") {
+    if (netCfg && netCfg.role === "speaker" && Number.isInteger(msg.index)) {
+      attachedImages.splice(msg.index, 1);
+      renderImgStrip();
+      broadcastPendingImages();
+      if (typeof syncSendEnabled === "function") syncSendEnabled();
+    }
+  } else if (type === "pending-images") {
+    // Supporter: mirror of the speaker's pending captures (display only).
+    if (netCfg && netCfg.role === "supporter") {
+      attachedImages = (Array.isArray(msg.images) ? msg.images : []).map((i) => ({ base64: i.base64, mime: i.mime || "image/png" }));
+      renderImgStrip();
     }
   } else if (type === "control-state") {
     if (netCfg && netCfg.role === "supporter") {
@@ -5359,34 +5412,63 @@ function chatRemoveEmpty() {
   if (chatEmptyEl && chatEmptyEl.parentNode) chatEmptyEl.remove();
 }
 
-function chatAddText(text, ok = true, fromMe = true, ts) {
+// One message as a row: the bubble, hover actions (edit for text, delete for
+// any), and the time. The row is one flex item, so several images keep their
+// full height instead of being squashed. Delete removes it from this view;
+// Edit (text) drops it back into the input to re-send a corrected version.
+function chatRow(bubble, ok, fromMe, ts, editText) {
   if (!chatHistoryEl) return;
   chatRemoveEmpty();
-  const wrap = document.createElement("div");
-  wrap.className = "chat-msg" + (ok ? "" : " failed") + (fromMe ? " from-me" : " from-them");
-  wrap.textContent = text;
-  chatHistoryEl.appendChild(wrap);
+  const row = document.createElement("div");
+  row.className = "chat-row " + (fromMe ? "from-me" : "from-them");
+
+  const bwrap = document.createElement("div");
+  bwrap.className = "chat-bubble-wrap";
+  bwrap.appendChild(bubble);
+
+  const actions = document.createElement("div");
+  actions.className = "chat-actions";
+  if (editText != null) {
+    const edit = document.createElement("button");
+    edit.type = "button"; edit.className = "chat-action-btn"; edit.title = "Edit (puts it back in the box)";
+    edit.innerHTML = aceIcon("edit");
+    edit.addEventListener("click", () => {
+      if (chatInputEl) { chatInputEl.value = editText; chatInputEl.focus(); }
+      row.remove();
+    });
+    actions.appendChild(edit);
+  }
+  const del = document.createElement("button");
+  del.type = "button"; del.className = "chat-action-btn"; del.title = "Delete from this chat";
+  del.innerHTML = aceIcon("trash");
+  del.addEventListener("click", () => row.remove());
+  actions.appendChild(del);
+  bwrap.appendChild(actions);
+  row.appendChild(bwrap);
+
   const meta = document.createElement("div");
-  meta.className = "chat-msg-meta" + (fromMe ? " from-me" : " from-them");
+  meta.className = "chat-msg-meta " + (fromMe ? "from-me" : "from-them");
   meta.textContent = chatTime(ts || Date.now()) + (ok ? "" : " · failed");
-  chatHistoryEl.appendChild(meta);
+  row.appendChild(meta);
+
+  chatHistoryEl.appendChild(row);
   chatHistoryEl.scrollTop = chatHistoryEl.scrollHeight;
 }
 
+function chatAddText(text, ok = true, fromMe = true, ts) {
+  const bubble = document.createElement("div");
+  bubble.className = "chat-msg" + (ok ? "" : " failed") + (fromMe ? " from-me" : " from-them");
+  bubble.textContent = text;
+  chatRow(bubble, ok, fromMe, ts, text);
+}
+
 function chatAddImage(dataUrl, ok = true, fromMe = true, ts) {
-  if (!chatHistoryEl) return;
-  chatRemoveEmpty();
-  const wrap = document.createElement("div");
-  wrap.className = "chat-msg-image" + (ok ? "" : " failed") + (fromMe ? " from-me" : " from-them");
+  const bubble = document.createElement("div");
+  bubble.className = "chat-msg-image" + (ok ? "" : " failed") + (fromMe ? " from-me" : " from-them");
   const img = document.createElement("img");
   img.src = dataUrl;
-  wrap.appendChild(img);
-  chatHistoryEl.appendChild(wrap);
-  const meta = document.createElement("div");
-  meta.className = "chat-msg-meta" + (fromMe ? " from-me" : " from-them");
-  meta.textContent = chatTime(ts || Date.now()) + (ok ? "" : " · failed");
-  chatHistoryEl.appendChild(meta);
-  chatHistoryEl.scrollTop = chatHistoryEl.scrollHeight;
+  bubble.appendChild(img);
+  chatRow(bubble, ok, fromMe, ts, null);
 }
 
 function chatClearAll() {
@@ -5427,6 +5509,9 @@ async function chatSendText() {
     : await window.api.sendChatText(text).catch(() => false);
   chatAddText(text, ok);
   if (!ok) chatSetStatus(speaker ? "Not sent: no supporter connected" : "Send failed (not connected)");
+  // Keep the cursor in the box so the next message can be typed right away
+  // (sending otherwise dropped focus and the box went dead until re-clicked).
+  if (chatInputEl) chatInputEl.focus();
 }
 
 async function downscaleImage(dataUrl, maxW = 1280, quality = 0.85) {
@@ -6649,6 +6734,7 @@ function openScreenViewer() {
 <header class="bar">
   <span class="live" id="live"></span><span class="title" id="title">Speaker's screen</span><span class="grow"></span>
   <span class="group" id="dispGroup" hidden><span class="lbl">Display</span><span class="cards" id="disps"></span></span>
+  <button type="button" class="icon" id="cap" title="Capture this screen into the question (shared with the speaker)">${aceIcon("capture-screen")}</button>
   <button type="button" class="ctl" id="ctl" title="Use the speaker's mouse and keyboard (the speaker must allow it)">${aceIcon("pointer")}<span id="ctlText">Take control</span></button>
   <span class="seg" id="zoom"><button type="button" data-z="fit" class="active" title="Fit the picture to the window">Fit</button><button type="button" data-z="actual" title="Actual size: one screen pixel per pixel (scroll to move around)">100%</button></span>
   <button type="button" class="icon" id="full" title="Full screen (F11 or double-click; Esc to leave)">${aceIcon("maximize")}</button>
@@ -6676,6 +6762,15 @@ function openScreenViewer() {
     if (d.fullscreenElement) d.exitFullscreen().catch(() => {});
     else d.documentElement.requestFullscreen().catch(() => {});
   };
+  d.getElementById("cap").addEventListener("click", () => {
+    if (!v.videoWidth) { return; }
+    const c = d.createElement("canvas"); c.width = v.videoWidth; c.height = v.videoHeight;
+    try { c.getContext("2d").drawImage(v, 0, 0); } catch { return; }
+    let url; try { url = c.toDataURL("image/jpeg", 0.82); } catch { return; }
+    if (window.api.sendSignaling) window.api.sendSignaling({ type: "capture-image", dataUrl: url });
+    const btn = d.getElementById("cap"); const t = d.getElementById("title"); const was = t.textContent;
+    t.textContent = "Captured, sent to the question"; setTimeout(() => { if (t.textContent === "Captured, sent to the question") t.textContent = was; }, 1500);
+  });
   d.getElementById("full").addEventListener("click", toggleFull);
   // While controlling, a double-click is the speaker's (F11 still toggles full screen).
   stage.addEventListener("dblclick", () => { if (controlState !== "on") toggleFull(); });

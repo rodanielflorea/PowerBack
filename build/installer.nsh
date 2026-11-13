@@ -291,12 +291,9 @@
       ${endif}
     ${endif}
     ClearErrors
-
-    ${if} $aceNoDesktopLink == "1"
-      Delete "$DESKTOP\${SHORTCUT_NAME}.lnk"
-      System::Call 'Shell32::SHChangeNotify(i 0x8000000, i 0, i 0, i 0)'
-      ClearErrors
-    ${endif}
+    ; The desktop shortcut is always (re)created on install and update, so the
+    ; icon is there every time (createDesktopShortcut is "always"). The old step
+    ; that removed it on update when the user had deleted it is gone.
   !macroend
 
 !else
