@@ -1360,14 +1360,17 @@ function showUploadModal(r) {
   try { uploadModalLink.focus(); uploadModalLink.select(); } catch {}
 }
 
-// Close keeps the link (it comes back next time); only Copy clears it.
-function hideUploadModal() { if (uploadModal) uploadModal.hidden = true; }
+// Close or Copy both dismiss it for good: the card hides and the saved link is
+// cleared, so it does not come back on the next launch.
+function hideUploadModal() {
+  if (uploadModal) uploadModal.hidden = true;
+  if (window.api.clearPendingLink) window.api.clearPendingLink();
+}
 
 if (uploadModal) {
   document.getElementById("uploadModalClose").addEventListener("click", hideUploadModal);
   document.getElementById("uploadModalCopy").addEventListener("click", () => {
     if (window.api.copyText) window.api.copyText(uploadModalLink.value);
-    if (window.api.clearPendingLink) window.api.clearPendingLink();
     toast("Link copied", "info");
     hideUploadModal();
   });
