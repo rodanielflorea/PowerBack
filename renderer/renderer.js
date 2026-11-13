@@ -336,9 +336,13 @@ window.api.onClickThroughChanged((v) => updateClickThrough(v));
   // The update question and the remote-control banner take clicks too, so they
   // can be answered / Stop can be pressed while click-through is on.
   document.addEventListener("mousemove", (e) => report(!!e.target.closest && !!e.target.closest(".titlebar, #updateModal, #controlBanner")));
-  // The app takes the report only while click-through is on: after a switch
-  // it is made again with the next move of the pointer.
+  // The app takes the report only while the window is passing clicks (manual
+  // click-through, or while the supporter controls): after either turns on or
+  // off, re-arm so the next move of the pointer re-reports and the header can
+  // reclaim clicks. This is the speaker's escape hatch if control passing ever
+  // sticks on.
   window.api.onClickThroughChanged(() => { over = false; });
+  if (window.api.onControlState) window.api.onControlState(() => { over = false; });
 })();
 
 hideBtn.addEventListener("click", () => window.api.hide());
