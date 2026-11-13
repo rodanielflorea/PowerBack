@@ -4374,6 +4374,28 @@ ipcMain.handle('save-session-bundle', async (_e, { role, company, transcript } =
     for (const it of (k.support || [])) await saveMaterial(it, 'Support', ++i);
     i = 0;
     for (const it of (k.meetings || [])) await saveMaterial(it, 'Meeting', ++i);
+    // The private chat, in order: a text log, and every image saved as its own
+    // file (named in sequence) that the log points to, so the conversation can
+    // be read back with its pictures in the order they were sent.
+    if (Array.isArray(chatHistory) && chatHistory.length) {
+      const lines = [];
+      let imgN = 0;
+      for (const m of chatHistory) {
+        if (!m) continue;
+        const d = new Date(m.ts || Date.now());
+        const t = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        const who = m.fromMe ? 'Me' : 'Supporter';
+        if (m.type === 'chat-text' && m.text) lines.push(`[${t}] ${who}: ${m.text}`);
+        else if (m.type === 'chat-image' && m.dataUrl) {
+          const mm = /^data:image\/([\w+]+);base64,([\s\S]+)$/.exec(m.dataUrl);
+          if (!mm) continue;
+          imgN++;
+          const fname = `${base}-chat-img-${String(imgN).padStart(2, '0')}.${mm[1] === 'jpeg' ? 'jpg' : mm[1]}`;
+          try { await fs.promises.writeFile(path.join(folder, fname), Buffer.from(mm[2], 'base64')); lines.push(`[${t}] ${who}: [image] ${fname}`); } catch {}
+        }
+      }
+      if (lines.length) await fs.promises.writeFile(path.join(folder, base + '-chat.txt'), lines.join('\n'), 'utf8');
+    }
     const recordings = await collectRecordings(folder, base);
     const s = currentSession && currentSession();
     if (s) { s.folder = folder; saveSessions(); }
@@ -5457,7 +5479,7 @@ function assembleStaticSystem(mode) {
     staticParts.push('SPOKEN OUTPUT: Talk like a native American engineer in a real standup or 1:1. Short sentences. Contractions. Start naturally with So or Yeah so when it fits. Never output an em dash, en dash, or --. Use a new sentence, a comma, or the words so / and / which instead. No resume voice. No blog voice. Only paragraphs someone can say out loud.');
     const aiScript = getAiUsageScript();
     if (aiScript) {
-      staticParts.push('HOW YOU USE AI TOOLS. When they ask how you or your team use AI in your work, AI coding agents, Claude, GPT, Grok, Cursor, Copilot, "AI in your everyday development", "which AI tools do you use", "do you use AI", answer from the script below, which is your own real practice. Follow its substance closely, in the first person ("I run Claude as...", "I use Grok for..."), naming the tools and what each one does; this is a prepared answer, so stay faithful to its content and do not water it down into generic lines. Lead with the short version (about 30 seconds). Go into the detail (per tool, the rules file in the repo, the review gate, sub-agents, the model policy) only when they ask you to go further. Spoken American English, short sentences, contractions, no markdown, never read out the section labels or say "section 1".\n\nYOUR AI-TOOLS SCRIPT:\n' + aiScript);
+      staticParts.push('HOW YOU USE AI TOOLS. When they ask how you or your team use AI in your work, AI coding agents, Claude, GPT, Grok, Cursor, Copilot, "AI in your everyday development", "which AI tools do you use", "do you use AI", draw on the script below, which is your own real practice. Keep its substance and the real facts (the tools and what each one does: you run Claude as the coordinator, Grok does most of the implementation, a review bot on every PR, no agent merges, a person approves and every claim needs evidence). But do NOT recite it. Say it fresh each time: different opening, different order, a different detail or example to lead with, your own wording. Answer the exact thing they asked and only expand into the deeper detail (the rules file, the review gate, sub-agents, the model policy, the examples) when they ask you to go further. First person ("I run Claude as...", "we gave each tool a role..."). Spoken American English, short sentences, contractions, no markdown, never read out the section labels.\n\nYOUR AI-TOOLS MATERIAL (your facts, not a script to read):\n' + aiScript);
     }
     staticParts.push(meetingStanceBlock());
   }

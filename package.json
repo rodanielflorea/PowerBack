@@ -1,6 +1,6 @@
 {
   "name": "ace",
-  "version": "2.7.13",
+  "version": "2.7.14",
   "description": "Answer Coaching Engine",
   "main": "main.js",
   "scripts": {
@@ -161,7 +161,7 @@
       "license": "build/about.txt",
       "guid": "9e66c056-626c-529e-98cc-8d2fc0aeb8d8",
       "include": "build/installer.nsh",
-      "createDesktopShortcut": true,
+      "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "shortcutName": "Ace",
       "runAfterFinish": true
