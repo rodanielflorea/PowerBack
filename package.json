@@ -1,6 +1,6 @@
 {
   "name": "ace",
-  "version": "2.7.17",
+  "version": "2.7.23",
   "description": "Answer Coaching Engine",
   "main": "main.js",
   "scripts": {
@@ -38,6 +38,7 @@
       "package.json",
       "platform-input.js",
       "remote-input.js",
+      "click-trace.js",
       "license.js",
       "license-public.key",
       "watchdog.js"

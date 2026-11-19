@@ -7,3 +7,6 @@ contextBridge.exposeInMainWorld('info', {
   // Main pushes { profile, weather, holidays, events }.
   onData: (cb) => ipcRenderer.on('info-data', (_e, v) => cb(v)),
 });
+
+// No drags out of the page: see preload.js (a drag that does not end leaves the page deaf to the mouse).
+window.addEventListener('dragstart', (e) => e.preventDefault(), true);

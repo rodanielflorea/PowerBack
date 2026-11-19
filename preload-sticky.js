@@ -24,3 +24,6 @@ contextBridge.exposeInMainWorld('typeThrough', {
   onReleased: (cb) => ipcRenderer.on('type-through-released', () => cb()),
   onCopySelection: (cb) => ipcRenderer.on('type-through-copy-selection', () => cb()),
 });
+
+// No drags out of the page: see preload.js (a drag that does not end leaves the page deaf to the mouse).
+window.addEventListener('dragstart', (e) => e.preventDefault(), true);

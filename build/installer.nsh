@@ -21,6 +21,26 @@
 ;   started again by the app. Here a running copy is found by the folder it
 ;   runs from, and app and guardian are stopped together.
 
+; Trace
+;   Each step below writes a line to %TEMP%\ace-setup-trace.log: the computer's
+;   millisecond clock and what is starting. The gap between two lines is how
+;   long the step before took.
+!macro aceTrace TEXT
+  Push $0
+  Push $1
+  System::Call 'kernel32::GetTickCount() i .r0'
+  ClearErrors
+  FileOpen $1 "$TEMP\ace-setup-trace.log" a
+  ${ifNot} ${Errors}
+    FileSeek $1 0 END
+    FileWrite $1 "$0 ms  ${TEXT}$\r$\n"
+    FileClose $1
+  ${endif}
+  ClearErrors
+  Pop $1
+  Pop $0
+!macroend
+
 ; ACE_MODE for the PowerShell text below: "count" only counts, "ask" asks the
 ; processes to close, "kill" ends them. The exit code is 100 + the number found
 ; (before anything was closed); any other code means the search itself did not
@@ -69,6 +89,7 @@
   Push $R7
   Push $R8
   Push $R9
+  !insertmacro aceTrace "looking for a running copy"
 
   ; The folder of the version that is installed now: until the new files are
   ; in place the registry still names it.
@@ -164,6 +185,7 @@
     ${endif}
   ${endif}
 
+  !insertmacro aceTrace "running copy dealt with; removing the previous version and unpacking the files"
   Pop $R9
   Pop $R8
   Pop $R7
@@ -184,6 +206,7 @@
   ; Runs after the stock script has chosen the folder: the one the registry
   ; names, or <Programs>\<package name> on a first install.
   !macro customInit
+    !insertmacro aceTrace "--- setup ${VERSION} started"
     ReadRegStr $aceOldDir HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
     StrCpy $aceOldName "0"
     ${if} $aceOldDir != ""
@@ -228,8 +251,25 @@
     ${endif}
   !macroend
 
+  ; Runs right after the app was unpacked and copied to its folder (trace only).
+  !macro customFiles_x64
+    !insertmacro aceTrace "previous version removed, files unpacked and copied"
+  !macroend
+
   ; Runs after the previous version was removed and the new one is in place.
   !macro customInstall
+    !insertmacro aceTrace "files, registry and shortcuts in place"
+    ; The stock script unpacks the app into the setup's temporary folder and
+    ; copies it from there, and leaves both the packed and the unpacked copy
+    ; (over 500 MB) to be deleted when the setup closes. That deletion runs in
+    ; the window itself, so the window stopped answering for a few seconds
+    ; after Finish. Deleted here instead, while the progress page is showing.
+    RMDir /r "$PLUGINSDIR\7z-out"
+    Delete "$PLUGINSDIR\app-64.7z"
+    Delete "$PLUGINSDIR\app-32.7z"
+    Delete "$PLUGINSDIR\app-arm64.7z"
+    ClearErrors
+    !insertmacro aceTrace "temporary copies removed"
     ${if} $aceOldDir != ""
       ; != ignores the case of letters: "ace" and "Ace" are one folder
       ${if} $aceOldDir != $INSTDIR
@@ -294,6 +334,30 @@
     ; The desktop shortcut is always (re)created on install and update, so the
     ; icon is there every time (createDesktopShortcut is "always"). The old step
     ; that removed it on update when the user had deleted it is gone.
+    !insertmacro aceTrace "install section done"
+  !macroend
+
+  ; The last page, as the stock script builds it, with one change: the setup
+  ; window is hidden before the app is started. Starting it goes through the
+  ; Windows shell and can take seconds, during which the window cannot answer.
+  !macro customFinishPage
+    !ifndef HIDE_RUN_AFTER_FINISH
+      Function StartApp
+        !insertmacro aceTrace "Finish pressed; starting the app"
+        HideWindow
+        ${if} ${isUpdated}
+          StrCpy $1 "--updated"
+        ${else}
+          StrCpy $1 ""
+        ${endif}
+        ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$1"
+        !insertmacro aceTrace "app start handed to Windows; setup closing"
+      FunctionEnd
+
+      !define MUI_FINISHPAGE_RUN
+      !define MUI_FINISHPAGE_RUN_FUNCTION "StartApp"
+    !endif
+    !insertmacro MUI_PAGE_FINISH
   !macroend
 
 !else
@@ -302,6 +366,7 @@
   ; because the folder is what the uninstaller is working in. During an update
   ; the folder is needed again at once and stays.
   !macro customUnInstall
+    !insertmacro aceTrace "uninstaller: files of the previous version removed"
     ${ifNot} ${isUpdated}
       SetOutPath "$TEMP"
       RMDir "$INSTDIR"

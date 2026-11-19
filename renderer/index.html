@@ -177,6 +177,10 @@
               <option value="uk">Ukrainian</option>
             </select>
           </div>
+          <div class="field">
+            <label class="checkbox"><input type="checkbox" id="dgBypassVpn" /> Send transcription around the VPN</label>
+            <p class="hint">The transcription connection leaves from this computer's own network instead of the VPN: faster and steadier, but Deepgram sees your real network address. If it cannot connect that way, it goes through the VPN. Changes apply at the next connection.</p>
+          </div>
         </section>
 
         <section class="settings-section">
@@ -322,6 +326,7 @@
           <div class="log-actions">
             <button id="logOpenBtn" title="Open the persisted log file in your text editor">Open log file</button>
             <button id="logClearBtn" title="Clear the persisted log">Clear log</button>
+            <button id="clickTraceBtn" title="Show click-trace.log: why mouse clicks were lost, page freezes and crashes">Show click trace</button>
           </div>
           <p class="hint" style="margin-top:6px">Log persists to <code>activity.log</code> in app data. Last 500 lines are loaded when this tab opens.</p>
         </section>
