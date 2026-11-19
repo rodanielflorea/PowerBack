@@ -1553,7 +1553,9 @@ textarea.meet-editbox {
 /* The bubble and its hover actions (edit / delete) side by side. */
 .chat-bubble-wrap { display: flex; align-items: center; gap: 4px; max-width: 100%; }
 .chat-row.from-me .chat-bubble-wrap { flex-direction: row-reverse; }
-.chat-actions { display: flex; gap: 2px; opacity: 0; transition: opacity 120ms ease; flex: none; }
+/* Scoped to a message row: the message box's Send / Attach holder is also
+   .chat-actions, and an unscoped opacity: 0 here made those two invisible. */
+.chat-row .chat-actions { display: flex; gap: 2px; opacity: 0; transition: opacity 120ms ease; flex: none; }
 .chat-row:hover .chat-actions { opacity: 1; }
 .chat-action-btn {
   width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px;
@@ -1598,7 +1600,7 @@ textarea.meet-editbox {
 }
 .chat-input-area textarea:focus { background: var(--elev); border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
 
-.chat-actions { display: flex; align-items: stretch; gap: 6px; flex: none; }
+.chat-input-area .chat-actions { display: flex; align-items: stretch; gap: 6px; flex: none; opacity: 1; }
 
 .chat-attach-btn,
 .chat-send-btn {

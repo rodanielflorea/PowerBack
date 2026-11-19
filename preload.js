@@ -1,5 +1,68 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Click tracing: tell the app about every press the page receives, so a press
+// that never arrives can be noticed and explained (main.js, click-trace.log).
+// pointerdown, not mousedown: it also fires on disabled controls.
+window.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  // at: when the press happened (the event's own time); late: how long the page
+  // took to get to it — a busy page shows up here.
+  const at = Math.round(performance.timeOrigin + e.timeStamp);
+  try { ipcRenderer.send('click-trace-seen', { at, late: Date.now() - at }); } catch {}
+}, true);
+// No drags out of the page. Pressing on selected text, a link or a picture and
+// moving a little starts a drag-and-drop; while one is in progress the page is
+// sent no mouse or key input at all, and in this window (which never becomes
+// the active one) the drag does not always end — the page then stays alive,
+// keeps updating and obeys the hotkeys, but ignores every click. Nothing in the
+// app is meant to be dragged out, so the drag is refused before it starts.
+// (Files and pictures dropped INTO the app are not affected.)
+window.addEventListener('dragstart', (e) => {
+  e.preventDefault();
+  let what = '?';
+  try { const t = e.target; what = t && t.nodeType === 1 ? t.tagName.toLowerCase() + (t.id ? '#' + t.id : '') : 'text'; } catch {}
+  try { ipcRenderer.send('click-trace-note', 'drag refused (started on ' + what + ')'); } catch {}
+}, true);
+// What kept the page busy: every stretch of 400 ms or more in which it could
+// not react, with the script and function that ran (long-animation-frame), or
+// just the length when the browser gives no script (longtask).
+(() => {
+  const send = (text) => { try { ipcRenderer.send('click-trace-slow', String(text).slice(0, 1500)); } catch {} };
+  const short = (u) => String(u || '').split(/[\\/]/).pop() || '?';
+  try {
+    new PerformanceObserver((list) => {
+      for (const f of list.getEntries()) {
+        if (f.duration < 400) continue;
+        const scripts = (f.scripts || []).slice().sort((a, b) => b.duration - a.duration).slice(0, 4).map((s) =>
+          `${Math.round(s.duration)}ms ${s.invokerType || ''} ${s.invoker || ''} -> ${s.sourceFunctionName || '(anonymous)'} @ ${short(s.sourceURL)}:${s.sourceCharPosition}` +
+          (s.forcedStyleAndLayoutDuration > 50 ? ` (forced layout ${Math.round(s.forcedStyleAndLayoutDuration)}ms)` : ''));
+        const layout = f.styleAndLayoutStart ? Math.round(f.startTime + f.duration - f.styleAndLayoutStart) : 0;
+        send(`frame blocked ${Math.round(f.duration)}ms (style+layout ${layout}ms); scripts: ${scripts.length ? scripts.join(' | ') : 'none (not page script: layout, paint, GC or the browser)'}`);
+      }
+    }).observe({ type: 'long-animation-frame', buffered: true });
+  } catch {}
+  try {
+    new PerformanceObserver((list) => {
+      for (const t of list.getEntries()) if (t.duration >= 1000) send(`long task ${Math.round(t.duration)}ms`);
+    }).observe({ type: 'longtask', buffered: true });
+  } catch {}
+})();
+// Heartbeat: proves the page's timers run and that it is still painting
+// (frames counts requestAnimationFrame callbacks since the last beat). The app
+// logs when beats stop (page frozen) or frames stop (black / stale picture).
+(() => {
+  let frames = 0;
+  const tick = () => { frames++; requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+  setInterval(() => {
+    try { ipcRenderer.send('click-trace-beat', { frames, hidden: document.hidden, nodes: document.getElementsByTagName('*').length }); } catch {}
+    frames = 0;
+  }, 2000);
+  const report = (kind, text) => { try { ipcRenderer.send('click-trace-page-error', `${kind}: ${String(text).slice(0, 600)}`); } catch {} };
+  window.addEventListener('error', (e) => report('error', `${e.message} @ ${e.filename || '?'}:${e.lineno || 0}`));
+  window.addEventListener('unhandledrejection', (e) => report('unhandled rejection', (e.reason && (e.reason.stack || e.reason.message)) || e.reason));
+})();
+
 contextBridge.exposeInMainWorld('api', {
   setOpacity: (v) => ipcRenderer.invoke('set-opacity', v),
   getOpacity: () => ipcRenderer.invoke('get-opacity'),
@@ -9,6 +72,7 @@ contextBridge.exposeInMainWorld('api', {
   getClickThrough: () => ipcRenderer.invoke('get-click-through'),
   onClickThroughChanged: (cb) => ipcRenderer.on('click-through-changed', (_e, v) => cb(v)),
   clickThroughHover: (over) => ipcRenderer.invoke('click-through-hover', over),
+  revealClickTrace: () => ipcRenderer.invoke('click-trace-reveal'),
   sendStickyText: (text) => ipcRenderer.invoke('sticky-send-text', text),
   sendStickyImage: (dataUrl) => ipcRenderer.invoke('sticky-send-image', dataUrl),
   sendStickyRich: (markdown) => ipcRenderer.invoke('sticky-send-rich', markdown),

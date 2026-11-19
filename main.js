@@ -87,6 +87,7 @@ const {
 } = require('./llm-providers');
 const { createKeyInjector, pasteKeystroke } = require('./platform-input');
 const { createRemoteInput, vkFor } = require('./remote-input');
+const { createClickTrace } = require('./click-trace');
 const license = require('./license');
 const { uploadFolder } = require('./gofile');
 const { signatureDistance } = require('./speaker-detect');
@@ -209,6 +210,9 @@ const DEFAULT_STATE = {
   opacity: 1.0, stealth: true, clickThrough: false,
   transcription: {
     engine: 'deepgram',
+    // Transcription sockets leave outside the VPN (about 0.25 s sooner in a
+    // test through Astrill); falls back to the VPN when that does not connect.
+    bypassVpn: true,
     deepgramApiKey: '',
     xaiApiKey: '',
     language: 'auto',
@@ -605,6 +609,20 @@ function createWindow() {
   if (clickThroughActive()) try { win.setIgnoreMouseEvents(true, { forward: true }); } catch {}
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  clickTraceLog(`--- Ace ${app.getVersion()} started; ${traceFlags()}`);
+  clickTrace.start();
+  // A frozen or crashed page (or a lost GPU process: the window goes black or
+  // keeps a stale picture) also looks like "the mouse does nothing while the
+  // hotkeys still work", because the hotkeys live in this process.
+  try {
+    win.webContents.on('before-mouse-event', (_e, m) => { if (m && m.type === 'mouseDown' && m.button === 'left') lastBrowserPressAt = Date.now(); });
+  } catch {}
+  win.on('unresponsive', () => clickTraceLog('PAGE FROZEN: the main page stopped responding (unresponsive)'));
+  win.on('responsive', () => clickTraceLog('the main page responds again'));
+  win.webContents.on('render-process-gone', (_e, d) => clickTraceLog(`PAGE CRASHED: render process gone (${(d && d.reason) || '?'}, exit ${d && d.exitCode})`));
+  if (!app.listenerCount('child-process-gone')) {
+    app.on('child-process-gone', (_e, d) => clickTraceLog(`child process gone: ${(d && d.type) || '?'} (${(d && d.reason) || '?'}, exit ${d && d.exitCode})`));
+  }
   // The supporter's window for the speaker's screen (renderer.js opens it with
   // window.open, so the page can hand it the video stream). Anything else
   // opens as before.
@@ -1058,6 +1076,8 @@ function createFloatWindow() {
     try { const [x, y] = floatWin.getPosition(); state.floatPos = { x, y }; saveState(); } catch {}
   });
   floatWin.on('show', raiseFloat);
+  floatWin.on('show', fixFloatSize);
+  floatWin.on('resize', () => { if (!floatDrag) fixFloatSize(); });
   floatWin.on('closed', () => { stopFloatTopWatch(); floatWin = null; });
   bindFloatTopEvents();
   startFloatTopWatch();
@@ -1136,10 +1156,18 @@ ipcMain.handle('float-drag-start', () => {
   const [x, y] = floatWin.getPosition();
   floatDrag = {
     dx: c.x - x, dy: c.y - y,
+    lastX: x, lastY: y,
     timer: setInterval(() => {
-      if (!floatWin || floatWin.isDestroyed()) return;
+      if (!floatWin || floatWin.isDestroyed() || !floatDrag) return;
       const p = screen.getCursorScreenPoint();
-      floatWin.setPosition(Math.round(p.x - floatDrag.dx), Math.round(p.y - floatDrag.dy));
+      const nx = Math.round(p.x - floatDrag.dx), ny = Math.round(p.y - floatDrag.dy);
+      // Nothing to do for a plain click (no movement). Moving is done with the
+      // full bounds, never setPosition(): on a display scaled to 125 % / 150 %
+      // Windows rounds the size on every position-only move, and at 60 moves a
+      // second the button grew a pixel at a time until it was huge.
+      if (nx === floatDrag.lastX && ny === floatDrag.lastY) return;
+      floatDrag.lastX = nx; floatDrag.lastY = ny;
+      try { floatWin.setBounds({ x: nx, y: ny, width: FLOAT_SIZE, height: FLOAT_SIZE }); } catch {}
     }, 16),
     // Safety: never follow the cursor forever if the release is missed.
     stop: setTimeout(() => ipcMain.emit('float-drag-stop'), 15000),
@@ -1151,6 +1179,21 @@ function endFloatDrag() {
   clearInterval(floatDrag.timer);
   clearTimeout(floatDrag.stop);
   floatDrag = null;
+  fixFloatSize();
+}
+// The button is always FLOAT_SIZE square. Put it back if anything (display
+// scaling, a move to a display with another scale) left it a different size.
+function fixFloatSize() {
+  if (!floatWin || floatWin.isDestroyed()) return;
+  try {
+    const b = floatWin.getBounds();
+    // (More than 2 px off: a scaled display may not give the exact size, and
+    // chasing a pixel from the resize event would never end.)
+    if (Math.abs(b.width - FLOAT_SIZE) > 2 || Math.abs(b.height - FLOAT_SIZE) > 2) {
+      appendLogLine(`[float] size was ${b.width}x${b.height}, reset to ${FLOAT_SIZE}`);
+      floatWin.setBounds({ x: b.x, y: b.y, width: FLOAT_SIZE, height: FLOAT_SIZE });
+    }
+  } catch {}
 }
 ipcMain.on('float-drag-stop', endFloatDrag);
 ipcMain.handle('float-drag-end', () => { endFloatDrag(); });
@@ -2055,9 +2098,13 @@ function clickThroughWindows() {
 function clickThroughActive() {
   return state.clickThrough;
 }
+let headerHover = false; // the pointer is over the main window's header / Stop banner (reported by the page)
 function syncClickThrough() {
   const on = clickThroughActive() || (typeof control !== 'undefined' && control.passing);
-  for (const w of clickThroughWindows()) { try { w.setIgnoreMouseEvents(on, { forward: true }); } catch {} }
+  for (const w of clickThroughWindows()) {
+    // The header and the Stop banner stay clickable while clicks pass through.
+    try { w.setIgnoreMouseEvents(on && !(w === win && headerHover), { forward: true }); } catch {}
+  }
 }
 // While the supporter is actively using the mouse, Ace lets the clicks through
 // to the app behind it (Ace is invisible in the capture). Between bursts — and
@@ -2087,6 +2134,7 @@ function controlPassPulse() {
   }, 500);
 }
 function setClickThrough(value) {
+  if (state.clickThrough !== !!value) clickTraceLog(`click-through turned ${value ? 'ON' : 'off'}`);
   state.clickThrough = !!value;
   syncClickThrough();
   saveState();
@@ -2119,8 +2167,223 @@ ipcMain.handle('click-through-hover', (_e, overHeader) => {
   // Works for manual click-through AND while the supporter is controlling: in
   // both the window is passing clicks, and hovering the header/banner must
   // reclaim them so the speaker can reach the title bar and the Stop banner.
+  // The answer is remembered even while nothing is passing: the page only
+  // reports a change, so if passing starts with the pointer already resting on
+  // the header, syncClickThrough() must know it or the header stays dead until
+  // the pointer leaves and comes back.
+  headerHover = !!overHeader;
   if (!win || win.isDestroyed() || (!clickThroughActive() && !control.passing)) return;
-  try { win.setIgnoreMouseEvents(!overHeader, { forward: true }); } catch {}
+  try { win.setIgnoreMouseEvents(!headerHover, { forward: true }); } catch {}
+});
+
+// ── Click tracing (Windows) ──────────────────────────────────────────────────
+// For the "Ace stops taking mouse clicks while hotkeys still work" reports.
+// click-trace.js reports every left-button press with the window Windows gives
+// it to; the main page reports every press it receives (preload.js). A press
+// over an Ace window that did not arrive is written to click-trace.log in the
+// user-data folder, with everything needed to tell the causes apart:
+// click-through on, the supporter's control passing clicks, a stuck
+// click-through window style, another window lying on top, a disabled window, a
+// stuck move/capture, or a page element swallowing the press.
+const CLICK_TRACE_FILE = path.join(app.getPath('userData'), 'click-trace.log');
+const CLICK_TRACE_MAX = 512 * 1024;
+let clickTraceQueue = Promise.resolve();
+function clickTraceLog(text) {
+  const out = `[${new Date().toISOString()}] ${text}\n`;
+  clickTraceQueue = clickTraceQueue.then(async () => {
+    try {
+      const st = await fs.promises.stat(CLICK_TRACE_FILE).catch(() => null);
+      if (st && st.size > CLICK_TRACE_MAX) await fs.promises.rename(CLICK_TRACE_FILE, CLICK_TRACE_FILE + '.old').catch(() => {});
+      await fs.promises.appendFile(CLICK_TRACE_FILE, out, 'utf8');
+    } catch {}
+  });
+}
+function hwndOf(w) {
+  try {
+    const b = w.getNativeWindowHandle();
+    return b.length >= 8 ? Number(b.readBigUInt64LE(0)) : b.readUInt32LE(0);
+  } catch { return 0; }
+}
+function traceWindowName(w) {
+  if (!w) return 'unknown Ace window';
+  if (w === win) return 'main';
+  if (w === stickyWin) return 'sticky';
+  if (w === infoWin) return 'info';
+  if (w === floatWin) return 'float button';
+  if (w === selectorWin) return 'snip selector';
+  if (typeof screenViewerWin !== 'undefined' && w === screenViewerWin) return 'screen viewer';
+  if (liveNotes().includes(w)) return 'note';
+  let title = '';
+  try { title = w.getTitle(); } catch {}
+  return `other ("${title}")`;
+}
+function traceFlags() {
+  return `clickThrough=${state.clickThrough} control=${control.state} passing=${control.passing} heldButtons=${control.buttons.size} headerHover=${headerHover} noActivate=${noActivate()}`;
+}
+const hex = (n) => '0x' + (n >>> 0).toString(16);
+let lastPagePressAt = 0;      // the main page's last pointerdown
+let lastExpectedTraceAt = 0;  // rate limit for presses that pass through on purpose
+let lastBrowserPressAt = 0;   // the last mouse-down this process handed to the main page
+let lastSlowLogAt = 0, slowLogs = 0;
+ipcMain.on('click-trace-seen', (e, p) => {
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return;
+  // The time the press happened, not the time the page got round to it.
+  lastPagePressAt = (p && Number(p.at)) || Date.now();
+  const late = (p && Number(p.late)) || 0;
+  if (late >= 400) clickTraceLog(`LATE: the main page handled a press ${late} ms after it happened (the page was busy). ${traceFlags()}`);
+});
+let lastNoteLogAt = 0, noteLogs = 0;
+ipcMain.on('click-trace-note', (_e, text) => {
+  const now = Date.now();
+  if (now - lastNoteLogAt > 60000) { lastNoteLogAt = now; noteLogs = 0; }
+  if (++noteLogs > 20) return;
+  clickTraceLog('page: ' + String(text).slice(0, 300));
+});
+ipcMain.on('click-trace-slow', (e, text) => {
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return;
+  const now = Date.now();
+  if (now - lastSlowLogAt > 60000) { lastSlowLogAt = now; slowLogs = 0; }
+  if (++slowLogs > 20) return; // at most 20 a minute
+  clickTraceLog('PAGE BUSY: ' + String(text).slice(0, 1500));
+});
+function onTracedPress(d) {
+  if (!d.ace) return; // not over an Ace window
+  const w = BrowserWindow.getAllWindows().find((x) => !x.isDestroyed() && hwndOf(x) === d.ace) || null;
+  const name = traceWindowName(w);
+  const where = `press at ${d.x},${d.y} over [${name}]`;
+  const transparent = !!(d.aceEx & 0x20);       // WS_EX_TRANSPARENT: what setIgnoreMouseEvents(true) sets
+  const disabled = !!(d.aceStyle & 0x08000000); // WS_DISABLED
+  const styles = `exStyle=${hex(d.aceEx)} style=${hex(d.aceStyle)}`;
+  if (d.under !== d.ace) {
+    const went = `went to ${d.underProc || '?'} (pid ${d.underPid}, class ${d.underClass || '?'}, hwnd ${hex(d.under)}, exStyle=${hex(d.underEx)})`;
+    const wanted = clickThroughActive() || control.passing;
+    if (transparent && wanted) {
+      // Passing through on purpose. Said once in a while, so "it is simply
+      // switched on" shows in the log without flooding it.
+      if (Date.now() - lastExpectedTraceAt < 15000) return;
+      lastExpectedTraceAt = Date.now();
+      clickTraceLog(`${where} passed through ON PURPOSE (${state.clickThrough ? 'click-through is on: ' + ((state.hotkeys && state.hotkeys.toggleClickThrough) || 'Alt+Q') + ' turns it off' : 'the supporter is controlling'}); ${went}; ${traceFlags()}`);
+      return;
+    }
+    if (transparent) {
+      clickTraceLog(`LOST: ${where} — the window is click-through but nothing asked for it (stuck style). ${went}; ${styles}; ${traceFlags()}. Re-enabling clicks now.`);
+      enforceClickableSafety();
+      return;
+    }
+    clickTraceLog(`LOST: ${where} — another window is on top of it. ${went}; ${styles}; ${traceFlags()}`);
+    return;
+  }
+  if (disabled) {
+    clickTraceLog(`LOST: ${where} — the window is DISABLED (a dialog that belongs to it is open, possibly hidden behind it). ${styles}; ${traceFlags()}`);
+    return;
+  }
+  if (w !== win) return; // only the main page reports its presses
+  // A press that starts a move of the window (title bar) never reaches the page.
+  if (d.guiFlags & 2) return;
+  // Where the window is now: by the time the page is asked, a drag may have moved it.
+  let cb0 = null;
+  try { cb0 = win.getContentBounds(); } catch {}
+  const pageGotIt = () => Math.abs(lastPagePressAt - d.at) <= 600;
+  setTimeout(async () => {
+    if (pageGotIt()) return;
+    if (!win || win.isDestroyed()) return;
+    // The window got the press but the page did not. Ask the page what is at
+    // that spot (a press on the title bar's drag area never reaches the page —
+    // that one is normal).
+    let el = 'page did not answer within 1.5 s (renderer busy or hung)';
+    try {
+      const p = screen.screenToDipPoint ? screen.screenToDipPoint({ x: d.x, y: d.y }) : { x: d.x, y: d.y };
+      const cb = cb0 || win.getContentBounds();
+      const cx = Math.round(p.x - cb.x), cy = Math.round(p.y - cb.y);
+      const js = `(() => {
+        const el = document.elementFromPoint(${cx}, ${cy});
+        if (!el) return JSON.stringify({ el: null });
+        const name = (n) => n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + (typeof n.className === 'string' && n.className.trim() ? '.' + n.className.trim().split(/\\s+/).join('.') : '');
+        const chain = [];
+        let region = '';
+        for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+          if (chain.length < 5) chain.push(name(n));
+          if (!region) {
+            const cs = getComputedStyle(n);
+            const r = cs.getPropertyValue('-webkit-app-region') || cs.getPropertyValue('app-region');
+            if (r && r !== 'none') region = r;
+          }
+        }
+        const cs = getComputedStyle(el);
+        return JSON.stringify({ el: chain.join(' < '), region, pointerEvents: cs.pointerEvents, zIndex: cs.zIndex, position: cs.position, at: [${cx}, ${cy}] });
+      })()`;
+      const res = await Promise.race([
+        win.webContents.executeJavaScript(js, true),
+        new Promise((resolve) => setTimeout(() => resolve(null), 1500)),
+      ]);
+      if (res) {
+        try { if (JSON.parse(res).region === 'drag') return; } catch {} // title-bar drag area: normal
+        el = res;
+      }
+    } catch (e) { el = 'could not ask the page: ' + e.message; }
+    const gui = `guiFlags=${hex(d.guiFlags)}${d.guiFlags & 2 ? ' (IN MOVE/SIZE LOOP)' : ''}${d.guiFlags & 0x14 ? ' (MENU OPEN)' : ''} capture=${hex(d.capture)} moveSize=${hex(d.moveSize)}`;
+    // A busy page gets the press late (logged as LATE when it arrives): give it
+    // until 4 s after the press before calling it lost.
+    const wait = d.at + 4000 - Date.now();
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    if (pageGotIt()) return;
+    const browser = !lastBrowserPressAt ? 'not known whether the app handed it to the page'
+      : Math.abs(lastBrowserPressAt - d.at) <= 1500
+        ? 'the app handed the press to the page, which never reported it'
+        : 'the press never reached the page from the app (dropped before the page)';
+    clickTraceLog(`LOST: ${where} — the window received it but the page did not; ${browser}. element=${el}; ${gui}; ${styles}; ${traceFlags()}`);
+  }, 900);
+}
+const clickTrace = createClickTrace((m) => clickTraceLog('[helper] ' + m), onTracedPress);
+
+// The main page's heartbeat (preload.js): a beat every 2 s with the number of
+// frames painted since the last one. Written to the log only when something
+// changes: beats stop / return, painting stops / returns, a script error.
+const pageBeat = { at: 0, stalled: false, noPaintSince: 0, noPaintLogged: false, lastErrorAt: 0, errors: 0 };
+ipcMain.on('click-trace-beat', (e, b) => {
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return;
+  const now = Date.now();
+  if (pageBeat.stalled) {
+    clickTraceLog(`the main page is alive again after ${Math.round((now - pageBeat.at) / 1000)} s without a heartbeat`);
+    pageBeat.stalled = false;
+  }
+  pageBeat.at = now;
+  // (A page that believes it is hidden while the window is shown does not
+  // paint either: that is the case to catch, so "hidden" does not excuse it.)
+  const shown = isMainShown();
+  pageBeat.hidden = !!(b && b.hidden);
+  pageBeat.nodes = (b && b.nodes) || 0;
+  if (shown && b && b.frames === 0) {
+    if (!pageBeat.noPaintSince) pageBeat.noPaintSince = now;
+    if (!pageBeat.noPaintLogged && now - pageBeat.noPaintSince >= 6000) {
+      pageBeat.noPaintLogged = true;
+      clickTraceLog(`NOT PAINTING: the main page is running but has drawn no frame for ${Math.round((now - pageBeat.noPaintSince) / 1000)} s while the window is shown (black or stale picture; or the window is fully covered). pageSaysHidden=${pageBeat.hidden} domNodes=${pageBeat.nodes}; ${traceFlags()}`);
+    }
+  } else {
+    if (pageBeat.noPaintLogged) clickTraceLog(`the main page paints again after ${Math.round((now - pageBeat.noPaintSince) / 1000)} s`);
+    pageBeat.noPaintSince = 0;
+    pageBeat.noPaintLogged = false;
+  }
+});
+ipcMain.on('click-trace-page-error', (e, text) => {
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return;
+  const now = Date.now();
+  if (now - pageBeat.lastErrorAt > 60000) { pageBeat.lastErrorAt = now; pageBeat.errors = 0; }
+  if (++pageBeat.errors > 10) return; // at most 10 a minute
+  clickTraceLog('page script ' + String(text).slice(0, 700));
+});
+setInterval(() => {
+  if (!win || win.isDestroyed() || !pageBeat.at || pageBeat.stalled) return;
+  const quiet = Date.now() - pageBeat.at;
+  if (quiet < 7000) return;
+  pageBeat.stalled = true;
+  clickTraceLog(`PAGE STALLED: no heartbeat from the main page for ${Math.round(quiet / 1000)} s (frozen or very busy). domNodes=${pageBeat.nodes}; ${traceFlags()}`);
+}, 3000);
+// Opens the folder with click-trace.log selected (Settings / support).
+ipcMain.handle('click-trace-reveal', async () => {
+  await clickTraceQueue;
+  try { require('electron').shell.showItemInFolder(CLICK_TRACE_FILE); } catch {}
+  return CLICK_TRACE_FILE;
 });
 
 function sendHelpRequest() {
@@ -3017,6 +3280,7 @@ app.on('before-quit', () => {
   appIsQuitting = true;
   try { stopSpeakerWatch(); } catch {}
   try { stopOutsideWatch(); } catch {}
+  try { clickTrace.stop(); } catch {}
   try { deepgramActive = false; xaiActive = false; micDgActive = false; clearDeepgramTimers(); clearXaiTimers(); } catch {}
   for (const ws of [deepgramWs, xaiWs, micDgWs]) { try { if (ws) { ws.removeAllListeners(); ws.on('error', () => {}); ws.terminate(); } } catch {} }
   for (const r of recStreams.values()) { try { r.stream.end(); } catch {} }
@@ -3554,12 +3818,23 @@ function getMeetingConfig() {
   const type = normalizeMeetingType(m.type || m.hiringType);
   return { kind: MEETING_TYPES[type].kind, type };
 }
+// Who said what is worked out only in team meetings: the voices told apart by
+// the transcription (diarize) and named from the meeting screen. In a hiring
+// call everything the other side says is "Interviewer": no voice separation,
+// no screen watching, no name reads.
+function speakerNamesOn() { return getMeetingConfig().kind === 'team'; }
 ipcMain.handle('get-meeting-config', () => getMeetingConfig());
 ipcMain.handle('set-meeting-config', (_e, cfg) => {
   cfg = cfg || {};
   const type = normalizeMeetingType(cfg.type || cfg.hiringType || getMeetingConfig().type);
   const changed = getMeetingConfig().type !== type;
+  const wasNames = speakerNamesOn();
   state.meeting = { kind: MEETING_TYPES[type].kind, type };
+  // Switched between hiring and team during transcription: names start or stop
+  // at once; voice separation follows at the next connection.
+  if (wasNames !== speakerNamesOn() && (deepgramActive || xaiActive)) {
+    if (speakerNamesOn()) startSpeakerWatch(); else stopSpeakerWatch();
+  }
   // A new meeting type picks its models (unless that is switched off).
   if (changed && applyAutoModels()) emitAnswerConfig();
   if (changed && preparedAnswers.run) prepareAnswers().catch(() => {});
@@ -3576,27 +3851,37 @@ let deepgramReconnectTimer = null;
 let deepgramReconnectAttempts = 0;
 
 // Audio that arrives while a Deepgram socket is down (a drop, a reconnect) is
-// kept, up to 20 s, and sent first once the socket is back: a dropped
+// kept, up to 30 s, and sent first once the socket is back: a dropped
 // connection then delays those words instead of losing them.
 const DG_BYTES_PER_MS = 32; // 16 kHz, mono, 16-bit
-const DG_BACKLOG_MAX = 20000 * DG_BYTES_PER_MS;
+const DG_BACKLOG_MAX = 30000 * DG_BYTES_PER_MS;
+const dgLen = (buf) => (buf && (buf.byteLength || buf.length)) || 0;
 function makeAudioBacklog() {
   return {
     parts: [], bytes: 0,
     push(buf) {
-      const n = (buf && (buf.byteLength || buf.length)) || 0;
+      const n = dgLen(buf);
       if (!n) return;
       this.parts.push(buf);
       this.bytes += n;
-      while (this.bytes > DG_BACKLOG_MAX && this.parts.length) {
-        const d = this.parts.shift();
-        this.bytes -= (d.byteLength || d.length || 0);
-      }
+      this.trim();
     },
-    // Sends what was kept; returns how many milliseconds of audio that was.
-    flush(ws) {
+    // Audio from before the drop that Deepgram never confirmed: it goes
+    // ahead of what was kept since.
+    prepend(bufs) {
+      if (!bufs.length) return;
+      this.parts = bufs.concat(this.parts);
+      this.bytes = this.parts.reduce((s, p) => s + dgLen(p), 0);
+      this.trim();
+    },
+    trim() {
+      while (this.bytes > DG_BACKLOG_MAX && this.parts.length) this.bytes -= dgLen(this.parts.shift());
+    },
+    // Sends what was kept (noting it in sent, the new socket's log); returns
+    // how many milliseconds of audio that was.
+    flush(ws, sent) {
       const ms = Math.round(this.bytes / DG_BYTES_PER_MS);
-      for (const p of this.parts) { try { ws.send(p); } catch {} }
+      for (const p of this.parts) { try { ws.send(p); if (sent) sent.push(p); } catch {} }
       this.clear();
       return ms;
     },
@@ -3605,19 +3890,93 @@ function makeAudioBacklog() {
 }
 const deepgramBacklog = makeAudioBacklog();
 const micDgBacklog = makeAudioBacklog();
+
+// Audio sent on the open socket that Deepgram has not yet returned as final
+// text. A socket can die while it still looks open (a lost network often
+// leaves it so for seconds), and what went into it meanwhile was lost: those
+// words never came back. On a drop it is now sent again on the next socket,
+// from the end of the last final text, so nothing is lost and nothing shown
+// twice. Offsets are bytes since the socket opened, which is Deepgram's clock
+// (its start/duration seconds) times DG_BYTES_PER_MS.
+function makeSentLog() {
+  return {
+    parts: [], end: 0, confirmed: 0,
+    reset() { this.parts = []; this.end = 0; this.confirmed = 0; },
+    push(buf) {
+      const n = dgLen(buf);
+      if (!n) return;
+      this.parts.push({ at: this.end, buf });
+      this.end += n;
+      this.trim();
+    },
+    // Deepgram returned final text up to sec seconds of this socket's audio.
+    confirm(sec) {
+      if (!Number.isFinite(sec)) return;
+      const b = Math.floor(sec * 1000 * DG_BYTES_PER_MS);
+      if (b > this.confirmed) { this.confirmed = b; this.trim(); }
+    },
+    trim() {
+      while (this.parts.length) {
+        const p = this.parts[0];
+        if (p.at + dgLen(p.buf) <= this.confirmed || this.end - p.at > DG_BACKLOG_MAX) this.parts.shift();
+        else break;
+      }
+    },
+    unconfirmed() { return this.parts.filter((p) => p.at + dgLen(p.buf) > this.confirmed).map((p) => p.buf); },
+  };
+}
+const deepgramSent = makeSentLog();
+const micDgSent = makeSentLog();
+// On a drop: what the dead socket never confirmed goes to the front of the
+// backlog. Returns how many milliseconds that was, for the log.
+function dgReplayUnconfirmed(sent, backlog) {
+  const lost = sent.unconfirmed();
+  sent.reset();
+  backlog.prepend(lost);
+  return Math.round(lost.reduce((s, p) => s + dgLen(p), 0) / DG_BYTES_PER_MS);
+}
+// TCP settings for an opened socket: no batching of the small audio packets,
+// and the system's own keep-alive so a VPN or router does not forget the
+// connection.
+function dgTuneSocket(ws) {
+  try { ws._socket.setNoDelay(true); } catch {}
+  try { ws._socket.setKeepAlive(true, 5000); } catch {}
+}
+// A handshake refused for a reason that passes (busy, overloaded, a gateway
+// timeout) is tried again; a bad key, no credits or bad settings are not.
+const dgTransientStatus = (status) => status === 408 || status === 429 || status >= 500;
+
 // A connection attempt that has not opened by then is dropped and retried.
-const DG_CONNECT_TIMEOUT_MS = 6000;
-// After a drop: one retry at once, then one every 5 s for as long as it takes
-// (the network may be gone for a while). The renderer also asks for a retry
-// at once when the computer's network comes back ('network-online').
-const DG_RETRY_MS = 5000;
-// While a socket is open it is checked every 5 s with a ping. Deepgram answers
+// Through the VPN the TLS handshake alone took up to 5 s, so attempts that
+// would have succeeded were cut at 6 s.
+const DG_CONNECT_TIMEOUT_MS = 10000;
+// After a drop: one retry at once, then after 1 s, 2 s, and then every 3 s for
+// as long as it takes (the network may be gone for a while). The renderer also
+// asks for a retry at once when the computer's network comes back
+// ('network-online'), and the computer waking up does the same.
+function dgRetryDelay(attempt) { return [0, 1000, 2000][attempt] ?? 3000; }
+// While a socket is open it is checked every 2 s with a ping. Deepgram answers
 // a ping in under a second and sends about one message a second even during
-// silence, so 12 s with neither means the connection is dead though it has not
+// silence, so 8 s with neither means the connection is dead though it has not
 // closed (a lost network often leaves the socket looking open): end it, and
-// the close handler reconnects.
-const DG_WATCH_MS = 5000;
-const DG_DEAD_MS = 12000;
+// the close handler reconnects and sends the unconfirmed audio again.
+const DG_WATCH_MS = 2000;
+const DG_DEAD_MS = 8000;
+// Deepgram closes a socket (1011, NET-0001) that has had neither audio nor a
+// text message for 10 s. The keep-alive went every 7 s, which left 3 s for it
+// to cross the network; through the VPN a late one was enough for a drop while
+// the page's audio paused. Deepgram suggests every 3-5 s.
+const DG_KEEPALIVE_MS = 3000;
+// When the page last sent audio for each socket, and why a socket closed, for
+// the log: tells a network stall (audio kept coming, bytes stuck unsent) from
+// the page's audio stopping (nothing came for seconds).
+const dgAudioAt = { sys: 0, mic: 0 };
+function dgCloseDetail(ws, which) {
+  const since = dgAudioAt[which] ? Math.round((Date.now() - dgAudioAt[which]) / 100) / 10 + ' s' : 'never';
+  const unsent = (ws && ws.bufferedAmount) || 0;
+  return ` | last audio from the page ${since} ago, ${unsent} bytes still unsent`
+    + (unsent > 64000 ? ' (network stalled)' : (dgAudioAt[which] && Date.now() - dgAudioAt[which] > 5000 ? ' (the page stopped sending audio)' : ''));
+}
 function watchDeepgramSocket(ws, label) {
   let alive = Date.now();
   const mark = () => { alive = Date.now(); };
@@ -3647,16 +4006,45 @@ function clearDeepgramTimers() {
   if (deepgramReconnectTimer) { clearTimeout(deepgramReconnectTimer); deepgramReconnectTimer = null; }
 }
 
-function scheduleDeepgramReconnect() {
+// After sleep the open sockets are dead but look alive until the 8 s check:
+// on waking, they are ended at once and the close handlers
+// reconnect, sending the unconfirmed audio again. A socket with nothing to
+// end is started now instead of at its next retry.
+let dgPowerWatched = false;
+function watchPowerForDeepgram() {
+  if (dgPowerWatched) return;
+  dgPowerWatched = true;
+  const { powerMonitor } = require('electron');
+  const wake = (why) => {
+    if (deepgramActive) {
+      if (deepgramWs) { appendLogLine(`[deepgram] computer ${why} — reconnecting`); try { deepgramWs.terminate(); } catch {} }
+      else if (deepgramAuth) {
+        if (deepgramReconnectTimer) { clearTimeout(deepgramReconnectTimer); deepgramReconnectTimer = null; }
+        startDeepgramWs(deepgramAuth.apiKey, deepgramAuth.language);
+      }
+    }
+    if (micDgActive) {
+      if (micDgWs) { try { micDgWs.terminate(); } catch {} }
+      else if (micDgAuth) {
+        if (micDgRetryTimer) { clearTimeout(micDgRetryTimer); micDgRetryTimer = null; }
+        startMicDeepgramWs(micDgAuth.apiKey, micDgAuth.language);
+      }
+    }
+  };
+  powerMonitor.on('resume', () => wake('woke up'));
+}
+
+// minDelay: at least this long before the next attempt (a busy service).
+function scheduleDeepgramReconnect(minDelay = 0) {
   if (!deepgramActive || deepgramReconnectTimer || deepgramWs) return;
-  // At once the first time (the audio meanwhile is kept), then every 5 s.
-  const delay = deepgramReconnectAttempts === 0 ? 0 : DG_RETRY_MS;
+  // At once the first time (the audio meanwhile is kept), then soon after.
+  const delay = Math.max(minDelay, dgRetryDelay(deepgramReconnectAttempts));
   deepgramReconnectAttempts++;
   if (deepgramReconnectAttempts === 1) {
-    appendLogLine('[deepgram] connection lost — reconnecting now, then every 5 s until it is back');
+    appendLogLine('[deepgram] connection lost — reconnecting now, then every few seconds until it is back');
     if (!deepgramLost) { deepgramLost = true; notifyTranscriptConnection('lost'); }
-  } else if (deepgramReconnectAttempts % 6 === 0) {
-    appendLogLine(`[deepgram] still not connected after ${deepgramReconnectAttempts} attempts — retrying every 5 s`);
+  } else if (deepgramReconnectAttempts % 10 === 0) {
+    appendLogLine(`[deepgram] still not connected after ${deepgramReconnectAttempts} attempts — retrying every 3 s`);
   }
   deepgramReconnectTimer = setTimeout(() => {
     deepgramReconnectTimer = null;
@@ -3778,6 +4166,7 @@ ipcMain.on('speaker-watch-grabbed', (_e, r) => {
 });
 
 function startSpeakerWatch() {
+  if (!speakerNamesOn()) return; // hiring call: no names (see speakerNamesOn)
   if (watchWin && !watchWin.isDestroyed()) return;
   if (!macScreenPermissionWarn()) return;
   speakerTracker.reset();
@@ -3835,6 +4224,8 @@ function parseTranscriptAlternative(alt, window, isFinal) {
   const text = transcript || words.map((w) => w.punctuated_word || w.word || '').join(' ').replace(/\s+/g, ' ').trim();
   if (!text) return { text: '', labeled: '', speaker: 0, turns: [] };
   lastSpeechAt = Date.now();
+  // Hiring call: one side, no names.
+  if (!speakerNamesOn()) return { text, labeled: 'Interviewer: ' + text, speaker: 0, turns: [{ speaker: 0, who: 'Interviewer', text }] };
   const runs = voiceRuns(words);
   if (!runs.length) {
     const who = transcriptWho(window, isFinal);
@@ -3862,12 +4253,38 @@ function parseTranscriptAlternative(alt, window, isFinal) {
 
 // A final line spoken while nobody was framed waits briefly for the caption
 // read that is under way, so it gets the caption's name instead of the fallback.
-async function settleSpeakerName(window, isFinal) {
-  if (!isFinal || !window || !captionRead) return;
+// The wait is short and only for a voice that has no name yet: every line
+// behind it in the queue waits too, live words included, so the 2 s this used
+// to allow showed as a transcript running 2 s late whenever no tile was framed.
+const SPEAKER_NAME_WAIT_MS = 250;
+async function settleSpeakerName(window, isFinal, alt) {
+  if (!isFinal || !window || !captionRead || !speakerNamesOn()) return;
   if (speakerTracker.nameAt(window[0] + SCREEN_LAG_MS, window[1] + SCREEN_LAG_MS)) return;
-  await Promise.race([captionRead, new Promise((r) => setTimeout(r, 2000))]);
+  const runs = voiceRuns((alt && alt.words) || []);
+  if (runs.length && runs.every((r) => voiceNames.nameFor(r.voice))) return;
+  await Promise.race([captionRead, new Promise((r) => setTimeout(r, SPEAKER_NAME_WAIT_MS))]);
 }
 let transcriptQueue = Promise.resolve();   // keeps lines in order across that wait
+
+// How late the transcript runs, in the activity log once a minute while there
+// is speech: from a word being spoken (the service's clock) to its final text
+// arriving here, and how long lines then waited in the queue above.
+const transcriptLag = { arrive: [], queued: [], timer: null };
+function noteTranscriptLag(spokenEndAt, arrivedAt) {
+  if (spokenEndAt) transcriptLag.arrive.push(arrivedAt - spokenEndAt);
+  transcriptLag.queued.push(Date.now() - arrivedAt);
+  if (transcriptLag.timer) return;
+  transcriptLag.timer = setTimeout(() => {
+    transcriptLag.timer = null;
+    const stat = (a) => {
+      if (!a.length) return '-';
+      const s = a.slice().sort((x, y) => x - y);
+      return `median ${Math.round(s[s.length >> 1])} ms, worst ${Math.round(s[s.length - 1])} ms`;
+    };
+    appendLogLine(`[transcript] ${transcriptLag.queued.length} final lines in the last minute | spoken to received: ${stat(transcriptLag.arrive)} | waiting in the app: ${stat(transcriptLag.queued)}`);
+    transcriptLag.arrive = []; transcriptLag.queued = [];
+  }, 60000);
+}
 
 function startDeepgramWs(apiKey, language) {
   if (deepgramWs) return;
@@ -3876,17 +4293,25 @@ function startDeepgramWs(apiKey, language) {
     sample_rate: '16000', channels: '1',
     smart_format: 'true', interim_results: 'true',
     // VAD + utterance-end events for smoother, more natural finalization.
-    vad_events: 'true', endpointing: '150', no_delay: 'true', utterance_end_ms: '1500',
+    // endpointing: the pause that closes a piece of speech as final text.
+    // utterance_end_ms: the silence that ends the utterance (1000 is the
+    // service's minimum).
+    vad_events: 'true', endpointing: '100', no_delay: 'true', utterance_end_ms: '1000',
     punctuate: 'true',
-    // Each word comes with the voice that said it, for the speaker names.
-    diarize: 'true',
   });
+  // Each word comes with the voice that said it, for the speaker names: team
+  // meetings only (see speakerNamesOn).
+  if (speakerNamesOn()) params.set('diarize', 'true');
   params.set('model', 'nova-2');
   params.set('language', (language && language !== 'auto') ? language : 'en-US');
 
-  const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, {
+  const url = `wss://api.deepgram.com/v1/listen?${params}`;
+  const localAddress = dgLocalAddress('deepgram');
+  const ws = new WebSocket(url, {
     headers: { Authorization: `Token ${apiKey}` },
+    ...(localAddress ? { localAddress } : {}),
   });
+  ws._aceBypass = !!localAddress;
   deepgramWs = ws;
   const startedAt = Date.now();
   const connectTimer = setTimeout(() => {
@@ -3901,12 +4326,15 @@ function startDeepgramWs(apiKey, language) {
     clearTimeout(connectTimer);
     if (deepgramWs !== ws) { try { ws.close(); } catch {} return; } // replaced meanwhile
     opened = true;
+    dgTuneSocket(ws);
     // The audio kept while the socket was down goes first; Deepgram's clock
     // starts at its first byte, so the session clock starts that much earlier.
-    const heldMs = deepgramBacklog.flush(ws);
+    deepgramSent.reset();
+    const heldMs = deepgramBacklog.flush(ws, deepgramSent);
     deepgramT0 = Date.now() - heldMs;
     voiceNames.reset(); // a new connection numbers the voices afresh
-    appendLogLine(`[deepgram] connected in ${Date.now() - startedAt} ms` + (heldMs > 200 ? ` (sent ${heldMs} ms of audio held meanwhile)` : ''));
+    dgBypassFails = 0;
+    appendLogLine(`[deepgram] connected in ${Date.now() - startedAt} ms` + (ws._aceBypass ? ' around the VPN' : '') + (heldMs > 200 ? ` (sent ${heldMs} ms of audio held meanwhile)` : ''));
     deepgramReconnectAttempts = 0;
     watchDeepgramSocket(ws, 'deepgram');
     if (deepgramLost) { deepgramLost = false; notifyTranscriptConnection('connected'); }
@@ -3917,46 +4345,20 @@ function startDeepgramWs(apiKey, language) {
       if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) {
         try { deepgramWs.send(JSON.stringify({ type: 'KeepAlive' })); } catch {}
       }
-    }, 7000);
+    }, DG_KEEPALIVE_MS);
   });
   deepgramWs.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
-      if (msg.type === 'UtteranceEnd') {
-        latencyMark('uttEndAt');
-        // Speech-gap boundary — tells the renderer to flush any pending interim.
-        transcriptQueue = transcriptQueue.then(() => {
-          if (win && !win.isDestroyed()) win.webContents.send('transcript-utterance-end');
-        }).catch(() => {});
-        return;
-      }
+      if (msg.type === 'UtteranceEnd') { emitUtteranceEnd(); return; }
       if (msg.type !== 'Results') return;
+      // Final text up to here: that audio need not be sent again after a drop.
+      if (msg.is_final && deepgramWs === ws) deepgramSent.confirm(msg.start + msg.duration);
       const window = Number.isFinite(msg.start) && Number.isFinite(msg.duration)
         ? [deepgramT0 + msg.start * 1000, deepgramT0 + (msg.start + msg.duration) * 1000] : null;
-      lastSpeechAt = Date.now();
-      transcriptQueue = transcriptQueue.then(() => settleSpeakerName(window, !!msg.is_final)).then(() => {
-        const parsed = parseTranscriptAlternative(msg.channel?.alternatives?.[0], window, !!msg.is_final);
-        if (!parsed.text) return;
-        if (msg.is_final) {
-          sessionLog.push({ ts: Date.now(), kind: 'voice', text: parsed.labeled || parsed.text });
-          latencySpeech(window ? window[1] : Date.now());
-        }
-        if (win && !win.isDestroyed()) {
-          win.webContents.send('transcript-live', {
-            text: parsed.text,
-            labeled: parsed.labeled,
-            speaker: parsed.speaker,
-            turns: parsed.turns || [],
-            isFinal: !!msg.is_final,
-          });
-          // The short pause (endpointing, 150 ms): the hidden answer starts
-          // now instead of at UtteranceEnd (1.5 s of silence).
-          if (msg.is_final && msg.speech_final) {
-            latencyMark('pauseAt');
-            win.webContents.send('transcript-speech-final');
-          }
-        }
-      }).catch(() => {});
+      // The short pause (endpointing, 100 ms): the hidden answer starts
+      // then instead of at UtteranceEnd (1 s of silence).
+      emitTranscript(msg.channel?.alternatives?.[0], window, !!msg.is_final, !!(msg.is_final && msg.speech_final));
     } catch {}
   });
   // A rejected WS handshake (bad key, bad params, no credits) comes through here
@@ -3970,6 +4372,15 @@ function startDeepgramWs(apiKey, language) {
       try { const j = JSON.parse(body); detail = j.err_msg || j.reason || j.message || ''; } catch {}
       const msg = friendlyDeepgramError(res.statusCode, detail);
       appendLogLine(`[deepgram] handshake ${res.statusCode}: ${body.slice(0, 200)}`);
+      // Busy or failing for the moment: keep the audio and try again. Before,
+      // any refusal stopped transcription for the rest of the call.
+      if (dgTransientStatus(res.statusCode)) {
+        clearTimeout(connectTimer);
+        try { ws.terminate(); } catch {}
+        if (deepgramWs === ws) deepgramWs = null;
+        scheduleDeepgramReconnect(res.statusCode === 429 ? 5000 : 2000);
+        return;
+      }
       if (win && !win.isDestroyed()) win.webContents.send('transcript-live-error', msg);
       // A handshake rejection (bad key / params / no credits) won't fix itself —
       // stop so we don't reconnect-loop against a 401.
@@ -3995,11 +4406,70 @@ function startDeepgramWs(apiKey, language) {
     if (deepgramWs !== ws) return;
     if (deepgramKeepAlive) { clearInterval(deepgramKeepAlive); deepgramKeepAlive = null; }
     deepgramWs = null;
+    if (!opened && ws._aceBypass && ++dgBypassFails === 2) appendLogLine('[deepgram] connecting around the VPN failed twice — going through the VPN until a connection works');
+    // The audio this socket took but never returned as final text is sent
+    // again on the next one.
+    const replayMs = deepgramActive && opened ? dgReplayUnconfirmed(deepgramSent, deepgramBacklog) : (deepgramSent.reset(), 0);
     // Why it closed, for the log (Deepgram puts its error code in the reason).
-    if (deepgramActive && opened) appendLogLine(`[deepgram] closed: ${code}${reason && reason.length ? ' ' + reason.toString().slice(0, 160) : ''}`);
+    if (deepgramActive && opened) appendLogLine(`[deepgram] closed: ${code}${reason && reason.length ? ' ' + reason.toString().slice(0, 160) : ''}${dgCloseDetail(ws, 'sys')}${replayMs > 200 ? ` | ${replayMs} ms of audio it never answered will be sent again` : ''}`);
     // If the user is still recording, transparently reconnect.
     if (deepgramActive && !handshakeFailed) scheduleDeepgramReconnect();
   });
+}
+
+// One piece of meeting speech to the page, in order (see transcriptQueue).
+// speechFinal: they paused, so the hidden answer may start.
+function emitTranscript(alt, window, isFinal, speechFinal) {
+  lastSpeechAt = Date.now();
+  const arrivedAt = lastSpeechAt;
+  transcriptQueue = transcriptQueue.then(() => settleSpeakerName(window, isFinal, alt)).then(() => {
+    const parsed = parseTranscriptAlternative(alt, window, isFinal);
+    if (!parsed.text) return;
+    if (isFinal) {
+      noteTranscriptLag(window ? window[1] : 0, arrivedAt);
+      sessionLog.push({ ts: Date.now(), kind: 'voice', text: parsed.labeled || parsed.text });
+      latencySpeech(window ? window[1] : Date.now());
+    }
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('transcript-live', {
+        text: parsed.text,
+        labeled: parsed.labeled,
+        speaker: parsed.speaker,
+        turns: parsed.turns || [],
+        isFinal,
+      });
+      if (speechFinal) {
+        latencyMark('pauseAt');
+        win.webContents.send('transcript-speech-final');
+      }
+    }
+  }).catch(() => {});
+}
+// The end of what they said: the page flushes any pending live words.
+function emitUtteranceEnd() {
+  latencyMark('uttEndAt');
+  transcriptQueue = transcriptQueue.then(() => {
+    if (win && !win.isDestroyed()) win.webContents.send('transcript-utterance-end');
+  }).catch(() => {});
+}
+
+// ── Around the VPN ───────────────────────────────────────────────────────────
+// With the setting on, the transcription sockets leave from the computer's own
+// network adapter instead of the VPN's (its address as the local address;
+// Windows then routes them by that adapter). Faster and steadier through
+// Astrill in a test, but Deepgram then sees this network's real address.
+// When it fails to connect twice in a row, it is dropped until a connection
+// works again.
+let dgBypassFails = 0;
+function dgLocalAddress(label) {
+  if (!state.transcription || !state.transcription.bypassVpn) return null;
+  if (dgBypassFails >= 2) return null;
+  const own = lanAddresses().find((a) => !a.virtual);
+  if (!own) {
+    appendLogLine(`[${label}] no network adapter outside the VPN found — connecting through the VPN`);
+    return null;
+  }
+  return own.address;
 }
 
 function friendlyDeepgramError(status, detail) {
@@ -4166,6 +4636,9 @@ ipcMain.handle('start-deepgram-stream', (_e, { apiKey, language }) => {
   deepgramLost = false;
   clearDeepgramTimers();
   deepgramBacklog.clear();
+  deepgramSent.reset();
+  dgBypassFails = 0;
+  watchPowerForDeepgram();
   startDeepgramWs(apiKey, language);
 });
 ipcMain.handle('stop-deepgram-stream', () => {
@@ -4173,6 +4646,7 @@ ipcMain.handle('stop-deepgram-stream', () => {
   stopSpeakerWatch();
   clearDeepgramTimers();
   deepgramBacklog.clear();
+  deepgramSent.reset();
   if (deepgramLost) { deepgramLost = false; notifyTranscriptConnection('stopped'); }
   if (deepgramWs) {
     try { deepgramWs.send(JSON.stringify({ type: 'CloseStream' })); } catch {}
@@ -4181,7 +4655,8 @@ ipcMain.handle('stop-deepgram-stream', () => {
   }
 });
 ipcMain.on('audio-chunk', (_e, buf) => {
-  if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) deepgramWs.send(buf);
+  dgAudioAt.sys = Date.now();
+  if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) { deepgramWs.send(buf); deepgramSent.push(buf); }
   else if (deepgramActive) deepgramBacklog.push(buf); // reconnecting: keep it
   else if (xaiWs && xaiWs.readyState === WebSocket.OPEN && xaiReady) xaiWs.send(buf);
 });
@@ -4216,38 +4691,47 @@ function startMicDeepgramWs(apiKey, language) {
   });
   params.set('model', 'nova-2');
   params.set('language', (language && language !== 'auto') ? language : 'en-US');
-  const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, { headers: { Authorization: `Token ${apiKey}` } });
+  const localAddress = dgLocalAddress('deepgram mic');
+  const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, { headers: { Authorization: `Token ${apiKey}` }, ...(localAddress ? { localAddress } : {}) });
+  ws._aceBypass = !!localAddress;
+  let micOpened = false;
   micDgWs = ws;
   const connectTimer = setTimeout(() => { if (ws.readyState === WebSocket.CONNECTING) { try { ws.terminate(); } catch {} } }, DG_CONNECT_TIMEOUT_MS);
   micDgWs.on('open', () => {
     clearTimeout(connectTimer);
     if (micDgWs !== ws) { try { ws.close(); } catch {} return; } // replaced meanwhile
-    micDgBacklog.flush(ws); // the voice heard while it was reconnecting
+    micOpened = true;
+    dgTuneSocket(ws);
+    micDgSent.reset();
+    micDgBacklog.flush(ws, micDgSent); // the voice heard while it was reconnecting
     micDgAttempts = 0;
     watchDeepgramSocket(ws, 'deepgram mic');
     if (micDgKeepAlive) clearInterval(micDgKeepAlive);
-    micDgKeepAlive = setInterval(() => { if (micDgWs && micDgWs.readyState === WebSocket.OPEN) { try { micDgWs.send(JSON.stringify({ type: 'KeepAlive' })); } catch {} } }, 7000);
+    micDgKeepAlive = setInterval(() => { if (micDgWs && micDgWs.readyState === WebSocket.OPEN) { try { micDgWs.send(JSON.stringify({ type: 'KeepAlive' })); } catch {} } }, DG_KEEPALIVE_MS);
   });
   micDgWs.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
       if (msg.type !== 'Results') return;
+      if (msg.is_final && micDgWs === ws) micDgSent.confirm(msg.start + msg.duration);
       const alt = msg.channel && msg.channel.alternatives && msg.channel.alternatives[0];
       const text = String((alt && alt.transcript) || '').trim();
       if (text && win && !win.isDestroyed()) win.webContents.send('transcript-mic', { text, isFinal: !!msg.is_final });
     } catch {}
   });
-  micDgWs.on('close', (code) => {
+  micDgWs.on('close', (code, reason) => {
     clearTimeout(connectTimer);
     // Only the current socket reconnects (see the system-audio socket above).
     if (micDgWs !== ws) return;
     if (micDgKeepAlive) { clearInterval(micDgKeepAlive); micDgKeepAlive = null; }
     micDgWs = null;
+    if (!micOpened && ws._aceBypass) dgBypassFails++;
+    const replayMs = micDgActive ? dgReplayUnconfirmed(micDgSent, micDgBacklog) : (micDgSent.reset(), 0);
     if (micDgActive && !micDgRetryTimer) {
-      // At once the first time, then every 5 s until it is back.
-      const delay = micDgAttempts === 0 ? 0 : DG_RETRY_MS;
+      // At once the first time, then soon after, until it is back.
+      const delay = dgRetryDelay(micDgAttempts);
       micDgAttempts++;
-      if (micDgAttempts === 1) appendLogLine(`[deepgram mic] closed: ${code} — reconnecting now, then every 5 s`);
+      if (micDgAttempts === 1) appendLogLine(`[deepgram mic] closed: ${code}${reason && reason.length ? ' ' + reason.toString().slice(0, 120) : ''} — reconnecting now, then every few seconds${dgCloseDetail(ws, 'mic')}${replayMs > 200 ? ` | ${replayMs} ms of audio it never answered will be sent again` : ''}`);
       micDgRetryTimer = setTimeout(() => {
         micDgRetryTimer = null;
         if (micDgActive && !micDgWs && micDgAuth) startMicDeepgramWs(micDgAuth.apiKey, micDgAuth.language);
@@ -4255,7 +4739,22 @@ function startMicDeepgramWs(apiKey, language) {
     }
   });
   micDgWs.on('error', () => {});
-  micDgWs.on('unexpected-response', (_r, res) => { res.resume(); micDgActive = false; try { if (micDgWs) micDgWs.terminate(); } catch {} micDgWs = null; });
+  micDgWs.on('unexpected-response', (_r, res) => {
+    res.resume();
+    clearTimeout(connectTimer);
+    appendLogLine(`[deepgram mic] handshake ${res.statusCode}`);
+    try { ws.terminate(); } catch {}
+    if (micDgWs === ws) micDgWs = null;
+    // Busy or failing for the moment: try again (before, any refusal ended
+    // the mic transcript for the rest of the call). Anything else stops it.
+    if (!dgTransientStatus(res.statusCode)) { micDgActive = false; return; }
+    if (micDgActive && !micDgRetryTimer) {
+      micDgRetryTimer = setTimeout(() => {
+        micDgRetryTimer = null;
+        if (micDgActive && !micDgWs && micDgAuth) startMicDeepgramWs(micDgAuth.apiKey, micDgAuth.language);
+      }, res.statusCode === 429 ? 5000 : 2000);
+    }
+  });
 }
 ipcMain.handle('extract-jd-info', async () => {
   try {
@@ -4276,16 +4775,18 @@ ipcMain.handle('extract-jd-info', async () => {
     return { company: String((d && d.company) || '').trim(), role: String((d && d.role) || '').trim() };
   } catch { return { company: '', role: '' }; }
 });
-ipcMain.handle('start-mic-deepgram-stream', (_e, { apiKey, language } = {}) => { micDgActive = true; micDgAuth = { apiKey, language }; micDgAttempts = 0; micDgBacklog.clear(); startMicDeepgramWs(apiKey, language); });
+ipcMain.handle('start-mic-deepgram-stream', (_e, { apiKey, language } = {}) => { micDgActive = true; micDgAuth = { apiKey, language }; micDgAttempts = 0; micDgBacklog.clear(); micDgSent.reset(); watchPowerForDeepgram(); startMicDeepgramWs(apiKey, language); });
 ipcMain.handle('stop-mic-deepgram-stream', () => {
   micDgActive = false;
   micDgBacklog.clear();
+  micDgSent.reset();
   if (micDgRetryTimer) { clearTimeout(micDgRetryTimer); micDgRetryTimer = null; }
   if (micDgKeepAlive) { clearInterval(micDgKeepAlive); micDgKeepAlive = null; }
   if (micDgWs) { try { micDgWs.send(JSON.stringify({ type: 'CloseStream' })); } catch {} try { micDgWs.close(); } catch {} micDgWs = null; }
 });
 ipcMain.on('mic-audio-chunk', (_e, buf) => {
-  if (micDgWs && micDgWs.readyState === WebSocket.OPEN) micDgWs.send(buf);
+  dgAudioAt.mic = Date.now();
+  if (micDgWs && micDgWs.readyState === WebSocket.OPEN) { micDgWs.send(buf); micDgSent.push(buf); }
   else if (micDgActive) micDgBacklog.push(buf); // reconnecting: keep it
 });
 ipcMain.on('session-log-add', (_e, entry) => { sessionLog.push(entry); });
