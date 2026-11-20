@@ -4823,6 +4823,10 @@ const RTC_CONFIG = {
   ],
   iceTransportPolicy: "all",
 };
+// The servers set on ace2me.com (Ace app → Settings) replace these, so a TURN
+// server for strict networks can be added there without a new build.
+if (window.api.getIceServers)
+  window.api.getIceServers().then((list) => { if (Array.isArray(list) && list.length) RTC_CONFIG.iceServers = list; }).catch(() => {});
 
 function describeCandidate(c) {
   const m = (c || "").match(
@@ -7038,6 +7042,12 @@ const joinOverlayEl = document.getElementById("joinOverlay");
 const joinAddressEl = document.getElementById("joinAddress");
 const joinStatusEl = document.getElementById("joinStatus");
 const joinConnectBtn = document.getElementById("joinConnectBtn");
+const joinSessionListEl = document.getElementById("joinSessionList");
+const joinPasswordEl = document.getElementById("joinPassword");
+const joinLanEl = document.getElementById("joinLan");
+let joinSessions = [];          // live sessions on ace2me.com
+let joinSelected = "";          // the one picked
+let joinSessionsTimer = null;
 const supporterBarDot = document.getElementById("supporterBarDot");
 const supporterBarText = document.getElementById("supporterBarText");
 const supporterVolumeEl = document.getElementById("supporterVolume");
@@ -7081,11 +7091,72 @@ const JOIN_REASONS = {
   capacity: "Someone else is already supporting this call.",
   ended: "Their session ended.",
   refused: "They refused the connection.",
+  "bad-password": "Wrong support password.",
+  "no-password": "No support password is set for this computer on ace2me.com. Ask your administrator.",
+  "too-many-tries": "Too many wrong passwords. Wait 10 minutes and try again.",
+  "no-session": "That session has ended.",
+  pending: "This computer is not approved on ace2me.com.",
+  terminated: "This computer was turned off for Ace by the administrator.",
 };
 function joinReasonText(reason, address) {
   if (reason === "unreachable")
     return `Can't reach ${address || "that address"}. Check the address, that both computers are on the same network, and that their call is started in Ace.`;
-  return JOIN_REASONS[reason] || JOIN_REASONS.refused;
+  if (JOIN_REASONS[reason]) return JOIN_REASONS[reason];
+  // a sentence from ace2me.com (e.g. it cannot be reached) is shown as it is
+  return /\s/.test(String(reason || "")) ? String(reason) : JOIN_REASONS.refused;
+}
+
+// ── Online sessions (ace2me.com) ──
+function sessionAge(iso) {
+  const t = Date.parse(iso || "");
+  if (!t) return "";
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+  return m < 1 ? "just started" : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+function renderJoinSessions(errorText) {
+  if (!joinSessionListEl) return;
+  joinSessionListEl.textContent = "";
+  if (errorText || !joinSessions.length) {
+    const p = document.createElement("p");
+    p.className = "join-empty";
+    p.textContent = errorText || "No live sessions right now. A session appears here when the speaker starts one in Ace.";
+    joinSessionListEl.appendChild(p);
+    return;
+  }
+  if (!joinSessions.some((x) => x.id === joinSelected)) joinSelected = joinSessions.length === 1 ? joinSessions[0].id : "";
+  for (const x of joinSessions) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "join-session" + (x.id === joinSelected ? " active" : "");
+    b.setAttribute("role", "option");
+    b.setAttribute("aria-selected", x.id === joinSelected ? "true" : "false");
+    const name = document.createElement("span");
+    name.textContent = x.label || "Speaker";
+    const age = document.createElement("small");
+    age.textContent = sessionAge(x.startedAt);
+    b.append(name, age);
+    b.addEventListener("click", () => {
+      joinSelected = x.id;
+      renderJoinSessions();
+      setTimeout(() => { try { joinPasswordEl && joinPasswordEl.focus(); } catch {} }, 0);
+    });
+    joinSessionListEl.appendChild(b);
+  }
+}
+async function loadJoinSessions() {
+  if (!window.api.onlineSessions) return;
+  const r = await window.api.onlineSessions().catch((e) => ({ ok: false, error: e.message }));
+  if (r && r.ok) { joinSessions = r.sessions || []; renderJoinSessions(); }
+  else renderJoinSessions(joinReasonText((r && r.error) || "Cannot reach ace2me.com."));
+}
+function watchJoinSessions(on) {
+  if (joinSessionsTimer) { clearInterval(joinSessionsTimer); joinSessionsTimer = null; }
+  if (!on) return;
+  loadJoinSessions();
+  joinSessionsTimer = setInterval(() => {
+    if (!joinOverlayEl || joinOverlayEl.hidden) { watchJoinSessions(false); return; }
+    loadJoinSessions();
+  }, 10000);
 }
 
 function setJoinStatus(text, kind) {
@@ -7103,7 +7174,8 @@ function showJoin(message) {
   }
   if (joinConnectBtn) joinConnectBtn.disabled = false;
   setJoinStatus(message || "", message ? "err" : "");
-  setTimeout(() => { try { joinAddressEl && joinAddressEl.focus(); } catch {} }, 50);
+  watchJoinSessions(true);
+  setTimeout(() => { try { (joinLanEl && joinLanEl.open ? joinAddressEl : joinPasswordEl) && (joinLanEl && joinLanEl.open ? joinAddressEl : joinPasswordEl).focus(); } catch {} }, 50);
 }
 
 function clearJoinPending() {
@@ -7114,7 +7186,10 @@ function clearJoinPending() {
 
 async function startJoin() {
   if (joinPending) return;
-  const address = ipOnly(joinAddressEl && joinAddressEl.value);
+  // Online, unless the same-network part is open with an address typed in.
+  const lanAddress = ipOnly(joinAddressEl && joinAddressEl.value);
+  if (!(joinLanEl && joinLanEl.open && lanAddress)) return startJoinOnline();
+  const address = lanAddress;
   if (!address) { setJoinStatus("Enter their IP address.", "err"); joinAddressEl && joinAddressEl.focus(); return; }
   if (!isIpv4(address)) { setJoinStatus("Enter their IP address, for example 192.168.1.20.", "err"); joinAddressEl && joinAddressEl.focus(); return; }
   netCfg = { ...(netCfg || {}), role: "supporter" };
@@ -7132,6 +7207,30 @@ async function startJoin() {
       await window.api.leaveSupporter().catch(() => {});
       setJoinStatus(joinReasonText("unreachable", address), "err");
     }, 15000),
+  };
+  try { netCfg = await window.api.getNetworkConfig(); } catch {}
+}
+
+async function startJoinOnline() {
+  const session = joinSessions.find((x) => x.id === joinSelected);
+  if (!session) { setJoinStatus(joinSessions.length ? "Pick a session first." : "There is no live session to join yet.", "err"); return; }
+  const password = joinPasswordEl ? joinPasswordEl.value : "";
+  if (!password) { setJoinStatus("Enter the support password.", "err"); joinPasswordEl && joinPasswordEl.focus(); return; }
+  netCfg = { ...(netCfg || {}), role: "supporter" };
+  teardownPeers();
+  const r = await window.api.joinOnline({ sessionId: session.id, password, label: session.label }).catch((e) => ({ ok: false, error: e.message }));
+  if (!r || !r.ok) { setJoinStatus((r && r.error) || "Could not connect.", "err"); return; }
+  supporterAddress = session.label || "the speaker";
+  if (joinConnectBtn) joinConnectBtn.disabled = true;
+  setJoinStatus(`Connecting to ${supporterAddress}…`, "busy");
+  joinPending = {
+    address: supporterAddress,
+    timer: setTimeout(async () => {
+      if (!joinPending) return;
+      clearJoinPending();
+      await window.api.leaveSupporter().catch(() => {});
+      setJoinStatus(`No answer from ${supporterAddress}'s Ace. Their session may have just ended; try again.`, "err");
+    }, 20000),
   };
   try { netCfg = await window.api.getNetworkConfig(); } catch {}
 }
@@ -7258,6 +7357,10 @@ if (joinSettingsBtn) joinSettingsBtn.addEventListener("click", () => openSetting
 if (joinConnectBtn) joinConnectBtn.addEventListener("click", () => startJoin());
 if (joinAddressEl)
   joinAddressEl.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); startJoin(); } });
+if (joinPasswordEl)
+  joinPasswordEl.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); startJoinOnline(); } });
+const joinRefreshBtn = document.getElementById("joinRefreshBtn");
+if (joinRefreshBtn) joinRefreshBtn.addEventListener("click", () => loadJoinSessions());
 
 // Speaker: the headset button and its panel.
 const supporterInviteBtn = document.getElementById("supporterInviteBtn");
@@ -7267,6 +7370,7 @@ const supporterPanelStatus = document.getElementById("supporterPanelStatus");
 const supporterPanelKick = document.getElementById("supporterPanelKick");
 const supporterPanelOther = document.getElementById("supporterPanelOther");
 
+let lastOnlineStatus = null;
 async function refreshSupporterInvite(status) {
   if (!window.api.getSupporterInvite) return;
   let inv;
@@ -7278,6 +7382,15 @@ async function refreshSupporterInvite(status) {
   // below it, for a supporter who is on the same VPN. Only the IP: the
   // supporter's Ace always uses the default port.
   const all = (inv.addresses || []).map((a) => a.address);
+  const onlineEl = document.getElementById("supporterPanelOnline");
+  if (onlineEl) {
+    const on = (status && status.online) || lastOnlineStatus || {};
+    if (status && status.online) lastOnlineStatus = status.online;
+    onlineEl.textContent = !inv.hosting ? "—"
+      : on.hosting ? "Listed on ace2me.com: supporters anywhere can join with their password"
+      : on.error ? "Not listed: " + on.error
+      : "Connecting to ace2me.com…";
+  }
   if (supporterPanelAddr) supporterPanelAddr.textContent = inv.hosting ? (all[0] || "No network found") : "—";
   if (supporterPanelOther) {
     supporterPanelOther.hidden = !inv.hosting || all.length < 2;

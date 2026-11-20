@@ -88,7 +88,7 @@ const {
 const { createKeyInjector, pasteKeystroke } = require('./platform-input');
 const { createRemoteInput, vkFor } = require('./remote-input');
 const { createClickTrace } = require('./click-trace');
-const license = require('./license');
+const aceOnline = require('./ace-online');
 const { uploadFolder } = require('./gofile');
 const { signatureDistance } = require('./speaker-detect');
 const { createSpeakerTracker, createVoiceNames, voiceRuns } = require('./speaker-tracker');
@@ -300,13 +300,12 @@ let deepgramWs = null;
 let sessionLog = [];
 let state = { ...DEFAULT_STATE };
 
-// ── Built-in API keys ─────────────────────────────────────────────────────────
-// defaults/api-keys.json is shipped inside the app so users need no keys of
-// their own. A non-empty entry always wins over whatever is in state.json and
-// the matching settings field is hidden in the UI; an empty entry leaves that
-// provider user-configurable. (Anything shipped in the app can be extracted by
-// a user — rotate at the provider if a key leaks.)
-const BUILTIN_KEYS_FILE = path.join(__dirname, 'defaults', 'api-keys.json');
+// ── API keys from ace2me.com ─────────────────────────────────────────────────
+// The keys come with every check-in at ace2me.com (ace-online.js) instead of
+// being built into the installer. A non-empty key always wins over whatever is
+// in state.json and the matching settings field is hidden in the UI; an empty
+// one leaves that provider user-configurable. They are never written to
+// state.json (stateForDisk), so a computer that is turned off keeps none.
 
 // Bundled interview notes for "how do you use AI in your work" questions. Shipped
 // in the build (not committed). When present, answers follow it in detail.
@@ -317,17 +316,31 @@ function getAiUsageScript() {
   catch { aiUsageScript = ''; }
   return aiUsageScript;
 }
-let builtinKeys = null;
+const ONLINE_KEY_NAMES = ['deepgram', 'xai', 'anthropic', 'openai', 'openrouter'];
 function getBuiltinKeys() {
-  if (builtinKeys) return builtinKeys;
-  let raw = {};
-  try { raw = JSON.parse(fs.readFileSync(BUILTIN_KEYS_FILE, 'utf8')); } catch {}
-  builtinKeys = {};
-  for (const k of ['deepgram', 'xai', 'anthropic', 'openai', 'openrouter']) {
+  const cur = aceOnline.current();
+  const raw = (cur && cur.keys) || {};
+  const out = {};
+  for (const k of ONLINE_KEY_NAMES) {
     const v = String(raw[k] || '').trim();
-    if (v) builtinKeys[k] = v;
+    if (v) { out[k] = v; onlineKeysSeen.add(v); }
   }
-  return builtinKeys;
+  return out;
+}
+// Every key ace2me.com gave in this run, also ones it has since taken back.
+const onlineKeysSeen = new Set();
+// state.json without the keys from ace2me.com.
+function stateForDisk() {
+  getBuiltinKeys();
+  if (!onlineKeysSeen.size) return state;
+  const vals = onlineKeysSeen;
+  const blank = (v) => (vals.has(v) ? '' : v);
+  const t = state.transcription || {}, a = state.answer || {};
+  return {
+    ...state,
+    transcription: { ...t, deepgramApiKey: blank(t.deepgramApiKey), xaiApiKey: blank(t.xaiApiKey) },
+    answer: { ...a, apiKey: blank(a.apiKey), keys: Object.fromEntries(Object.entries(a.keys || {}).map(([k, v]) => [k, blank(v)])) },
+  };
 }
 function applyBuiltinKeys() {
   const b = getBuiltinKeys();
@@ -339,6 +352,12 @@ function applyBuiltinKeys() {
   if (b.anthropic) state.answer.keys.anthropic = b.anthropic;
   if (b.openai) state.answer.keys.openai = b.openai;
   if (b.openrouter) state.answer.keys.openrouter = b.openrouter;
+}
+// Turned off on ace2me.com: no key from it stays in memory either.
+function forgetOnlineKeys() {
+  const d = stateForDisk();
+  state.transcription = d.transcription;
+  state.answer = d.answer;
 }
 ipcMain.handle('get-builtin-keys', () => {
   const b = getBuiltinKeys();
@@ -496,7 +515,7 @@ function saveState() {
   }
   try {
     fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state));
+    fs.writeFileSync(STATE_FILE, JSON.stringify(stateForDisk()));
   } catch {}
 }
 
@@ -2443,6 +2462,7 @@ function broadcastNetworkStatus() {
     connected: wsClient ? wsClient.readyState === WebSocket.OPEN : false,
     supporters: supporterListSnapshot(),
     maxSupporters: state.network.maxSupporters || 5,
+    online: { hosting: !!(aceHost && aceHost.ws && aceHost.ws.readyState === WebSocket.OPEN), joined: supporterOnline ? supporterOnline.label : '', error: aceHostError },
   };
   win.webContents.send('network-status', status);
 }
@@ -2468,6 +2488,7 @@ function parseAddress(addr) {
 }
 
 function stopSignalingServer() {
+  aceHostStop();
   if (wsServerHeartbeat) { clearInterval(wsServerHeartbeat); wsServerHeartbeat = null; }
   // Tell the supporter the session is over, so it does not keep reconnecting.
   for (const entry of supporterConns.values()) {
@@ -2527,6 +2548,220 @@ function ensureFirewallRule(port, force) {
   }
 }
 
+// One supporter's socket: from this network (the signalling server) or from
+// anywhere through ace2me.com's relay (aceHost, a RelayConn for each).
+function onSupporterSocket(ws, req) {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+  let ip = (req && req.socket && req.socket.remoteAddress) || '';
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  if (ip === '::1') ip = '127.0.0.1';
+  const port = (req && req.socket && req.socket.remotePort) || 0;
+  const refuse = (reason, code) => {
+    try { ws.send(JSON.stringify({ type: 'reject', reason })); } catch {}
+    try { ws.close(code, reason); } catch {}
+  };
+  if (supporterConns.size >= 1) return refuse('capacity', 4002);
+  let id = null;
+  const admit = () => {
+    id = String(nextConnId++);
+    const initialMicMode = 'mute';
+    supporterConns.set(id, { ws, ip, port, micMode: initialMicMode });
+    appendLogLine(`[supporter] #${id} joined from ${ip}`);
+    try { ws.send(JSON.stringify({ type: 'hello', id, micMode: initialMicMode })); } catch {}
+    for (const m of chatHistory) {
+      if (!m || (m.type !== 'chat-text' && m.type !== 'chat-image')) continue;
+      try {
+        const payload = m.type === 'chat-text'
+          ? { type: 'chat-text', text: m.text, ts: m.ts, fromSupporter: !m.fromMe }
+          : { type: 'chat-image', dataUrl: m.dataUrl, ts: m.ts, fromSupporter: !m.fromMe };
+        ws.send(JSON.stringify(payload));
+      } catch {}
+    }
+    if (win) win.webContents.send('signaling-in', { connId: id, type: 'opened', ip });
+    broadcastNetworkStatus();
+  };
+  ws.on('message', (data) => {
+    let msg;
+    try { msg = JSON.parse(data.toString()); } catch { return; }
+    if (!id) return;
+    if (msg && msg.type === 'join') return; // an older supporter's Ace still sends its code
+    if (msg && msg.type === 'request-mic-mode') {
+      setSupporterMicMode(id, msg.mode);
+      return;
+    }
+    if (msg && msg.type === 'control-request') { controlRequest(id); return; }
+    if (msg && msg.type === 'control-release') { if (control.connId === id) controlStop('the supporter let go'); return; }
+    if (msg && msg.type === 'ci') { controlInput(id, msg.ev); return; }
+    if (msg && msg.type === 'remote-submit') {
+      const text = typeof msg.text === 'string' ? msg.text.slice(0, 4000) : '';
+      if (win) win.webContents.send('remote-submit', { connId: id, mode: msg.mode, text });
+      return;
+    }
+    if (msg && (msg.type === 'chat-text' || msg.type === 'chat-image')) {
+      const entry = msg.type === 'chat-text'
+        ? { type: 'chat-text', text: String(msg.text || ''), ts: msg.ts || Date.now(), fromId: id, fromMe: false }
+        : { type: 'chat-image', dataUrl: String(msg.dataUrl || ''), ts: msg.ts || Date.now(), fromId: id, fromMe: false };
+      chatHistory.push(entry);
+      if (chatHistory.length > CHAT_HISTORY_MAX) chatHistory.shift();
+      if (win) win.webContents.send('supporter-chat-in', entry);
+      // The speaker had put the window away: a message brings it back
+      // (without taking the keyboard from the meeting).
+      if (win && !win.isDestroyed() && !isMainShown()) showMain();
+      return;
+    }
+    if (msg && msg.type === 'chat-clear') {
+      chatHistory = [];
+      pushHistoryToStickyDom();
+      if (win) win.webContents.send('chat-clear');
+      for (const e2 of supporterConns.values()) {
+        if (e2 && e2.ws && e2.ws.readyState === WebSocket.OPEN) {
+          try { e2.ws.send(JSON.stringify({ type: 'chat-clear', ts: Date.now() })); } catch {}
+        }
+      }
+      return;
+    }
+    if (win) win.webContents.send('signaling-in', { connId: id, ...msg });
+  });
+  ws.on('close', () => {
+    if (!id) return;
+    const cur = supporterConns.get(id);
+    if (cur && cur.ws === ws) supporterConns.delete(id);
+    if (control.pending === id) control.pending = null;
+    if (control.connId === id) controlStop('the supporter left');
+    appendLogLine(`[supporter] #${id} left`);
+    if (win) win.webContents.send('signaling-in', { connId: id, type: 'closed' });
+    broadcastNetworkStatus();
+  });
+  ws.on('error', () => {});
+  admit();
+}
+
+// ── Online session (speaker) ─────────────────────────────────────────────────
+// While the speaker's session runs, it is also published on ace2me.com, and
+// this Ace keeps a connection open to the relay (RemoteDevJobs/ace-relay).
+// Supporters anywhere pick it from their list and join with their password;
+// ace2me.com checks it and gives them a ticket. Each one arrives here as a
+// RelayConn, which behaves like a supporter's socket on this network, so
+// everything after (chat, answers, screen, remote control) works the same.
+const { EventEmitter } = require('events');
+class RelayConn extends EventEmitter {
+  constructor(host, c) { super(); this.host = host; this.c = c; this.readyState = WebSocket.OPEN; this.isAlive = true; }
+  send(d) {
+    if (this.readyState !== WebSocket.OPEN) return;
+    aceHostSend(this.host, { t: 'msg', c: this.c, d: typeof d === 'string' ? d : String(d) });
+  }
+  close(code, reason) {
+    if (this.readyState !== WebSocket.OPEN) return;
+    aceHostSend(this.host, { t: 'close', c: this.c, code, reason });
+    this.gone(code, reason);
+  }
+  terminate() { this.close(4001, 'closed'); }
+  ping() { this.emit('pong'); } // the relay watches the supporter's link itself
+  gone(code, reason) {
+    if (this.readyState !== WebSocket.OPEN) return;
+    this.readyState = WebSocket.CLOSED;
+    this.emit('close', code || 1000, Buffer.from(String(reason || '')));
+  }
+}
+let aceHost = null;      // { sessionId, ticket, relayUrl, ws, conns, beatTimer, retryTimer, stopped }
+let aceHostError = '';
+function aceHostSend(h, o) {
+  if (h && h.ws && h.ws.readyState === WebSocket.OPEN) { try { h.ws.send(JSON.stringify(o)); } catch {} }
+}
+async function aceHostStart() {
+  aceHostStop();
+  if (state.network.role !== 'speaker' || !aceOnline.current()) return;
+  const h = { sessionId: '', ticket: '', relayUrl: '', ws: null, conns: new Map(), beatTimer: null, retryTimer: null, stopped: false };
+  aceHost = h;
+  const r = await aceOnline.sessionStart('');
+  if (h.stopped) { if (r.ok) aceOnline.sessionEnd(r.sessionId); return; }
+  if (!r.ok) {
+    aceHostError = r.error;
+    appendLogLine('[online] the session could not be published: ' + r.error);
+    h.retryTimer = setTimeout(() => { if (aceHost === h) aceHostStart(); }, 30000);
+    broadcastNetworkStatus();
+    return;
+  }
+  aceHostError = '';
+  Object.assign(h, { sessionId: r.sessionId, ticket: r.ticket, relayUrl: r.relayUrl });
+  appendLogLine('[online] session published on ace2me.com');
+  aceHostConnect(h);
+  h.beatTimer = setInterval(async () => {
+    const b = await aceOnline.sessionBeat(h.sessionId);
+    if (h.stopped) return;
+    if (b.ok && b.ticket) h.ticket = b.ticket;
+    if (b.ok && b.ended) {
+      appendLogLine('[online] the administrator ended the online session');
+      aceHostStop(true);
+      if (win && !win.isDestroyed()) win.webContents.send('capture-text', '[the online session was ended on ace2me.com]');
+    }
+  }, 30000);
+}
+function aceHostConnect(h) {
+  if (h.stopped) return;
+  let ws;
+  try { ws = new WebSocket(aceOnline.relayUrl(h.relayUrl, 'host', h.ticket)); }
+  catch (e) { appendLogLine('[online] relay: ' + e.message); return aceHostRetry(h); }
+  h.ws = ws;
+  ws.on('open', () => { aceHostError = ''; appendLogLine('[online] connected to the relay'); broadcastNetworkStatus(); });
+  ws.on('message', (data) => {
+    let m; try { m = JSON.parse(data.toString()); } catch { return; }
+    if (!m || m.c == null) return;
+    const c = String(m.c);
+    if (m.t === 'open') {
+      const old = h.conns.get(c); if (old) old.gone(1001, 'reopened');
+      const conn = new RelayConn(h, c);
+      h.conns.set(c, conn);
+      conn.on('close', () => { if (h.conns.get(c) === conn) h.conns.delete(c); });
+      const name = String(m.n || '').slice(0, 60);
+      onSupporterSocket(conn, { socket: { remoteAddress: name ? `online (${name})` : 'online', remotePort: 0 } });
+    } else if (m.t === 'msg') {
+      const conn = h.conns.get(c);
+      if (conn && typeof m.d === 'string') conn.emit('message', Buffer.from(m.d));
+    } else if (m.t === 'close') {
+      const conn = h.conns.get(c);
+      if (conn) conn.gone(1000, 'left');
+    }
+  });
+  ws.on('close', (code) => {
+    if (h.ws === ws) h.ws = null;
+    for (const conn of h.conns.values()) conn.gone(1006, 'relay');
+    h.conns.clear();
+    broadcastNetworkStatus();
+    if (h.stopped) return;
+    if (code === 4006) { appendLogLine('[online] ended by the administrator'); aceHostStop(true); return; }
+    aceHostRetry(h);
+  });
+  ws.on('error', (e) => { aceHostError = e.message; });
+}
+// Dropped: back in a few seconds, with a fresh ticket.
+function aceHostRetry(h) {
+  if (h.stopped || h.retryTimer) return;
+  h.retryTimer = setTimeout(async () => {
+    h.retryTimer = null;
+    if (h.stopped) return;
+    const b = await aceOnline.sessionBeat(h.sessionId);
+    if (h.stopped) return;
+    if (b.ok && b.ended) { aceHostStop(true); return; }
+    if (b.ok && b.ticket) h.ticket = b.ticket;
+    aceHostConnect(h);
+  }, 3000);
+}
+function aceHostStop(endedThere) {
+  const h = aceHost;
+  if (!h) return;
+  aceHost = null;
+  h.stopped = true;
+  if (h.beatTimer) clearInterval(h.beatTimer);
+  if (h.retryTimer) clearTimeout(h.retryTimer);
+  for (const conn of h.conns.values()) conn.close(4006, 'ended');
+  h.conns.clear();
+  if (h.ws) { try { h.ws.close(1000, 'ended'); } catch {} h.ws = null; }
+  if (h.sessionId && !endedThere) aceOnline.sessionEnd(h.sessionId).catch(() => {});
+  broadcastNetworkStatus();
+}
+
 function startSignalingServer() {
   stopSignalingServer();
   const addr = parseAddress(state.network.address);
@@ -2555,99 +2790,16 @@ function startSignalingServer() {
       try { c.ping(); } catch {}
     });
   }, WS_PING_MS);
-  wsServer.on('connection', (ws, req) => {
-    ws.isAlive = true;
-    ws.on('pong', () => { ws.isAlive = true; });
-    let ip = (req && req.socket && req.socket.remoteAddress) || '';
-    if (ip.startsWith('::ffff:')) ip = ip.slice(7);
-    if (ip === '::1') ip = '127.0.0.1';
-    const port = (req && req.socket && req.socket.remotePort) || 0;
-    const refuse = (reason, code) => {
-      try { ws.send(JSON.stringify({ type: 'reject', reason })); } catch {}
-      try { ws.close(code, reason); } catch {}
-    };
-    if (supporterConns.size >= 1) return refuse('capacity', 4002);
-    let id = null;
-    const admit = () => {
-      id = String(nextConnId++);
-      const initialMicMode = 'mute';
-      supporterConns.set(id, { ws, ip, port, micMode: initialMicMode });
-      appendLogLine(`[supporter] #${id} joined from ${ip}`);
-      try { ws.send(JSON.stringify({ type: 'hello', id, micMode: initialMicMode })); } catch {}
-      for (const m of chatHistory) {
-        if (!m || (m.type !== 'chat-text' && m.type !== 'chat-image')) continue;
-        try {
-          const payload = m.type === 'chat-text'
-            ? { type: 'chat-text', text: m.text, ts: m.ts, fromSupporter: !m.fromMe }
-            : { type: 'chat-image', dataUrl: m.dataUrl, ts: m.ts, fromSupporter: !m.fromMe };
-          ws.send(JSON.stringify(payload));
-        } catch {}
-      }
-      if (win) win.webContents.send('signaling-in', { connId: id, type: 'opened', ip });
-      broadcastNetworkStatus();
-    };
-    ws.on('message', (data) => {
-      let msg;
-      try { msg = JSON.parse(data.toString()); } catch { return; }
-      if (!id) return;
-      if (msg && msg.type === 'join') return; // an older supporter's Ace still sends its code
-      if (msg && msg.type === 'request-mic-mode') {
-        setSupporterMicMode(id, msg.mode);
-        return;
-      }
-      if (msg && msg.type === 'control-request') { controlRequest(id); return; }
-      if (msg && msg.type === 'control-release') { if (control.connId === id) controlStop('the supporter let go'); return; }
-      if (msg && msg.type === 'ci') { controlInput(id, msg.ev); return; }
-      if (msg && msg.type === 'remote-submit') {
-        const text = typeof msg.text === 'string' ? msg.text.slice(0, 4000) : '';
-        if (win) win.webContents.send('remote-submit', { connId: id, mode: msg.mode, text });
-        return;
-      }
-      if (msg && (msg.type === 'chat-text' || msg.type === 'chat-image')) {
-        const entry = msg.type === 'chat-text'
-          ? { type: 'chat-text', text: String(msg.text || ''), ts: msg.ts || Date.now(), fromId: id, fromMe: false }
-          : { type: 'chat-image', dataUrl: String(msg.dataUrl || ''), ts: msg.ts || Date.now(), fromId: id, fromMe: false };
-        chatHistory.push(entry);
-        if (chatHistory.length > CHAT_HISTORY_MAX) chatHistory.shift();
-        if (win) win.webContents.send('supporter-chat-in', entry);
-        // The speaker had put the window away: a message brings it back
-        // (without taking the keyboard from the meeting).
-        if (win && !win.isDestroyed() && !isMainShown()) showMain();
-        return;
-      }
-      if (msg && msg.type === 'chat-clear') {
-        chatHistory = [];
-        pushHistoryToStickyDom();
-        if (win) win.webContents.send('chat-clear');
-        for (const e2 of supporterConns.values()) {
-          if (e2 && e2.ws && e2.ws.readyState === WebSocket.OPEN) {
-            try { e2.ws.send(JSON.stringify({ type: 'chat-clear', ts: Date.now() })); } catch {}
-          }
-        }
-        return;
-      }
-      if (win) win.webContents.send('signaling-in', { connId: id, ...msg });
-    });
-    ws.on('close', () => {
-      if (!id) return;
-      const cur = supporterConns.get(id);
-      if (cur && cur.ws === ws) supporterConns.delete(id);
-      if (control.pending === id) control.pending = null;
-      if (control.connId === id) controlStop('the supporter left');
-      appendLogLine(`[supporter] #${id} left`);
-      if (win) win.webContents.send('signaling-in', { connId: id, type: 'closed' });
-      broadcastNetworkStatus();
-    });
-    ws.on('error', () => {});
-    admit();
-  });
+  wsServer.on('connection', onSupporterSocket);
   wsServer.on('error', (e) => {
     if (win) win.webContents.send('network-error', 'Server error: ' + e.message);
   });
+  aceHostStart();
   broadcastNetworkStatus();
 }
 
 function disconnectSignalingClient() {
+  supporterJoinSeq++;
   if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
   if (wsClientHeartbeat) { clearInterval(wsClientHeartbeat); wsClientHeartbeat = null; }
   if (wsClient) {
@@ -2658,14 +2810,38 @@ function disconnectSignalingClient() {
   broadcastNetworkStatus();
 }
 
+// Supporter joined online (a session from ace2me.com): { sessionId, password,
+// label }. Each connect, also a reconnect after a drop, asks ace2me.com for a
+// fresh ticket with the password, so a changed password or a turned-off
+// computer stops it.
+let supporterOnline = null;
+let supporterJoinSeq = 0;
 function connectSignalingClient() {
   disconnectSignalingClient();
+  if (supporterOnline) {
+    const seq = ++supporterJoinSeq;
+    const target = supporterOnline;
+    aceOnline.join(target.sessionId, target.password).then((r) => {
+      if (seq !== supporterJoinSeq || supporterOnline !== target) return;
+      if (!r.ok) {
+        appendLogLine('[online] join refused: ' + r.error);
+        supporterRefused = r.error;
+        supporterAdmitted = false;
+        if (win) win.webContents.send('join-rejected', { reason: r.error });
+        return;
+      }
+      openSignalingClient(aceOnline.relayUrl(r.relayUrl, 'join', r.ticket));
+    });
+    return;
+  }
   const addr = parseAddress(state.network.address);
   if (!addr) {
     if (win) win.webContents.send('network-error', 'Invalid address: ' + state.network.address);
     return;
   }
-  const url = `ws://${addr.host}:${addr.port}`;
+  openSignalingClient(`ws://${addr.host}:${addr.port}`);
+}
+function openSignalingClient(url) {
   let ws;
   try {
     ws = new WebSocket(url);
@@ -3019,6 +3195,8 @@ function setupAutoUpdater() {
   autoUpdater.logger = null;
   // same network rule as the app's own requests: no search for a proxy first
   try { autoUpdater.netSession.setProxy({ mode: 'direct' }).catch(() => {}); } catch {}
+  // Updates come from ace2me.com, which passes on the files of the GitHub release.
+  try { autoUpdater.setFeedURL({ provider: 'generic', url: aceOnline.updateFeedUrl }); } catch {}
   autoUpdater.on('checking-for-update', () => updaterStatus({ state: 'checking' }));
   autoUpdater.on('update-available', (info) => {
     updaterStatus({ state: 'available', version: info?.version });
@@ -3187,12 +3365,11 @@ ipcMain.handle('get-app-info', () => {
   return { version: app.getVersion(), buildDate };
 });
 
-// ── License gate ─────────────────────────────────────────────────────────────
-// The app only starts once a valid MAC-bound license is stored (license.js).
-// First run (or after expiry) shows a small window with this PC's MAC address;
-// the user sends it to the admin, receives a key from the admin generator
-// (license-admin/), and enters it once. Verification is offline against the
-// embedded public key, so no network is needed to activate.
+// ── Approval gate (ace2me.com) ───────────────────────────────────────────────
+// The app only starts on a computer the administrator approved on ace2me.com
+// (super admin → "Ace app"). Until then a small window shows this computer's
+// MAC address to send to the administrator and checks again every 10 s; it
+// opens the app by itself once the approval is there. See ace-online.js.
 
 let licenseWin = null;
 
@@ -3298,8 +3475,7 @@ process.on('unhandledRejection', (e) => {
 function startApp() {
   startWatchdog();
   recoverRecordings();
-  // Keep the license's last-seen time moving while the app runs (10 min).
-  setInterval(() => { try { license.touchStoredLicense(app.getPath('userData')); } catch {} }, 10 * 60 * 1000);
+  startAceCheckins();
   // macOS: ask for the microphone up front so the system prompt appears once,
   // instead of the first transcription silently getting no audio.
   if (process.platform === 'darwin') {
@@ -3334,15 +3510,15 @@ ipcMain.handle('set-vscode-config', (_e, cfg) => {
 });
 ipcMain.handle('get-vscode-status', () => vscodeBridge.status());
 
-function openLicenseWindow(reason) {
+function openLicenseWindow(first) {
   licenseWin = new BrowserWindow({
     width: 460,
-    height: 392,
+    height: 330,
     useContentSize: true,
     resizable: false,
     maximizable: false,
     minimizable: false,
-    title: 'Activation',
+    title: 'Ace',
     webPreferences: {
       preload: path.join(__dirname, 'preload-license.js'),
       contextIsolation: true,
@@ -3354,28 +3530,77 @@ function openLicenseWindow(reason) {
   const showLicense = () => { if (licenseWin && !licenseWin.isDestroyed() && !licenseWin.isVisible()) licenseWin.show(); };
   licenseWin.once('ready-to-show', showLicense);
   licenseWin.webContents.once('did-finish-load', () => setTimeout(showLicense, 100));
-  licenseWin.on('closed', () => { licenseWin = null; });
+  let poll = null;
+  licenseWin.on('closed', () => { licenseWin = null; if (poll) clearTimeout(poll); });
+
+  let info = first;
+  const view = (r) => ({ state: r.status, mac: r.mac || aceOnline.formatMac(aceOnline.primaryMac()), message: r.message || '', error: r.error || '', reason: r.reason || '', platform: aceOnline.PLATFORM });
+  const tell = () => { if (licenseWin && !licenseWin.isDestroyed()) licenseWin.webContents.send('license-state', view(info)); };
+  const check = async () => {
+    poll = null;
+    info = await aceOnline.hello(app.getVersion());
+    if (info.status === 'approved') {
+      appendLogLine('[ace2me] approved' + (info.offline ? ' (kept approval, ace2me.com not reachable)' : ''));
+      if (licenseWin && !licenseWin.isDestroyed()) { licenseWin.removeAllListeners('closed'); licenseWin.close(); licenseWin = null; }
+      applyBuiltinKeys();
+      startApp();
+      return info;
+    }
+    tell();
+    if (licenseWin && !licenseWin.isDestroyed()) poll = setTimeout(check, 10000);
+    return info;
+  };
+  poll = setTimeout(check, 10000);
 
   ipcMain.removeHandler('license-info');
-  ipcMain.removeHandler('license-submit');
+  ipcMain.removeHandler('license-check');
   ipcMain.removeHandler('license-copy-mac');
   ipcMain.removeHandler('license-quit');
-  ipcMain.handle('license-info', () => ({
-    mac: license.formatMac(license.primaryMac() || ''),
-    reason,
-  }));
-  ipcMain.handle('license-copy-mac', () => clipboard.writeText(license.formatMac(license.primaryMac() || '')));
-  ipcMain.handle('license-quit', () => app.quit());
-  ipcMain.handle('license-submit', (_e, code) => {
-    const r = license.verifyLicense(code, license.machineMacs(), Date.now());
-    if (!r.ok) return { ok: false, reason: r.reason };
-    license.saveStoredLicense(app.getPath('userData'), String(code).trim(), Date.now());
-    setTimeout(() => {
-      if (licenseWin && !licenseWin.isDestroyed()) { licenseWin.removeAllListeners('closed'); licenseWin.close(); licenseWin = null; }
-      startApp();
-    }, 900);
-    return { ok: true, expiresAt: r.expiresAt };
-  });
+  ipcMain.handle('license-info', () => view(info));
+  ipcMain.handle('license-check', async () => { if (poll) clearTimeout(poll); return view(await check()); });
+  ipcMain.handle('license-copy-mac', () => clipboard.writeText(view(info).mac));
+  ipcMain.handle('license-quit', () => { signalCleanQuit(); app.quit(); });
+}
+
+// While the app runs it checks in every minute: new keys take effect at once,
+// and a computer turned off on ace2me.com closes the app, also in a session.
+// Without an answer it keeps going until 24 h after the last good check-in.
+let aceCheckinTimer = null;
+function startAceCheckins() {
+  if (aceCheckinTimer) return;
+  const tick = async () => {
+    let r;
+    try { r = await aceOnline.hello(app.getVersion()); } catch (e) { r = { status: 'offline', error: e.message }; }
+    if (r.status === 'approved') {
+      aceCheckinTimer = setTimeout(tick, Math.max(30, Number(r.checkEverySec) || 60) * 1000);
+      if (r.offline) appendLogLine('[ace2me] no answer from ace2me.com (' + r.error + '); working on the approval from ' + new Date(r.at).toLocaleString());
+      try { applyBuiltinKeys(); } catch (e) { appendLogLine('[ace2me] keys: ' + (e.message || e)); }
+      return;
+    }
+    const why = r.status === 'terminated'
+      ? (r.message || 'This computer was turned off for Ace by the administrator.')
+      : r.status === 'pending'
+        ? 'This computer is no longer approved for Ace. Ask the administrator to approve it again.'
+        : 'Ace could not reach ace2me.com for 24 hours. Connect to the internet and start Ace again.';
+    aceShutdown(why);
+  };
+  aceCheckinTimer = setTimeout(tick, 60 * 1000);
+}
+function aceShutdown(why) {
+  // written at once: the message box below holds the app until it is closed
+  try { fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] [ace2me] closing: ${why}
+`); } catch {}
+  try { aceHostStop(); } catch {}
+  try { disconnectSignalingClient(); } catch {}
+  try { stopSignalingServer(); } catch {}
+  try { deepgramActive = false; xaiActive = false; micDgActive = false; clearDeepgramTimers(); clearXaiTimers(); } catch {}
+  forgetOnlineKeys();
+  saveState();
+  try { for (const w of BrowserWindow.getAllWindows()) w.hide(); } catch {}
+  try { dialog.showMessageBoxSync({ type: 'warning', title: 'Ace', message: why, buttons: ['Close'] }); } catch {}
+  signalCleanQuit();
+  appIsQuitting = true;
+  app.exit(0);
 }
 
 // A second start ends up here, in the app that is already running. It shows
@@ -3417,10 +3642,12 @@ app.on('second-instance', (_e, _argv, _cwd, data) => {
   showRunningApp();
 });
 
-app.whenReady().then(() => {
-  const check = license.checkStoredLicense(app.getPath('userData'));
-  if (check.ok) startApp();
-  else openLicenseWindow(check.reason);
+app.whenReady().then(async () => {
+  aceOnline.init(app.getPath('userData'), require('electron'));
+  const r = await aceOnline.hello(app.getVersion());
+  appendLogLine('[ace2me] ' + r.status + (r.offline ? ' (kept approval: ' + r.error + ')' : r.error ? ': ' + r.error : ''));
+  if (r.status === 'approved') { applyBuiltinKeys(); startApp(); }
+  else openLicenseWindow(r);
 });
 
 ipcMain.handle('set-opacity', (_e, value) => setOpacity(value));
@@ -3500,9 +3727,9 @@ ipcMain.handle('run-diagnostics', async () => {
   const add = (name, ok, detail, fix) => checks.push({ name, ok, detail: detail || '', fix: ok ? '' : (fix || '') });
   const keys = getBuiltinKeys();
   const dgKey = keys.deepgram || (state.transcription && state.transcription.deepgramApiKey);
-  add('Deepgram key (transcription)', !!dgKey, keys.deepgram ? 'built in' : (dgKey ? 'saved' : 'missing'), 'Rebuild with the API_KEYS_JSON secret (or defaults/api-keys.json) filled in.');
+  add('Deepgram key (transcription)', !!dgKey, keys.deepgram ? 'from ace2me.com' : (dgKey ? 'saved' : 'missing'), 'Set the Deepgram key on ace2me.com (Ace app → Settings).');
   const ap = getAnswerProvider();
-  add(`${ap.label} key (answers)`, !!getAnswerApiKey(ap.id), getAnswerApiKey(ap.id) ? 'built in' : 'missing', 'Rebuild with the API_KEYS_JSON secret filled in, or pick a provider that has a key.');
+  add(`${ap.label} key (answers)`, !!getAnswerApiKey(ap.id), getAnswerApiKey(ap.id) ? 'set' : 'missing', 'Set the key on ace2me.com (Ace app → Settings), or pick a provider that has a key.');
   if (mac) {
     const micSt = (() => { try { return sp.getMediaAccessStatus('microphone'); } catch { return 'unknown'; } })();
     add('Microphone permission', micSt === 'granted', micSt, 'System Settings → Privacy & Security → Microphone → enable Ace.');
@@ -3519,7 +3746,7 @@ ipcMain.handle('run-diagnostics', async () => {
     const typing = has('xdotool') || has('wtype') || has('ydotool');
     add('Typing tool (Write-to-IDE / paste): xdotool, wtype or ydotool', typing, typing ? 'installed' : 'none installed', 'Click "Install missing tools" below.');
   }
-  add('License', !!license.checkStoredLicense(app.getPath('userData')).ok, 'valid', 'Ask your administrator for a new key.');
+  { const cur = aceOnline.current(); add('Approved on ace2me.com', !!cur, cur ? (cur.offline ? 'kept approval, no answer now' : 'yes') : 'no', 'Ask the administrator to approve this computer.'); }
   return { platform: process.platform, macRestartHint: mac, checks, canInstallTools: process.platform === 'linux' && (has('apt-get') || has('dnf') || has('pacman')) && has('pkexec') };
 });
 
@@ -6809,6 +7036,7 @@ function normalizeSpeakerAddress(addr) {
 ipcMain.handle('join-as-supporter', (_e, { address } = {}) => {
   const addr = normalizeSpeakerAddress(address);
   if (!addr) return { ok: false, error: 'Enter their IP address, for example 192.168.1.20.' };
+  supporterOnline = null;
   stopSignalingServer();
   state.network = { ...state.network, role: 'supporter', supporterAddress: addr, address: addr };
   saveState();
@@ -6892,7 +7120,29 @@ ipcMain.handle('set-side-pane', (_e, open, width) => {
   }
   return true;
 });
+// Online: the live sessions on ace2me.com, and joining one with the support
+// password the administrator set for this computer.
+ipcMain.handle('ice-servers', () => { const c = aceOnline.current(); return (c && Array.isArray(c.iceServers)) ? c.iceServers : []; });
+ipcMain.handle('online-sessions', async () => {
+  const r = await aceOnline.sessionList();
+  return r.ok ? { ok: true, sessions: r.sessions || [] } : { ok: false, error: r.error };
+});
+ipcMain.handle('join-online', (_e, { sessionId, password, label } = {}) => {
+  if (!sessionId) return { ok: false, error: 'Pick a session first.' };
+  if (!password) return { ok: false, error: 'Enter the support password.' };
+  stopSignalingServer();
+  supporterOnline = { sessionId: String(sessionId), password: String(password), label: String(label || 'the speaker') };
+  state.network = { ...state.network, role: 'supporter' };
+  saveState();
+  registerHotkeys();
+  supporterAdmitted = false;
+  supporterRefused = '';
+  supporterOwnMicMode = 'mute';
+  connectSignalingClient();
+  return { ok: true, label: supporterOnline.label };
+});
 ipcMain.handle('leave-supporter', () => {
+  supporterOnline = null;
   disconnectSignalingClient();
   supporterAdmitted = false;
   state.network.role = 'speaker';

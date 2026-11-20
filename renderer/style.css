@@ -2994,6 +2994,17 @@ body.role-supporter .rec-btn { display: none !important; }
 .join-status { min-height: 18px; margin: 4px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
 .join-status.err { color: var(--rec-on); }
 .join-status.busy { color: var(--accent-text); }
+.join-online { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.join-online-head { display: flex; align-items: center; justify-content: space-between; }
+.join-refresh { font: inherit; font-size: 12px; background: none; border: none; color: var(--accent-text); cursor: pointer; padding: 2px 4px; }
+.join-session-list { display: flex; flex-direction: column; gap: 4px; max-height: 168px; overflow-y: auto; margin-bottom: 6px; }
+.join-session { display: flex; justify-content: space-between; align-items: center; gap: 8px; text-align: left; font: inherit; font-size: 13px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface, transparent); color: var(--text); cursor: pointer; }
+.join-session:hover { border-color: var(--accent-text); }
+.join-session.active { border-color: var(--accent-text); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-text) 25%, transparent); }
+.join-session small { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.join-empty { color: var(--muted); font-size: 12.5px; margin: 2px 0; }
+.join-lan { margin-top: 4px; font-size: 12.5px; }
+.join-lan summary { cursor: pointer; color: var(--muted); margin-bottom: 6px; }
 
 /* Speaker: invite button and panel */
 .supporter-invite-btn { position: relative; }

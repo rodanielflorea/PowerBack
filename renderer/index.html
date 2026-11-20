@@ -68,6 +68,7 @@
       <button class="icon-btn" id="supporterPanelClose" title="Close"><i data-icon="x"></i></button>
     </div>
     <p class="supporter-panel-lead">On the other computer, open Ace, choose <b>Join as supporter</b> and enter:</p>
+    <div class="supporter-panel-row"><span class="supporter-panel-key">Online</span><span class="supporter-panel-val" id="supporterPanelOnline">&nbsp;</span></div>
     <div class="supporter-panel-row"><span class="supporter-panel-key">IP address</span><span class="supporter-panel-val" id="supporterPanelAddr">&nbsp;</span></div>
     <p class="supporter-panel-other" id="supporterPanelOther" hidden></p>
     <p class="supporter-panel-status" id="supporterPanelStatus">&nbsp;</p>
@@ -553,11 +554,24 @@
         <h2 class="setup-title">Join as supporter</h2>
         <button class="setup-gear-btn" id="joinSettingsBtn" title="Settings &amp; user guide"><i data-icon="settings"></i></button>
       </div>
-      <p class="setup-intro">You hear their call, see their screen and their answer panel live, can ask their AI for an answer, and can chat with them. Both computers must be on the same network. In their Ace, the headset button at the top shows their IP address.</p>
-      <div class="profile-inputs profile-inputs--vertical">
-        <label class="field-label" for="joinAddress">Their IP address</label>
-        <input type="text" id="joinAddress" class="profile-input" placeholder="192.168.1.20" inputmode="decimal" maxlength="15" spellcheck="false" autocomplete="off" />
+      <p class="setup-intro">You hear their call, see their screen and their answer panel live, can ask their AI for an answer, and can chat with them, from anywhere.</p>
+      <div class="join-online">
+        <div class="join-online-head">
+          <span class="field-label">Live sessions</span>
+          <button type="button" class="join-refresh" id="joinRefreshBtn" title="Look for sessions again">Refresh</button>
+        </div>
+        <div class="join-session-list" id="joinSessionList" role="listbox" aria-label="Live sessions"><p class="join-empty">Looking for sessions…</p></div>
+        <label class="field-label" for="joinPassword">Support password</label>
+        <input type="password" id="joinPassword" class="profile-input" placeholder="The password your administrator gave you" autocomplete="off" spellcheck="false" />
       </div>
+      <details class="join-lan" id="joinLan">
+        <summary>Same network: join by IP address</summary>
+        <div class="profile-inputs profile-inputs--vertical">
+          <label class="field-label" for="joinAddress">Their IP address</label>
+          <input type="text" id="joinAddress" class="profile-input" placeholder="192.168.1.20" inputmode="decimal" maxlength="15" spellcheck="false" autocomplete="off" />
+          <p class="hint">In their Ace, the headset button at the top shows their IP address.</p>
+        </div>
+      </details>
       <p class="join-status" id="joinStatus" role="status"></p>
       <div class="wizard-nav">
         <span class="wizard-steps"></span>
