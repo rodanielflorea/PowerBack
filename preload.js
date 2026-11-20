@@ -274,7 +274,6 @@ contextBridge.exposeInMainWorld('api', {
   // Deepgram heard the speaker pause (its short end-of-speech signal).
   onTranscriptSpeechFinal: (cb) => ipcRenderer.on('transcript-speech-final', () => cb()),
   // Write answers to the likely questions in the background (interview start).
-  prepareAnswers: () => ipcRenderer.invoke('prepare-answers'),
   onAnswerCancelSpeculative: (cb) => ipcRenderer.on('answer-cancel-speculative', () => cb()),
   onAnswerCommitSpeculative: (cb) => ipcRenderer.on('answer-commit-speculative', () => cb()),
 });
