@@ -1204,7 +1204,8 @@ textarea.meet-editbox {
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
   color: var(--text);
-  font-size: 14px;
+  /* Settings → Appearance → Answer text size */
+  font-size: calc(14px * var(--answer-scale, 1.1));
   line-height: 1.6;
   padding: 10px 14px;
   border-radius: 3px 16px 16px 16px;
@@ -3160,6 +3161,9 @@ body.side-pane-open .chat-empty { margin: auto; text-align: center; color: var(-
 }
 .theme-seg button:hover { color: var(--text); }
 .theme-seg button.active { background: var(--seg-active); color: var(--text); box-shadow: var(--seg-shadow); }
+#textScaleSeg { display: flex; flex-wrap: wrap; max-width: 100%; }
+#textScaleSeg button { padding: 0 8px; flex: 1 0 auto; }
+:root { --answer-scale: 1.1; }
 
 /* New transcript arrived below the answer being read: the answer stays put and
    this button offers the rest (renderer.js, revealMeetBubble). */

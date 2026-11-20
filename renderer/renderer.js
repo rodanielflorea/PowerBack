@@ -1976,6 +1976,30 @@ if (window.api.onTranscriptConnection) window.api.onTranscriptConnection((s) => 
 window.addEventListener("online", () => { if (window.api.networkOnline) window.api.networkOnline(); });
 
 // ── Appearance: Dark / Light / System (theme.js applies it) ────────────────
+// Answer text size (Settings → Appearance; Ctrl+= / Ctrl+- / Ctrl+0): only
+// the generated answers change, through --answer-scale.
+const textScaleSegEl = document.getElementById("textScaleSeg");
+function showTextScale(v) {
+  if (Number(v) > 0) document.documentElement.style.setProperty("--answer-scale", String(v));
+  if (!textScaleSegEl) return;
+  textScaleSegEl.querySelectorAll("button[data-scale]").forEach((b) => {
+    const on = Math.abs(Number(b.dataset.scale) - Number(v)) < 0.001;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-checked", on ? "true" : "false");
+  });
+}
+if (window.api.getTextScale) window.api.getTextScale().then((r) => showTextScale(r && r.value)).catch(() => {});
+if (window.api.onTextScale) window.api.onTextScale(showTextScale);
+if (textScaleSegEl) textScaleSegEl.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-scale]");
+  if (b && window.api.setTextScale) window.api.setTextScale(Number(b.dataset.scale));
+});
+document.addEventListener("keydown", (e) => {
+  if (!e.ctrlKey || e.altKey || e.metaKey || !window.api.stepTextScale) return;
+  if (e.key === "=" || e.key === "+") { e.preventDefault(); window.api.stepTextScale(1); }
+  else if (e.key === "-" || e.key === "_") { e.preventDefault(); window.api.stepTextScale(-1); }
+  else if (e.key === "0" && !e.shiftKey) { e.preventDefault(); window.api.stepTextScale(0); }
+});
 const themeSegEl = document.getElementById("themeSeg");
 function syncThemeSeg() {
   if (!themeSegEl || !window.aceTheme) return;

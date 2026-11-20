@@ -208,6 +208,8 @@ const HOTKEY_MIGRATIONS = {
 const DEFAULT_STATE = {
   x: null, y: null, width: 380, height: 800,
   opacity: 1.0, stealth: true, clickThrough: false,
+  // Size of the generated answers' text, 1 = 100% (14 px).
+  textScale: 1.1,
   transcription: {
     engine: 'deepgram',
     deepgramApiKey: '',
@@ -7089,6 +7091,31 @@ ipcMain.handle('remote-submit', (_e, mode, text) => {
 // Both sides, while a supporter is connected: the window grows to the right by
 // the chat column and can be resized. Closed (the supporter left, or the
 // column was closed): back to the fixed size, which cannot be resized.
+// ── Answer text size ────────────────────────────────────────────────────────
+// Only the generated answers change size (Settings → Appearance, or Ctrl+= /
+// Ctrl+- / Ctrl+0 in the window); buttons and the rest of the app stay as
+// they are. The renderer applies it as --answer-scale.
+const TEXT_SCALES = [0.9, 1, 1.1, 1.25, 1.4, 1.6];
+function textScale() {
+  const v = Number(state.textScale);
+  return Number.isFinite(v) ? Math.min(1.6, Math.max(0.8, v)) : 1.1;
+}
+function setTextScale(v) {
+  state.textScale = Math.min(1.6, Math.max(0.8, Math.round(Number(v) * 100) / 100 || 1.1));
+  saveState();
+  const now = textScale();
+  if (win && !win.isDestroyed()) win.webContents.send('text-scale', now);
+  return now;
+}
+ipcMain.handle('get-text-scale', () => ({ value: textScale(), steps: TEXT_SCALES }));
+ipcMain.handle('set-text-scale', (_e, v) => setTextScale(v));
+ipcMain.handle('step-text-scale', (_e, dir) => {
+  const cur = textScale();
+  if (!dir) return setTextScale(1.1);
+  const next = dir > 0 ? TEXT_SCALES.find((x) => x > cur + 0.001) : [...TEXT_SCALES].reverse().find((x) => x < cur - 0.001);
+  return setTextScale(next || cur);
+});
+
 ipcMain.handle('set-side-pane', (_e, open, width) => {
   if (!win || win.isDestroyed()) return false;
   const b = win.getBounds();
