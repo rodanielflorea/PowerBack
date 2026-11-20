@@ -210,9 +210,6 @@ const DEFAULT_STATE = {
   opacity: 1.0, stealth: true, clickThrough: false,
   transcription: {
     engine: 'deepgram',
-    // Transcription sockets leave outside the VPN (about 0.25 s sooner in a
-    // test through Astrill); falls back to the VPN when that does not connect.
-    bypassVpn: true,
     deepgramApiKey: '',
     xaiApiKey: '',
     language: 'auto',
@@ -3818,26 +3815,22 @@ function getMeetingConfig() {
   const type = normalizeMeetingType(m.type || m.hiringType);
   return { kind: MEETING_TYPES[type].kind, type };
 }
-// Who said what is worked out only in team meetings: the voices told apart by
-// the transcription (diarize) and named from the meeting screen. In a hiring
-// call everything the other side says is "Interviewer": no voice separation,
-// no screen watching, no name reads.
+// Voice separation and speaker names are for team meetings only. In a hiring
+// call every line is the interviewer.
 function speakerNamesOn() { return getMeetingConfig().kind === 'team'; }
 ipcMain.handle('get-meeting-config', () => getMeetingConfig());
 ipcMain.handle('set-meeting-config', (_e, cfg) => {
   cfg = cfg || {};
+  const wasNames = speakerNamesOn();
   const type = normalizeMeetingType(cfg.type || cfg.hiringType || getMeetingConfig().type);
   const changed = getMeetingConfig().type !== type;
-  const wasNames = speakerNamesOn();
   state.meeting = { kind: MEETING_TYPES[type].kind, type };
-  // Switched between hiring and team during transcription: names start or stop
-  // at once; voice separation follows at the next connection.
+  // Switched between hiring and team during transcription: names start or stop.
   if (wasNames !== speakerNamesOn() && (deepgramActive || xaiActive)) {
     if (speakerNamesOn()) startSpeakerWatch(); else stopSpeakerWatch();
   }
   // A new meeting type picks its models (unless that is switched off).
   if (changed && applyAutoModels()) emitAnswerConfig();
-  if (changed && preparedAnswers.run) prepareAnswers().catch(() => {});
   saveState();
   schedulePromptCacheWarm();
   return getMeetingConfig();
@@ -3851,37 +3844,27 @@ let deepgramReconnectTimer = null;
 let deepgramReconnectAttempts = 0;
 
 // Audio that arrives while a Deepgram socket is down (a drop, a reconnect) is
-// kept, up to 30 s, and sent first once the socket is back: a dropped
+// kept, up to 20 s, and sent first once the socket is back: a dropped
 // connection then delays those words instead of losing them.
 const DG_BYTES_PER_MS = 32; // 16 kHz, mono, 16-bit
-const DG_BACKLOG_MAX = 30000 * DG_BYTES_PER_MS;
-const dgLen = (buf) => (buf && (buf.byteLength || buf.length)) || 0;
+const DG_BACKLOG_MAX = 20000 * DG_BYTES_PER_MS;
 function makeAudioBacklog() {
   return {
     parts: [], bytes: 0,
     push(buf) {
-      const n = dgLen(buf);
+      const n = (buf && (buf.byteLength || buf.length)) || 0;
       if (!n) return;
       this.parts.push(buf);
       this.bytes += n;
-      this.trim();
+      while (this.bytes > DG_BACKLOG_MAX && this.parts.length) {
+        const d = this.parts.shift();
+        this.bytes -= (d.byteLength || d.length || 0);
+      }
     },
-    // Audio from before the drop that Deepgram never confirmed: it goes
-    // ahead of what was kept since.
-    prepend(bufs) {
-      if (!bufs.length) return;
-      this.parts = bufs.concat(this.parts);
-      this.bytes = this.parts.reduce((s, p) => s + dgLen(p), 0);
-      this.trim();
-    },
-    trim() {
-      while (this.bytes > DG_BACKLOG_MAX && this.parts.length) this.bytes -= dgLen(this.parts.shift());
-    },
-    // Sends what was kept (noting it in sent, the new socket's log); returns
-    // how many milliseconds of audio that was.
-    flush(ws, sent) {
+    // Sends what was kept; returns how many milliseconds of audio that was.
+    flush(ws) {
       const ms = Math.round(this.bytes / DG_BYTES_PER_MS);
-      for (const p of this.parts) { try { ws.send(p); if (sent) sent.push(p); } catch {} }
+      for (const p of this.parts) { try { ws.send(p); } catch {} }
       this.clear();
       return ms;
     },
@@ -3890,93 +3873,19 @@ function makeAudioBacklog() {
 }
 const deepgramBacklog = makeAudioBacklog();
 const micDgBacklog = makeAudioBacklog();
-
-// Audio sent on the open socket that Deepgram has not yet returned as final
-// text. A socket can die while it still looks open (a lost network often
-// leaves it so for seconds), and what went into it meanwhile was lost: those
-// words never came back. On a drop it is now sent again on the next socket,
-// from the end of the last final text, so nothing is lost and nothing shown
-// twice. Offsets are bytes since the socket opened, which is Deepgram's clock
-// (its start/duration seconds) times DG_BYTES_PER_MS.
-function makeSentLog() {
-  return {
-    parts: [], end: 0, confirmed: 0,
-    reset() { this.parts = []; this.end = 0; this.confirmed = 0; },
-    push(buf) {
-      const n = dgLen(buf);
-      if (!n) return;
-      this.parts.push({ at: this.end, buf });
-      this.end += n;
-      this.trim();
-    },
-    // Deepgram returned final text up to sec seconds of this socket's audio.
-    confirm(sec) {
-      if (!Number.isFinite(sec)) return;
-      const b = Math.floor(sec * 1000 * DG_BYTES_PER_MS);
-      if (b > this.confirmed) { this.confirmed = b; this.trim(); }
-    },
-    trim() {
-      while (this.parts.length) {
-        const p = this.parts[0];
-        if (p.at + dgLen(p.buf) <= this.confirmed || this.end - p.at > DG_BACKLOG_MAX) this.parts.shift();
-        else break;
-      }
-    },
-    unconfirmed() { return this.parts.filter((p) => p.at + dgLen(p.buf) > this.confirmed).map((p) => p.buf); },
-  };
-}
-const deepgramSent = makeSentLog();
-const micDgSent = makeSentLog();
-// On a drop: what the dead socket never confirmed goes to the front of the
-// backlog. Returns how many milliseconds that was, for the log.
-function dgReplayUnconfirmed(sent, backlog) {
-  const lost = sent.unconfirmed();
-  sent.reset();
-  backlog.prepend(lost);
-  return Math.round(lost.reduce((s, p) => s + dgLen(p), 0) / DG_BYTES_PER_MS);
-}
-// TCP settings for an opened socket: no batching of the small audio packets,
-// and the system's own keep-alive so a VPN or router does not forget the
-// connection.
-function dgTuneSocket(ws) {
-  try { ws._socket.setNoDelay(true); } catch {}
-  try { ws._socket.setKeepAlive(true, 5000); } catch {}
-}
-// A handshake refused for a reason that passes (busy, overloaded, a gateway
-// timeout) is tried again; a bad key, no credits or bad settings are not.
-const dgTransientStatus = (status) => status === 408 || status === 429 || status >= 500;
-
 // A connection attempt that has not opened by then is dropped and retried.
-// Through the VPN the TLS handshake alone took up to 5 s, so attempts that
-// would have succeeded were cut at 6 s.
-const DG_CONNECT_TIMEOUT_MS = 10000;
-// After a drop: one retry at once, then after 1 s, 2 s, and then every 3 s for
-// as long as it takes (the network may be gone for a while). The renderer also
-// asks for a retry at once when the computer's network comes back
-// ('network-online'), and the computer waking up does the same.
-function dgRetryDelay(attempt) { return [0, 1000, 2000][attempt] ?? 3000; }
-// While a socket is open it is checked every 2 s with a ping. Deepgram answers
+const DG_CONNECT_TIMEOUT_MS = 6000;
+// After a drop: one retry at once, then one every 5 s for as long as it takes
+// (the network may be gone for a while). The renderer also asks for a retry
+// at once when the computer's network comes back ('network-online').
+const DG_RETRY_MS = 5000;
+// While a socket is open it is checked every 5 s with a ping. Deepgram answers
 // a ping in under a second and sends about one message a second even during
-// silence, so 8 s with neither means the connection is dead though it has not
+// silence, so 12 s with neither means the connection is dead though it has not
 // closed (a lost network often leaves the socket looking open): end it, and
-// the close handler reconnects and sends the unconfirmed audio again.
-const DG_WATCH_MS = 2000;
-const DG_DEAD_MS = 8000;
-// Deepgram closes a socket (1011, NET-0001) that has had neither audio nor a
-// text message for 10 s. The keep-alive went every 7 s, which left 3 s for it
-// to cross the network; through the VPN a late one was enough for a drop while
-// the page's audio paused. Deepgram suggests every 3-5 s.
-const DG_KEEPALIVE_MS = 3000;
-// When the page last sent audio for each socket, and why a socket closed, for
-// the log: tells a network stall (audio kept coming, bytes stuck unsent) from
-// the page's audio stopping (nothing came for seconds).
-const dgAudioAt = { sys: 0, mic: 0 };
-function dgCloseDetail(ws, which) {
-  const since = dgAudioAt[which] ? Math.round((Date.now() - dgAudioAt[which]) / 100) / 10 + ' s' : 'never';
-  const unsent = (ws && ws.bufferedAmount) || 0;
-  return ` | last audio from the page ${since} ago, ${unsent} bytes still unsent`
-    + (unsent > 64000 ? ' (network stalled)' : (dgAudioAt[which] && Date.now() - dgAudioAt[which] > 5000 ? ' (the page stopped sending audio)' : ''));
-}
+// the close handler reconnects.
+const DG_WATCH_MS = 5000;
+const DG_DEAD_MS = 12000;
 function watchDeepgramSocket(ws, label) {
   let alive = Date.now();
   const mark = () => { alive = Date.now(); };
@@ -4006,45 +3915,16 @@ function clearDeepgramTimers() {
   if (deepgramReconnectTimer) { clearTimeout(deepgramReconnectTimer); deepgramReconnectTimer = null; }
 }
 
-// After sleep the open sockets are dead but look alive until the 8 s check:
-// on waking, they are ended at once and the close handlers
-// reconnect, sending the unconfirmed audio again. A socket with nothing to
-// end is started now instead of at its next retry.
-let dgPowerWatched = false;
-function watchPowerForDeepgram() {
-  if (dgPowerWatched) return;
-  dgPowerWatched = true;
-  const { powerMonitor } = require('electron');
-  const wake = (why) => {
-    if (deepgramActive) {
-      if (deepgramWs) { appendLogLine(`[deepgram] computer ${why} — reconnecting`); try { deepgramWs.terminate(); } catch {} }
-      else if (deepgramAuth) {
-        if (deepgramReconnectTimer) { clearTimeout(deepgramReconnectTimer); deepgramReconnectTimer = null; }
-        startDeepgramWs(deepgramAuth.apiKey, deepgramAuth.language);
-      }
-    }
-    if (micDgActive) {
-      if (micDgWs) { try { micDgWs.terminate(); } catch {} }
-      else if (micDgAuth) {
-        if (micDgRetryTimer) { clearTimeout(micDgRetryTimer); micDgRetryTimer = null; }
-        startMicDeepgramWs(micDgAuth.apiKey, micDgAuth.language);
-      }
-    }
-  };
-  powerMonitor.on('resume', () => wake('woke up'));
-}
-
-// minDelay: at least this long before the next attempt (a busy service).
-function scheduleDeepgramReconnect(minDelay = 0) {
+function scheduleDeepgramReconnect() {
   if (!deepgramActive || deepgramReconnectTimer || deepgramWs) return;
-  // At once the first time (the audio meanwhile is kept), then soon after.
-  const delay = Math.max(minDelay, dgRetryDelay(deepgramReconnectAttempts));
+  // At once the first time (the audio meanwhile is kept), then every 5 s.
+  const delay = deepgramReconnectAttempts === 0 ? 0 : DG_RETRY_MS;
   deepgramReconnectAttempts++;
   if (deepgramReconnectAttempts === 1) {
-    appendLogLine('[deepgram] connection lost — reconnecting now, then every few seconds until it is back');
+    appendLogLine('[deepgram] connection lost — reconnecting now, then every 5 s until it is back');
     if (!deepgramLost) { deepgramLost = true; notifyTranscriptConnection('lost'); }
-  } else if (deepgramReconnectAttempts % 10 === 0) {
-    appendLogLine(`[deepgram] still not connected after ${deepgramReconnectAttempts} attempts — retrying every 3 s`);
+  } else if (deepgramReconnectAttempts % 6 === 0) {
+    appendLogLine(`[deepgram] still not connected after ${deepgramReconnectAttempts} attempts — retrying every 5 s`);
   }
   deepgramReconnectTimer = setTimeout(() => {
     deepgramReconnectTimer = null;
@@ -4166,7 +4046,7 @@ ipcMain.on('speaker-watch-grabbed', (_e, r) => {
 });
 
 function startSpeakerWatch() {
-  if (!speakerNamesOn()) return; // hiring call: no names (see speakerNamesOn)
+  if (!speakerNamesOn()) return; // hiring call: no names
   if (watchWin && !watchWin.isDestroyed()) return;
   if (!macScreenPermissionWarn()) return;
   speakerTracker.reset();
@@ -4224,7 +4104,6 @@ function parseTranscriptAlternative(alt, window, isFinal) {
   const text = transcript || words.map((w) => w.punctuated_word || w.word || '').join(' ').replace(/\s+/g, ' ').trim();
   if (!text) return { text: '', labeled: '', speaker: 0, turns: [] };
   lastSpeechAt = Date.now();
-  // Hiring call: one side, no names.
   if (!speakerNamesOn()) return { text, labeled: 'Interviewer: ' + text, speaker: 0, turns: [{ speaker: 0, who: 'Interviewer', text }] };
   const runs = voiceRuns(words);
   if (!runs.length) {
@@ -4253,38 +4132,12 @@ function parseTranscriptAlternative(alt, window, isFinal) {
 
 // A final line spoken while nobody was framed waits briefly for the caption
 // read that is under way, so it gets the caption's name instead of the fallback.
-// The wait is short and only for a voice that has no name yet: every line
-// behind it in the queue waits too, live words included, so the 2 s this used
-// to allow showed as a transcript running 2 s late whenever no tile was framed.
-const SPEAKER_NAME_WAIT_MS = 250;
-async function settleSpeakerName(window, isFinal, alt) {
+async function settleSpeakerName(window, isFinal) {
   if (!isFinal || !window || !captionRead || !speakerNamesOn()) return;
   if (speakerTracker.nameAt(window[0] + SCREEN_LAG_MS, window[1] + SCREEN_LAG_MS)) return;
-  const runs = voiceRuns((alt && alt.words) || []);
-  if (runs.length && runs.every((r) => voiceNames.nameFor(r.voice))) return;
-  await Promise.race([captionRead, new Promise((r) => setTimeout(r, SPEAKER_NAME_WAIT_MS))]);
+  await Promise.race([captionRead, new Promise((r) => setTimeout(r, 2000))]);
 }
 let transcriptQueue = Promise.resolve();   // keeps lines in order across that wait
-
-// How late the transcript runs, in the activity log once a minute while there
-// is speech: from a word being spoken (the service's clock) to its final text
-// arriving here, and how long lines then waited in the queue above.
-const transcriptLag = { arrive: [], queued: [], timer: null };
-function noteTranscriptLag(spokenEndAt, arrivedAt) {
-  if (spokenEndAt) transcriptLag.arrive.push(arrivedAt - spokenEndAt);
-  transcriptLag.queued.push(Date.now() - arrivedAt);
-  if (transcriptLag.timer) return;
-  transcriptLag.timer = setTimeout(() => {
-    transcriptLag.timer = null;
-    const stat = (a) => {
-      if (!a.length) return '-';
-      const s = a.slice().sort((x, y) => x - y);
-      return `median ${Math.round(s[s.length >> 1])} ms, worst ${Math.round(s[s.length - 1])} ms`;
-    };
-    appendLogLine(`[transcript] ${transcriptLag.queued.length} final lines in the last minute | spoken to received: ${stat(transcriptLag.arrive)} | waiting in the app: ${stat(transcriptLag.queued)}`);
-    transcriptLag.arrive = []; transcriptLag.queued = [];
-  }, 60000);
-}
 
 function startDeepgramWs(apiKey, language) {
   if (deepgramWs) return;
@@ -4293,10 +4146,7 @@ function startDeepgramWs(apiKey, language) {
     sample_rate: '16000', channels: '1',
     smart_format: 'true', interim_results: 'true',
     // VAD + utterance-end events for smoother, more natural finalization.
-    // endpointing: the pause that closes a piece of speech as final text.
-    // utterance_end_ms: the silence that ends the utterance (1000 is the
-    // service's minimum).
-    vad_events: 'true', endpointing: '100', no_delay: 'true', utterance_end_ms: '1000',
+    vad_events: 'true', endpointing: '150', no_delay: 'true', utterance_end_ms: '1500',
     punctuate: 'true',
   });
   // Each word comes with the voice that said it, for the speaker names: team
@@ -4305,13 +4155,9 @@ function startDeepgramWs(apiKey, language) {
   params.set('model', 'nova-2');
   params.set('language', (language && language !== 'auto') ? language : 'en-US');
 
-  const url = `wss://api.deepgram.com/v1/listen?${params}`;
-  const localAddress = dgLocalAddress('deepgram');
-  const ws = new WebSocket(url, {
+  const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, {
     headers: { Authorization: `Token ${apiKey}` },
-    ...(localAddress ? { localAddress } : {}),
   });
-  ws._aceBypass = !!localAddress;
   deepgramWs = ws;
   const startedAt = Date.now();
   const connectTimer = setTimeout(() => {
@@ -4326,15 +4172,12 @@ function startDeepgramWs(apiKey, language) {
     clearTimeout(connectTimer);
     if (deepgramWs !== ws) { try { ws.close(); } catch {} return; } // replaced meanwhile
     opened = true;
-    dgTuneSocket(ws);
     // The audio kept while the socket was down goes first; Deepgram's clock
     // starts at its first byte, so the session clock starts that much earlier.
-    deepgramSent.reset();
-    const heldMs = deepgramBacklog.flush(ws, deepgramSent);
+    const heldMs = deepgramBacklog.flush(ws);
     deepgramT0 = Date.now() - heldMs;
     voiceNames.reset(); // a new connection numbers the voices afresh
-    dgBypassFails = 0;
-    appendLogLine(`[deepgram] connected in ${Date.now() - startedAt} ms` + (ws._aceBypass ? ' around the VPN' : '') + (heldMs > 200 ? ` (sent ${heldMs} ms of audio held meanwhile)` : ''));
+    appendLogLine(`[deepgram] connected in ${Date.now() - startedAt} ms` + (heldMs > 200 ? ` (sent ${heldMs} ms of audio held meanwhile)` : ''));
     deepgramReconnectAttempts = 0;
     watchDeepgramSocket(ws, 'deepgram');
     if (deepgramLost) { deepgramLost = false; notifyTranscriptConnection('connected'); }
@@ -4345,20 +4188,46 @@ function startDeepgramWs(apiKey, language) {
       if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) {
         try { deepgramWs.send(JSON.stringify({ type: 'KeepAlive' })); } catch {}
       }
-    }, DG_KEEPALIVE_MS);
+    }, 7000);
   });
   deepgramWs.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
-      if (msg.type === 'UtteranceEnd') { emitUtteranceEnd(); return; }
+      if (msg.type === 'UtteranceEnd') {
+        latencyMark('uttEndAt');
+        // Speech-gap boundary — tells the renderer to flush any pending interim.
+        transcriptQueue = transcriptQueue.then(() => {
+          if (win && !win.isDestroyed()) win.webContents.send('transcript-utterance-end');
+        }).catch(() => {});
+        return;
+      }
       if (msg.type !== 'Results') return;
-      // Final text up to here: that audio need not be sent again after a drop.
-      if (msg.is_final && deepgramWs === ws) deepgramSent.confirm(msg.start + msg.duration);
       const window = Number.isFinite(msg.start) && Number.isFinite(msg.duration)
         ? [deepgramT0 + msg.start * 1000, deepgramT0 + (msg.start + msg.duration) * 1000] : null;
-      // The short pause (endpointing, 100 ms): the hidden answer starts
-      // then instead of at UtteranceEnd (1 s of silence).
-      emitTranscript(msg.channel?.alternatives?.[0], window, !!msg.is_final, !!(msg.is_final && msg.speech_final));
+      lastSpeechAt = Date.now();
+      transcriptQueue = transcriptQueue.then(() => settleSpeakerName(window, !!msg.is_final)).then(() => {
+        const parsed = parseTranscriptAlternative(msg.channel?.alternatives?.[0], window, !!msg.is_final);
+        if (!parsed.text) return;
+        if (msg.is_final) {
+          sessionLog.push({ ts: Date.now(), kind: 'voice', text: parsed.labeled || parsed.text });
+          latencySpeech(window ? window[1] : Date.now());
+        }
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('transcript-live', {
+            text: parsed.text,
+            labeled: parsed.labeled,
+            speaker: parsed.speaker,
+            turns: parsed.turns || [],
+            isFinal: !!msg.is_final,
+          });
+          // The short pause (endpointing, 150 ms): the hidden answer starts
+          // now instead of at UtteranceEnd (1.5 s of silence).
+          if (msg.is_final && msg.speech_final) {
+            latencyMark('pauseAt');
+            win.webContents.send('transcript-speech-final');
+          }
+        }
+      }).catch(() => {});
     } catch {}
   });
   // A rejected WS handshake (bad key, bad params, no credits) comes through here
@@ -4372,15 +4241,6 @@ function startDeepgramWs(apiKey, language) {
       try { const j = JSON.parse(body); detail = j.err_msg || j.reason || j.message || ''; } catch {}
       const msg = friendlyDeepgramError(res.statusCode, detail);
       appendLogLine(`[deepgram] handshake ${res.statusCode}: ${body.slice(0, 200)}`);
-      // Busy or failing for the moment: keep the audio and try again. Before,
-      // any refusal stopped transcription for the rest of the call.
-      if (dgTransientStatus(res.statusCode)) {
-        clearTimeout(connectTimer);
-        try { ws.terminate(); } catch {}
-        if (deepgramWs === ws) deepgramWs = null;
-        scheduleDeepgramReconnect(res.statusCode === 429 ? 5000 : 2000);
-        return;
-      }
       if (win && !win.isDestroyed()) win.webContents.send('transcript-live-error', msg);
       // A handshake rejection (bad key / params / no credits) won't fix itself —
       // stop so we don't reconnect-loop against a 401.
@@ -4406,70 +4266,11 @@ function startDeepgramWs(apiKey, language) {
     if (deepgramWs !== ws) return;
     if (deepgramKeepAlive) { clearInterval(deepgramKeepAlive); deepgramKeepAlive = null; }
     deepgramWs = null;
-    if (!opened && ws._aceBypass && ++dgBypassFails === 2) appendLogLine('[deepgram] connecting around the VPN failed twice — going through the VPN until a connection works');
-    // The audio this socket took but never returned as final text is sent
-    // again on the next one.
-    const replayMs = deepgramActive && opened ? dgReplayUnconfirmed(deepgramSent, deepgramBacklog) : (deepgramSent.reset(), 0);
     // Why it closed, for the log (Deepgram puts its error code in the reason).
-    if (deepgramActive && opened) appendLogLine(`[deepgram] closed: ${code}${reason && reason.length ? ' ' + reason.toString().slice(0, 160) : ''}${dgCloseDetail(ws, 'sys')}${replayMs > 200 ? ` | ${replayMs} ms of audio it never answered will be sent again` : ''}`);
+    if (deepgramActive && opened) appendLogLine(`[deepgram] closed: ${code}${reason && reason.length ? ' ' + reason.toString().slice(0, 160) : ''}`);
     // If the user is still recording, transparently reconnect.
     if (deepgramActive && !handshakeFailed) scheduleDeepgramReconnect();
   });
-}
-
-// One piece of meeting speech to the page, in order (see transcriptQueue).
-// speechFinal: they paused, so the hidden answer may start.
-function emitTranscript(alt, window, isFinal, speechFinal) {
-  lastSpeechAt = Date.now();
-  const arrivedAt = lastSpeechAt;
-  transcriptQueue = transcriptQueue.then(() => settleSpeakerName(window, isFinal, alt)).then(() => {
-    const parsed = parseTranscriptAlternative(alt, window, isFinal);
-    if (!parsed.text) return;
-    if (isFinal) {
-      noteTranscriptLag(window ? window[1] : 0, arrivedAt);
-      sessionLog.push({ ts: Date.now(), kind: 'voice', text: parsed.labeled || parsed.text });
-      latencySpeech(window ? window[1] : Date.now());
-    }
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('transcript-live', {
-        text: parsed.text,
-        labeled: parsed.labeled,
-        speaker: parsed.speaker,
-        turns: parsed.turns || [],
-        isFinal,
-      });
-      if (speechFinal) {
-        latencyMark('pauseAt');
-        win.webContents.send('transcript-speech-final');
-      }
-    }
-  }).catch(() => {});
-}
-// The end of what they said: the page flushes any pending live words.
-function emitUtteranceEnd() {
-  latencyMark('uttEndAt');
-  transcriptQueue = transcriptQueue.then(() => {
-    if (win && !win.isDestroyed()) win.webContents.send('transcript-utterance-end');
-  }).catch(() => {});
-}
-
-// ── Around the VPN ───────────────────────────────────────────────────────────
-// With the setting on, the transcription sockets leave from the computer's own
-// network adapter instead of the VPN's (its address as the local address;
-// Windows then routes them by that adapter). Faster and steadier through
-// Astrill in a test, but Deepgram then sees this network's real address.
-// When it fails to connect twice in a row, it is dropped until a connection
-// works again.
-let dgBypassFails = 0;
-function dgLocalAddress(label) {
-  if (!state.transcription || !state.transcription.bypassVpn) return null;
-  if (dgBypassFails >= 2) return null;
-  const own = lanAddresses().find((a) => !a.virtual);
-  if (!own) {
-    appendLogLine(`[${label}] no network adapter outside the VPN found — connecting through the VPN`);
-    return null;
-  }
-  return own.address;
 }
 
 function friendlyDeepgramError(status, detail) {
@@ -4636,9 +4437,6 @@ ipcMain.handle('start-deepgram-stream', (_e, { apiKey, language }) => {
   deepgramLost = false;
   clearDeepgramTimers();
   deepgramBacklog.clear();
-  deepgramSent.reset();
-  dgBypassFails = 0;
-  watchPowerForDeepgram();
   startDeepgramWs(apiKey, language);
 });
 ipcMain.handle('stop-deepgram-stream', () => {
@@ -4646,7 +4444,6 @@ ipcMain.handle('stop-deepgram-stream', () => {
   stopSpeakerWatch();
   clearDeepgramTimers();
   deepgramBacklog.clear();
-  deepgramSent.reset();
   if (deepgramLost) { deepgramLost = false; notifyTranscriptConnection('stopped'); }
   if (deepgramWs) {
     try { deepgramWs.send(JSON.stringify({ type: 'CloseStream' })); } catch {}
@@ -4655,8 +4452,7 @@ ipcMain.handle('stop-deepgram-stream', () => {
   }
 });
 ipcMain.on('audio-chunk', (_e, buf) => {
-  dgAudioAt.sys = Date.now();
-  if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) { deepgramWs.send(buf); deepgramSent.push(buf); }
+  if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) deepgramWs.send(buf);
   else if (deepgramActive) deepgramBacklog.push(buf); // reconnecting: keep it
   else if (xaiWs && xaiWs.readyState === WebSocket.OPEN && xaiReady) xaiWs.send(buf);
 });
@@ -4691,47 +4487,38 @@ function startMicDeepgramWs(apiKey, language) {
   });
   params.set('model', 'nova-2');
   params.set('language', (language && language !== 'auto') ? language : 'en-US');
-  const localAddress = dgLocalAddress('deepgram mic');
-  const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, { headers: { Authorization: `Token ${apiKey}` }, ...(localAddress ? { localAddress } : {}) });
-  ws._aceBypass = !!localAddress;
-  let micOpened = false;
+  const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, { headers: { Authorization: `Token ${apiKey}` } });
   micDgWs = ws;
   const connectTimer = setTimeout(() => { if (ws.readyState === WebSocket.CONNECTING) { try { ws.terminate(); } catch {} } }, DG_CONNECT_TIMEOUT_MS);
   micDgWs.on('open', () => {
     clearTimeout(connectTimer);
     if (micDgWs !== ws) { try { ws.close(); } catch {} return; } // replaced meanwhile
-    micOpened = true;
-    dgTuneSocket(ws);
-    micDgSent.reset();
-    micDgBacklog.flush(ws, micDgSent); // the voice heard while it was reconnecting
+    micDgBacklog.flush(ws); // the voice heard while it was reconnecting
     micDgAttempts = 0;
     watchDeepgramSocket(ws, 'deepgram mic');
     if (micDgKeepAlive) clearInterval(micDgKeepAlive);
-    micDgKeepAlive = setInterval(() => { if (micDgWs && micDgWs.readyState === WebSocket.OPEN) { try { micDgWs.send(JSON.stringify({ type: 'KeepAlive' })); } catch {} } }, DG_KEEPALIVE_MS);
+    micDgKeepAlive = setInterval(() => { if (micDgWs && micDgWs.readyState === WebSocket.OPEN) { try { micDgWs.send(JSON.stringify({ type: 'KeepAlive' })); } catch {} } }, 7000);
   });
   micDgWs.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
       if (msg.type !== 'Results') return;
-      if (msg.is_final && micDgWs === ws) micDgSent.confirm(msg.start + msg.duration);
       const alt = msg.channel && msg.channel.alternatives && msg.channel.alternatives[0];
       const text = String((alt && alt.transcript) || '').trim();
       if (text && win && !win.isDestroyed()) win.webContents.send('transcript-mic', { text, isFinal: !!msg.is_final });
     } catch {}
   });
-  micDgWs.on('close', (code, reason) => {
+  micDgWs.on('close', (code) => {
     clearTimeout(connectTimer);
     // Only the current socket reconnects (see the system-audio socket above).
     if (micDgWs !== ws) return;
     if (micDgKeepAlive) { clearInterval(micDgKeepAlive); micDgKeepAlive = null; }
     micDgWs = null;
-    if (!micOpened && ws._aceBypass) dgBypassFails++;
-    const replayMs = micDgActive ? dgReplayUnconfirmed(micDgSent, micDgBacklog) : (micDgSent.reset(), 0);
     if (micDgActive && !micDgRetryTimer) {
-      // At once the first time, then soon after, until it is back.
-      const delay = dgRetryDelay(micDgAttempts);
+      // At once the first time, then every 5 s until it is back.
+      const delay = micDgAttempts === 0 ? 0 : DG_RETRY_MS;
       micDgAttempts++;
-      if (micDgAttempts === 1) appendLogLine(`[deepgram mic] closed: ${code}${reason && reason.length ? ' ' + reason.toString().slice(0, 120) : ''} — reconnecting now, then every few seconds${dgCloseDetail(ws, 'mic')}${replayMs > 200 ? ` | ${replayMs} ms of audio it never answered will be sent again` : ''}`);
+      if (micDgAttempts === 1) appendLogLine(`[deepgram mic] closed: ${code} — reconnecting now, then every 5 s`);
       micDgRetryTimer = setTimeout(() => {
         micDgRetryTimer = null;
         if (micDgActive && !micDgWs && micDgAuth) startMicDeepgramWs(micDgAuth.apiKey, micDgAuth.language);
@@ -4739,22 +4526,7 @@ function startMicDeepgramWs(apiKey, language) {
     }
   });
   micDgWs.on('error', () => {});
-  micDgWs.on('unexpected-response', (_r, res) => {
-    res.resume();
-    clearTimeout(connectTimer);
-    appendLogLine(`[deepgram mic] handshake ${res.statusCode}`);
-    try { ws.terminate(); } catch {}
-    if (micDgWs === ws) micDgWs = null;
-    // Busy or failing for the moment: try again (before, any refusal ended
-    // the mic transcript for the rest of the call). Anything else stops it.
-    if (!dgTransientStatus(res.statusCode)) { micDgActive = false; return; }
-    if (micDgActive && !micDgRetryTimer) {
-      micDgRetryTimer = setTimeout(() => {
-        micDgRetryTimer = null;
-        if (micDgActive && !micDgWs && micDgAuth) startMicDeepgramWs(micDgAuth.apiKey, micDgAuth.language);
-      }, res.statusCode === 429 ? 5000 : 2000);
-    }
-  });
+  micDgWs.on('unexpected-response', (_r, res) => { res.resume(); micDgActive = false; try { if (micDgWs) micDgWs.terminate(); } catch {} micDgWs = null; });
 }
 ipcMain.handle('extract-jd-info', async () => {
   try {
@@ -4775,20 +4547,19 @@ ipcMain.handle('extract-jd-info', async () => {
     return { company: String((d && d.company) || '').trim(), role: String((d && d.role) || '').trim() };
   } catch { return { company: '', role: '' }; }
 });
-ipcMain.handle('start-mic-deepgram-stream', (_e, { apiKey, language } = {}) => { micDgActive = true; micDgAuth = { apiKey, language }; micDgAttempts = 0; micDgBacklog.clear(); micDgSent.reset(); watchPowerForDeepgram(); startMicDeepgramWs(apiKey, language); });
+ipcMain.handle('start-mic-deepgram-stream', (_e, { apiKey, language } = {}) => { micDgActive = true; micDgAuth = { apiKey, language }; micDgAttempts = 0; micDgBacklog.clear(); startMicDeepgramWs(apiKey, language); });
 ipcMain.handle('stop-mic-deepgram-stream', () => {
   micDgActive = false;
   micDgBacklog.clear();
-  micDgSent.reset();
   if (micDgRetryTimer) { clearTimeout(micDgRetryTimer); micDgRetryTimer = null; }
   if (micDgKeepAlive) { clearInterval(micDgKeepAlive); micDgKeepAlive = null; }
   if (micDgWs) { try { micDgWs.send(JSON.stringify({ type: 'CloseStream' })); } catch {} try { micDgWs.close(); } catch {} micDgWs = null; }
 });
 ipcMain.on('mic-audio-chunk', (_e, buf) => {
-  dgAudioAt.mic = Date.now();
-  if (micDgWs && micDgWs.readyState === WebSocket.OPEN) { micDgWs.send(buf); micDgSent.push(buf); }
+  if (micDgWs && micDgWs.readyState === WebSocket.OPEN) micDgWs.send(buf);
   else if (micDgActive) micDgBacklog.push(buf); // reconnecting: keep it
 });
+ipcMain.on('session-log-add', (_e, entry) => { sessionLog.push(entry); });
 ipcMain.on('session-log-add', (_e, entry) => { sessionLog.push(entry); });
 ipcMain.handle('clear-session-log', () => { sessionLog = []; });
 // Where each finished interview's folder goes.
@@ -6092,148 +5863,6 @@ function latencyReport(how, sendAt, shownAt, model) {
   appendLogLine(`[latency] ${how} model=${model} | after their last word: final text ${rel(latency.finalAt)}, short pause ${rel(latency.pauseAt)}, utterance end ${rel(latency.uttEndAt)}, hidden answer started ${rel(latency.specStart)} first words ${rel(latency.specFirst)}, Send ${rel(sendAt)}, on screen ${rel(shownAt)} (${shownAt - sendAt}ms after Send)`);
 }
 
-// ── Answers written before the question is asked ────────────────────────────
-// When an interview starts (and when its meeting type changes), the answers to
-// the questions most interviews of that type ask, and to the ones this job
-// description makes likely, are written in the background with the model the
-// meeting type uses for spoken answers. When the interviewer then asks one of
-// them, Send shows it at once (labelled as prepared; ↻ writes a fresh one).
-const PREPARED_COMMON = [
-  { q: 'Tell me about yourself.', p: /\b(tell|walk)\s+(me|us)\b.{0,30}\b(yourself|your (background|career|experience|journey|resume|cv))\b|\bintroduce yourself\b/i },
-  { q: 'Why are you interested in this role and this company?', p: /\bwhy (are you interested|do you want to (work|join)|did you apply|this (role|company|position|job))|\bwhat (attracted|attracts|interests|excites) you\b|\binterested in (this|the) (role|position|company|job)\b/i },
-  { q: 'What are your salary expectations?', p: /\bsalary|\bcompensation\b|\bpay (range|expectations?)\b|\bhow much (are you|do you) (expect|want|looking)/i },
-  { q: 'Why are you looking to leave your current job?', p: /\bwhy (are you|did you|do you want to) (leav|look|mov)|\breason (for|you'?re) (leaving|looking)\b|\blooking for a (new|change)\b/i },
-  { q: 'What are your greatest strengths?', p: /\b(greatest|biggest|key|main|top) strengths?\b|\bwhat are you (really )?(good|best) at\b/i },
-  { q: 'What is your biggest weakness?', p: /\bweakness(es)?\b|\barea(s)? (for|of|to) (improvement|improve)\b/i },
-  { q: 'Tell me about a time you disagreed with a colleague or your manager.', p: /\b(disagree(d|ment)?|conflict)\b/i },
-  { q: 'What is the achievement you are most proud of?', p: /\b(biggest|greatest|proudest)\b.{0,20}\b(achievement|accomplishment)\b|\bproud(est)? of\b/i },
-  { q: 'Tell me about a time you failed or made a mistake.', p: /\b(a )?(failure|failed|mistake)\b|\bwent wrong\b/i },
-  { q: 'When could you start, and what is your notice period?', p: /\bnotice period\b|\bwhen (could|can|would) you start\b|\bavailable to start\b|\bstart date\b/i },
-  { q: 'Where do you see yourself in five years?', p: /\b(five|5) years\b|\blong[- ]term (goals?|plans?|career)\b|\bsee yourself\b/i },
-  { q: 'Do you have any questions for us?', p: /\b(any|do you have( any)?) questions for (me|us)\b|\bwhat (questions|would you like to ask)\b/i },
-];
-const PREPARED_TECH = [
-  { q: 'Tell me about the most challenging project you have worked on.', p: /\b(most )?(challenging|difficult|complex|hardest|toughest) (project|problem|technical challenge|thing you)/i },
-  { q: 'How do you handle production incidents and outages?', p: /\b(production (incident|issue|outage|problem)s?|outage|on-?call|incident)\b/i },
-  { q: 'How do you approach testing and code quality?', p: /\b(test(ing)? (strategy|approach)|how do you test|code quality|code reviews?)\b/i },
-  { q: 'Describe the architecture of a system you designed.', p: /\b(architecture|system design|design(ed)? (a|the) system)\b/i },
-];
-const PREPARED_LEADER = [
-  { q: 'How do you prioritise when everything is urgent?', p: /\bprioriti[sz](e|ing|ation)\b/i },
-  { q: 'How do you work with product and business stakeholders?', p: /\b(product|business|stakeholders?)\b.{0,40}\b(work|collaborat|partner)/i },
-  { q: 'Tell me about a time you took ownership of something outside your role.', p: /\b(ownership|took the lead|stepped up)\b/i },
-];
-const PREPARED_TEAM = {
-  standup: [{ q: 'Can you give us your update: what you did, what is next, and any blockers?', p: /\b(update|status|yesterday|today|blockers?)\b/i }],
-  sprint: [{ q: 'What did you finish this sprint, and what are you taking on next?', p: /\b(this sprint|last sprint|next sprint|sprint (review|goal|planning)|what did you (finish|complete|deliver))\b/i }],
-  discussion: [],
-};
-function preparedQuestionsFor(type) {
-  const kind = MEETING_TYPES[type] ? MEETING_TYPES[type].kind : 'hiring';
-  if (kind === 'team') return (PREPARED_TEAM[type] || []).slice();
-  let list = PREPARED_COMMON.slice();
-  if (['technical_interview', 'live_coding', 'leader_round'].includes(type)) list = list.concat(PREPARED_TECH);
-  if (type === 'leader_round') list = list.concat(PREPARED_LEADER);
-  if (type === 'ai_interview') list = list.concat(PREPARED_TECH.slice(0, 2));
-  return list;
-}
-// Words that carry the meaning of a question, roughly stemmed.
-const MATCH_STOP = new Set('a an the and or but to of in on for with at by from as is are was were be been being do does did done you your yours yourself i me my we us our it its this that these those what which who whom how why when where can could would should will may might must have has had about tell please so just really kind sort bit little give some any there here than then them they their like also into over more most much very'.split(' '));
-function meaningWords(s) {
-  return String(s || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/)
-    .filter((w) => w.length > 2 && !MATCH_STOP.has(w))
-    .map((w) => w.replace(/(ing|ed|es|s)$/, ''));
-}
-// The prepared answer for what they just asked, if one fits: its pattern
-// matches the end of what they said, or most of its question's words are in it.
-function matchPrepared(text) {
-  const tail = String(text || '').replace(/\s+/g, ' ').trim().split(/(?<=[.?!])\s+/).slice(-2).join(' ');
-  if (tail.length < 8) return null;
-  const words = new Set(meaningWords(tail));
-  let best = null, bestScore = 0;
-  for (const item of preparedAnswers.items) {
-    if (!item.answer) continue;
-    let score = item.p && item.p.test(tail) ? 1 : 0;
-    if (!score) {
-      const qw = [...new Set(meaningWords(item.q))];
-      const hit = qw.filter((w) => words.has(w)).length;
-      if (qw.length >= 2 && hit >= 2) score = hit / qw.length;
-    }
-    if (score > bestScore) { bestScore = score; best = item; }
-  }
-  return bestScore >= 0.75 ? best : null;
-}
-const preparedAnswers = { run: 0, type: '', items: [] };
-// The questions this interviewer is likely to ask, from the CV and the job description.
-async function predictQuestions(provider, apiKey, type) {
-  const text = (list) => (Array.isArray(list) ? list : []).map((d) => (d && d.text) || '').join('\n').slice(0, 6000);
-  const cv = text(state.knowledge && state.knowledge.cv);
-  const jd = text(state.knowledge && state.knowledge.jd);
-  if (!cv && !jd) return [];
-  const label = (MEETING_TYPES[type] && MEETING_TYPES[type].label) || type;
-  const prompt = `A candidate is about to have this meeting: ${label}. From the job description and CV below, list the 6 questions the other side is most likely to ask that are specific to this job or this candidate (not generic ones like "tell me about yourself", salary or strengths). One question per line, no numbering, nothing else.\n\nJOB DESCRIPTION:\n${jd || '(none)'}\n\nCV:\n${cv || '(none)'}`;
-  let raw = '';
-  try {
-    raw = await completeChat({ provider, apiKey, model: pickTierModel(provider.id, 'fast'), messages: [{ role: 'user', content: prompt }], maxTokens: 400 });
-  } catch { return []; }
-  return String(raw || '').split(/\r?\n/).map((l) => l.replace(/^[\s\d.)*-]+/, '').trim()).filter((l) => l.length > 12 && /\?$/.test(l)).slice(0, 6).map((q) => ({ q, p: null }));
-}
-async function prepareAnswers() {
-  const run = ++preparedAnswers.run;
-  const type = getMeetingConfig().type;
-  preparedAnswers.type = type;
-  preparedAnswers.items = [];
-  const provider = getAnswerProvider();
-  const apiKey = getAnswerApiKey(provider.id);
-  if (!apiKey || state.network.role === 'supporter') return;
-  // Without a CV, job description or notes there is nothing to build them on.
-  const kb = state.knowledge || {};
-  const hasMaterials = ['cv', 'jd', 'support', 'meetings'].some((k) => Array.isArray(kb[k]) && kb[k].some((d) => d && String(d.text || '').trim()));
-  if (!hasMaterials) { appendLogLine('[prepared] skipped: no CV, job description or notes uploaded'); return; }
-  // Let the interview's first moments (transcription, the cache warm) go first.
-  await new Promise((r) => setTimeout(r, 2500));
-  if (run !== preparedAnswers.run) return;
-  const t0 = Date.now();
-  const items = preparedQuestionsFor(type).map((x) => ({ ...x, answer: '' }));
-  preparedAnswers.items = items;
-  predictQuestions(provider, apiKey, type).then((more) => {
-    if (run !== preparedAnswers.run) return;
-    for (const m of more) if (!items.some((x) => meaningWords(x.q).join(' ') === meaningWords(m.q).join(' '))) items.push({ ...m, answer: '' });
-  }).catch(() => {});
-  const model = getAnswerModel(provider.id, 'ANSWER');
-  let next = 0, done = 0;
-  const worker = async () => {
-    for (;;) {
-      if (run !== preparedAnswers.run) return;
-      // Live answers come first: wait while one is being written.
-      while (answerAbort && run === preparedAnswers.run) await new Promise((r) => setTimeout(r, 500));
-      // The next question, claimed with no await in between, so the two
-      // workers never take the same one. The predicted questions may still be
-      // on their way: wait for them a little.
-      let item = null;
-      while (!(item = items[next]) && Date.now() - t0 < 15000 && run === preparedAnswers.run) {
-        await new Promise((r) => setTimeout(r, 800));
-      }
-      if (!item || run !== preparedAnswers.run) return;
-      next++;
-      try {
-        const messages = await buildAnswerMessages(item.q, null, 'ANSWER', '');
-        let text = '';
-        await streamChat({ provider, apiKey, model, messages, maxTokens: maxTokensForMode('ANSWER'), purpose: 'answer', convId: answerConvId(), onDelta: (d) => { text += d; } });
-        if (run !== preparedAnswers.run) return;
-        item.answer = spokenSanitize(text, 'ANSWER').trim();
-        item.model = model;
-        done++;
-      } catch (e) {
-        appendLogLine(`[prepared] "${item.q.slice(0, 50)}" failed: ${e.status || e.message}`);
-      }
-    }
-  };
-  await Promise.all([worker(), worker()]);
-  if (run === preparedAnswers.run) appendLogLine(`[prepared] ${done} of ${items.length} answers ready for ${type} in ${Math.round((Date.now() - t0) / 1000)} s (model ${model})`);
-}
-ipcMain.handle('prepare-answers', () => { prepareAnswers().catch((e) => appendLogLine('[prepared] ' + e.message)); return true; });
-
 async function buildAnswerMessages(q, imgs, mode, transcript) {
   const messages = [];
   let staticText = assembleStaticSystem(mode);
@@ -6340,22 +5969,6 @@ async function generateAnswer(question, images, forcedMode, transcript) {
 
   const displayQ = q || (imgs ? `[${imgs.length} image${imgs.length > 1 ? 's' : ''}]` : '');
   const sendAt = Date.now();
-  // Asked before and answered in advance: show that answer at once.
-  const prepared = !imgs && mode === 'ANSWER' ? matchPrepared(q || lastInterviewerText(mt)) : null;
-  if (prepared) {
-    clearTimeout(watchdog);
-    answerAbort = null;
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('answer-start', { question: displayQ, hasImage: false, mode, prepared: prepared.q });
-      win.webContents.send('answer-chunk', prepared.answer);
-      win.webContents.send('answer-done', { text: prepared.answer });
-    }
-    latencyReport('prepared', sendAt, Date.now(), prepared.model || model);
-    sessionLog.push({ ts: Date.now(), kind: 'question', text: q || lastInterviewerText(mt) });
-    sessionLog.push({ ts: Date.now(), kind: 'answer', text: prepared.answer });
-    recordTurn(q, prepared.answer, mode, null, mt);
-    return;
-  }
   // Show the bubble before we build/send the prompt so Send never looks idle.
   if (win && !win.isDestroyed()) win.webContents.send('answer-start', { question: displayQ, hasImage: !!imgs, mode });
 
@@ -6524,12 +6137,6 @@ async function warmPromptCache() {
 
 // ── Speculative answer: start streaming before the user hits send.
 // Shares the same message-building logic as generateAnswer but is abortable.
-// The interviewer's latest words (the end of the meeting transcript).
-function lastInterviewerText(mt) {
-  const lines = String(mt || '').trim().split(/\n+/);
-  return (lines[lines.length - 1] || '').replace(/^[^:]{1,40}:\s*/, '');
-}
-
 async function startSpeculative(question, forcedMode, transcript, latest) {
   // Never kill a live, user-visible stream to prefetch the next question.
   if (speculativeCommitted || answerAbort) return;
@@ -6556,18 +6163,6 @@ async function startSpeculative(question, forcedMode, transcript, latest) {
   ac._model = model;
   latencyMark('specStart');
   latency.specFirst = 0;
-
-  // Answered in advance: that answer is ready now, no request needed.
-  const prepared = specMode === 'ANSWER' ? matchPrepared(q || latest || lastInterviewerText(mt)) : null;
-  if (prepared) {
-    ac._buffer = prepared.answer;
-    ac._done = true;
-    ac._prepared = prepared.q;
-    ac._model = prepared.model || model;
-    latency.specFirst = latency.specStart;
-    appendLogLine(`[prepared] ready for "${(q || latest || '').slice(0, 60)}" -> "${prepared.q}"`);
-    return;
-  }
 
   const messages = await buildAnswerMessages(q, null, specMode, mt);
   // Do NOT send answer-start yet — we buffer silently and only show the UI
@@ -6661,11 +6256,11 @@ function commitSpeculative(question, images, forcedMode, transcript) {
       const specModeCommit = (ac && ac._mode) || 'ANSWER';
       if (!streamDone) speculativeCommitted = true;
       const sendAt = Date.now();
-      win.webContents.send('answer-start', { question: q, hasImage: false, mode: specModeCommit, prepared: (ac && ac._prepared) || undefined });
+      win.webContents.send('answer-start', { question: q, hasImage: false, mode: specModeCommit });
       const buffered = (ac && ac._buffer) || '';
       const clean = buffered ? spokenSanitize(buffered, specModeCommit) : '';
       if (clean) win.webContents.send('answer-chunk', clean);
-      const how = ac && ac._prepared ? 'prepared' : 'hidden answer';
+      const how = 'hidden answer';
       if (clean) latencyReport(how, sendAt, Date.now(), (ac && ac._model) || '');
       else latency.pending = { how, sendAt };
       if (ac) ac._flushed = true;

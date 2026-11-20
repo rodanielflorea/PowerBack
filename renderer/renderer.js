@@ -15,7 +15,6 @@ const settingsCloseBtn = document.getElementById("settingsCloseBtn");
 
 const micSelect = document.getElementById("micSelect");
 const captureMicEl = document.getElementById("captureMic");
-const dgBypassVpnEl = document.getElementById("dgBypassVpn");
 const captureSystemEl = document.getElementById("captureSystem");
 const engineDeepgram = document.getElementById("engineDeepgram");
 const engineXai = document.getElementById("engineXai");
@@ -874,8 +873,6 @@ if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
   }
   hideSetup();
   log(`Started: voice mode as ${chosenRole}`, "info");
-  // Answers to the likely questions, written in the background.
-  if (window.api.prepareAnswers) window.api.prepareAnswers().catch(() => {});
   // Transcription starts by itself once the interview screen is up.
   setTimeout(() => { if (!recState && typeof startVoice === "function") startVoice(); }, 400);
 });
@@ -1818,7 +1815,6 @@ async function refreshTranscriptionUI() {
   if (deepgramKeyEl) deepgramKeyEl.value = txCfg.deepgramApiKey || "";
   if (xaiKeyEl) xaiKeyEl.value = txCfg.xaiApiKey || "";
   languageSelect.value = txCfg.language || "auto";
-  if (dgBypassVpnEl) dgBypassVpnEl.checked = txCfg.bypassVpn !== false;
   captureMicEl.checked = txCfg.captureMic !== false;
   captureSystemEl.checked = txCfg.captureSystem !== false;
   const recordEl = document.getElementById("recordSession");
@@ -1940,7 +1936,6 @@ if (xaiKeyEl) xaiKeyEl.addEventListener("change", () =>
 languageSelect.addEventListener("change", () =>
   persistTx({ language: languageSelect.value }),
 );
-if (dgBypassVpnEl) dgBypassVpnEl.addEventListener("change", () => persistTx({ bypassVpn: dgBypassVpnEl.checked }));
 function onTxSourceChange(e) {
   if (!captureMicEl.checked && !captureSystemEl.checked) {
     const target = e && e.target;
@@ -3730,7 +3725,6 @@ window.api.onAnswerStart((data) => {
     _optimisticAnswer = false;
     pendingBubbleImages = [];
     if (currentAnswerEl.dataset) currentAnswerEl.dataset.mode = answerMode;
-    markPreparedAnswer(currentAnswerEl, data && data.prepared);
     return;
   }
   dropEmptyStreamingTurn();
@@ -3738,21 +3732,7 @@ window.api.onAnswerStart((data) => {
   const imgs = pendingBubbleImages.slice();
   pendingBubbleImages = [];
   currentAnswerEl = addAnswerTurn(question, imgs, answerMode);
-  markPreparedAnswer(currentAnswerEl, data && data.prepared);
 });
-// Written before the call for a question like this one: say so (↻ writes a
-// fresh answer to the exact question).
-function markPreparedAnswer(a, preparedFor) {
-  if (!a || !preparedFor || !a.parentElement) return;
-  const tag = document.createElement("div");
-  tag.className = "answer-prepared-tag";
-  tag.title = "Written before the call for: " + preparedFor + " Press ↻ on the question for a fresh answer.";
-  tag.innerHTML = aceIcon("check");
-  const t = document.createElement("span");
-  t.textContent = "Prepared answer";
-  tag.appendChild(t);
-  a.parentElement.insertBefore(tag, a);
-}
 window.api.onAnswerChunk((delta) => {
   if (!currentAnswerEl) currentAnswerEl = addAnswerTurn("", null, 'ANSWER');
   // Stream into the child div so the badge span is never destroyed by textContent=
@@ -4510,7 +4490,7 @@ async function startVoice() {
       numberOfInputs: 1,
       numberOfOutputs: 1,
       outputChannelCount: [1],
-      processorOptions: { format: "int16", batchSize: 320 } /* 20 ms packets at 16 kHz: words leave sooner */,
+      processorOptions: { format: "int16", batchSize: 640 },
     });
     ctx.createMediaStreamSource(dest.stream).connect(processor);
     const sink = ctx.createGain();
@@ -4526,7 +4506,7 @@ async function startVoice() {
         await window.api.startMicDeepgramStream({ apiKey, language: txCfg.language || "auto" });
         micProcessor = new AudioWorkletNode(ctx, "capture-processor", {
           numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
-          processorOptions: { format: "int16", batchSize: 320 } /* 20 ms packets at 16 kHz: words leave sooner */,
+          processorOptions: { format: "int16", batchSize: 640 },
         });
         ctx.createMediaStreamSource(micDest.stream).connect(micProcessor);
         const micSink = ctx.createGain(); micSink.gain.value = 0;
