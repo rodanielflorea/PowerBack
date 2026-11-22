@@ -325,39 +325,44 @@ function getBuiltinKeys() {
   const out = {};
   for (const k of ONLINE_KEY_NAMES) {
     const v = String(raw[k] || '').trim();
-    if (v) { out[k] = v; onlineKeysSeen.add(v); }
+    if (v) out[k] = v;
   }
   return out;
 }
-// Every key ace2me.com gave in this run, also ones it has since taken back.
-const onlineKeysSeen = new Set();
-// state.json without the keys from ace2me.com.
-function stateForDisk() {
-  getBuiltinKeys();
-  if (!onlineKeysSeen.size) return state;
-  const vals = onlineKeysSeen;
-  const blank = (v) => (vals.has(v) ? '' : v);
-  const t = state.transcription || {}, a = state.answer || {};
+// The API keys come from ace2me.com only. They live in memory and in the
+// encrypted ace-online.bin cache; they are never written to state.json and
+// never handed to a window (the renderer sees only whether one is set).
+// Keys older versions saved in state.json are wiped on load.
+function withoutKeys(s) {
+  const t = s.transcription || {}, a = s.answer || {};
+  const names = Object.keys({ ...DEFAULT_STATE.answer.keys, ...(a.keys || {}) });
   return {
-    ...state,
-    transcription: { ...t, deepgramApiKey: blank(t.deepgramApiKey), xaiApiKey: blank(t.xaiApiKey) },
-    answer: { ...a, apiKey: blank(a.apiKey), keys: Object.fromEntries(Object.entries(a.keys || {}).map(([k, v]) => [k, blank(v)])) },
+    ...s,
+    transcription: { ...t, deepgramApiKey: '', xaiApiKey: '' },
+    answer: { ...a, apiKey: '', keys: Object.fromEntries(names.map((k) => [k, ''])) },
   };
 }
+function stateForDisk() { return withoutKeys(state); }
+// What a window may see of a key: that it is set, never its value.
+const KEY_SET = 'set';
+const keyShown = (v) => (v ? KEY_SET : '');
+// Exactly the keys ace2me.com gives now: one removed there stops here too.
 function applyBuiltinKeys() {
   const b = getBuiltinKeys();
   if (!state.transcription) state.transcription = { ...DEFAULT_STATE.transcription };
   if (!state.answer) state.answer = { ...DEFAULT_STATE.answer };
-  if (!state.answer.keys) state.answer.keys = { ...DEFAULT_STATE.answer.keys };
-  if (b.deepgram) state.transcription.deepgramApiKey = b.deepgram;
-  if (b.xai) { state.transcription.xaiApiKey = b.xai; state.answer.keys.xai = b.xai; state.answer.apiKey = b.xai; }
-  if (b.anthropic) state.answer.keys.anthropic = b.anthropic;
-  if (b.openai) state.answer.keys.openai = b.openai;
-  if (b.openrouter) state.answer.keys.openrouter = b.openrouter;
+  state.answer.keys = { ...DEFAULT_STATE.answer.keys, ...(state.answer.keys || {}) };
+  state.transcription.deepgramApiKey = b.deepgram || '';
+  state.transcription.xaiApiKey = b.xai || '';
+  state.answer.keys.xai = b.xai || '';
+  state.answer.apiKey = b.xai || '';
+  state.answer.keys.anthropic = b.anthropic || '';
+  state.answer.keys.openai = b.openai || '';
+  state.answer.keys.openrouter = b.openrouter || '';
 }
-// Turned off on ace2me.com: no key from it stays in memory either.
+// Turned off on ace2me.com: no key stays in memory either.
 function forgetOnlineKeys() {
-  const d = stateForDisk();
+  const d = withoutKeys(state);
   state.transcription = d.transcription;
   state.answer = d.answer;
 }
@@ -425,7 +430,12 @@ function loadState() {
     state.transcription.captureMic = true;
     state.audioDefaultsV4 = true;
   }
+  // Keys from older versions (built in, then saved here in plain text): gone.
+  // Only ace2me.com's count from 2.7.26 on.
+  const hadOldKeys = JSON.stringify(state) !== JSON.stringify(withoutKeys(state));
+  forgetOnlineKeys();
   applyBuiltinKeys();
+  if (hadOldKeys) { try { fs.writeFileSync(STATE_FILE, JSON.stringify(stateForDisk())); } catch {} }
   seedAvoidPhrasesIfNeeded();
   migrateProfilesIfNeeded();
 }
@@ -2827,6 +2837,8 @@ function connectSignalingClient() {
       if (seq !== supporterJoinSeq || supporterOnline !== target) return;
       if (!r.ok) {
         appendLogLine('[online] join refused: ' + r.error);
+        // the administrator changed the password: ask for it again
+        if (r.error === 'bad-password' || r.error === 'no-password') { aceOnline.forgetSupportPassword(); supportUnlocked = false; }
         supporterRefused = r.error;
         supporterAdmitted = false;
         if (win) win.webContents.send('join-rejected', { reason: r.error });
@@ -4006,9 +4018,15 @@ ipcMain.handle('get-cursor-screen-source-id', async () => {
   return sources.map((s) => ({ id: s.id, name: s.name, display_id: s.display_id }));
 });
 
-ipcMain.handle('get-transcription-config', () => ({ ...state.transcription }));
+ipcMain.handle('get-transcription-config', () => ({
+  ...state.transcription,
+  deepgramApiKey: keyShown(state.transcription.deepgramApiKey),
+  xaiApiKey: keyShown(state.transcription.xaiApiKey),
+}));
 ipcMain.handle('set-transcription-config', (_e, cfg) => {
-  state.transcription = { ...state.transcription, ...(cfg || {}) };
+  // keys are ace2me.com's alone; a window can't set them
+  const { deepgramApiKey, xaiApiKey, ...rest } = (cfg && typeof cfg === 'object') ? cfg : {};
+  state.transcription = { ...state.transcription, ...rest };
   applyBuiltinKeys();
   saveState();
 });
@@ -4638,7 +4656,8 @@ function startXaiWs(apiKey, language) {
   });
 }
 
-ipcMain.handle('start-xai-stream', (_e, { apiKey, language }) => {
+ipcMain.handle('start-xai-stream', (_e, { language } = {}) => {
+  const apiKey = state.transcription.xaiApiKey; // ace2me.com's, never the window's
   xaiActive = true;
   startSpeakerWatch();
   xaiAuth = { apiKey, language };
@@ -4658,7 +4677,8 @@ ipcMain.handle('stop-xai-stream', () => {
   xaiReady = false;
 });
 
-ipcMain.handle('start-deepgram-stream', (_e, { apiKey, language }) => {
+ipcMain.handle('start-deepgram-stream', (_e, { language } = {}) => {
+  const apiKey = state.transcription.deepgramApiKey; // ace2me.com's, never the window's
   deepgramActive = true;
   startSpeakerWatch();
   deepgramAuth = { apiKey, language };
@@ -4776,7 +4796,7 @@ ipcMain.handle('extract-jd-info', async () => {
     return { company: String((d && d.company) || '').trim(), role: String((d && d.role) || '').trim() };
   } catch { return { company: '', role: '' }; }
 });
-ipcMain.handle('start-mic-deepgram-stream', (_e, { apiKey, language } = {}) => { micDgActive = true; micDgAuth = { apiKey, language }; micDgAttempts = 0; micDgBacklog.clear(); startMicDeepgramWs(apiKey, language); });
+ipcMain.handle('start-mic-deepgram-stream', (_e, { language } = {}) => { const apiKey = state.transcription.deepgramApiKey; micDgActive = true; micDgAuth = { apiKey, language }; micDgAttempts = 0; micDgBacklog.clear(); startMicDeepgramWs(apiKey, language); });
 ipcMain.handle('stop-mic-deepgram-stream', () => {
   micDgActive = false;
   micDgBacklog.clear();
@@ -5842,8 +5862,8 @@ function publicAnswerConfig() {
     model: slots.answer,
     slots,
     autoModels: !state.answer || state.answer.autoModels !== false,
-    apiKey: keys.xai || ((state.answer && state.answer.apiKey) || ''),
-    keys,
+    apiKey: keyShown(keys.xai || (state.answer && state.answer.apiKey)),
+    keys: Object.fromEntries(Object.entries(keys).map(([k, v]) => [k, keyShown(v)])),
     models,
     providers: providerList(),
     fallbackModels: provider.fallbackModels.slice(),
@@ -5860,17 +5880,10 @@ function applyAnswerConfig(cfg) {
   if (!cfg || typeof cfg !== 'object') return publicAnswerConfig();
   const prev = state.answer || { ...DEFAULT_STATE.answer };
   const next = { ...prev };
-  if (cfg.keys && typeof cfg.keys === 'object') {
-    next.keys = { ...(prev.keys || {}), ...cfg.keys };
-  }
+  // cfg.keys / cfg.apiKey are ignored: the keys are ace2me.com's alone.
   if (cfg.models && typeof cfg.models === 'object') {
     next.models = { ...(prev.models || {}), ...cfg.models };
   }
-  if (cfg.apiKey !== undefined) {
-    next.apiKey = String(cfg.apiKey || '');
-    next.keys = { ...(next.keys || {}), xai: next.apiKey };
-  }
-  if (next.keys && next.keys.xai !== undefined) next.apiKey = next.keys.xai;
   delete next.activePromptId;
 
   const nextProvider = (cfg.provider && PROVIDERS[cfg.provider]) ? cfg.provider : (next.provider || 'openai');
@@ -7036,6 +7049,7 @@ function normalizeSpeakerAddress(addr) {
   return `${ip}:${SUPPORTER_PORT}`;
 }
 ipcMain.handle('join-as-supporter', (_e, { address } = {}) => {
+  if (!supportUnlocked) return { ok: false, reason: 'locked' };
   const addr = normalizeSpeakerAddress(address);
   if (!addr) return { ok: false, error: 'Enter their IP address, for example 192.168.1.20.' };
   supporterOnline = null;
@@ -7154,9 +7168,43 @@ ipcMain.handle('online-sessions', async () => {
   const r = await aceOnline.sessionList();
   return r.ok ? { ok: true, sessions: r.sessions || [] } : { ok: false, error: r.error };
 });
-ipcMain.handle('join-online', (_e, { sessionId, password, label } = {}) => {
+// The support password: asked once, kept encrypted (ace-support.bin) and
+// checked with ace2me.com each time the join screen opens. Changed there by
+// the administrator, it is asked for again ("This password was reset").
+// Without a connection the saved one still opens LAN joining.
+let supportUnlocked = false;
+const PASSWORD_GONE = new Set(['bad-password', 'no-password']);
+async function checkSupportPassword(password) {
+  const r = await aceOnline.supportCheck(password);
+  if (r.ok) return { ok: true };
+  if (r.status) return { ok: false, reason: r.error };   // ace2me.com said no
+  return { ok: false, offline: true, reason: r.error };  // no answer
+}
+ipcMain.handle('support-status', async () => {
+  const pw = aceOnline.savedSupportPassword();
+  supportUnlocked = false;
+  if (!pw) return { ok: false };
+  const r = await checkSupportPassword(pw);
+  if (r.ok || r.offline) { supportUnlocked = true; return { ok: true, offline: !!r.offline }; }
+  if (PASSWORD_GONE.has(r.reason)) {
+    aceOnline.forgetSupportPassword();
+    return { ok: false, reason: r.reason === 'bad-password' ? 'reset' : r.reason };
+  }
+  return { ok: false, reason: r.reason };
+});
+ipcMain.handle('support-login', async (_e, password) => {
+  const pw = typeof password === 'string' ? password : '';
+  if (!pw) return { ok: false, reason: 'bad-password' };
+  const r = await checkSupportPassword(pw);
+  if (!r.ok) return { ok: false, reason: r.reason };
+  aceOnline.saveSupportPassword(pw);
+  supportUnlocked = true;
+  return { ok: true };
+});
+ipcMain.handle('join-online', (_e, { sessionId, label } = {}) => {
   if (!sessionId) return { ok: false, error: 'Pick a session first.' };
-  if (!password) return { ok: false, error: 'Enter the support password.' };
+  const password = aceOnline.savedSupportPassword();
+  if (!supportUnlocked || !password) return { ok: false, reason: 'locked' };
   stopSignalingServer();
   supporterOnline = { sessionId: String(sessionId), password: String(password), label: String(label || 'the speaker') };
   state.network = { ...state.network, role: 'supporter' };

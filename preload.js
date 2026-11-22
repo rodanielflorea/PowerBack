@@ -243,6 +243,8 @@ contextBridge.exposeInMainWorld('api', {
   onTranscriptConnection: (cb) => ipcRenderer.on('transcript-connection', (_e, s) => cb(s)),
   extractJdInfo: () => ipcRenderer.invoke('extract-jd-info'),
   startMicDeepgramStream: (cfg) => ipcRenderer.invoke('start-mic-deepgram-stream', cfg),
+  supportStatus: () => ipcRenderer.invoke('support-status'),
+  supportLogin: (password) => ipcRenderer.invoke('support-login', password),
   stopMicDeepgramStream: () => ipcRenderer.invoke('stop-mic-deepgram-stream'),
   sendMicAudioChunk: (buf) => ipcRenderer.send('mic-audio-chunk', buf),
   onTranscriptMic: (cb) => ipcRenderer.on('transcript-mic', (_e, v) => cb(v)),

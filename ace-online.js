@@ -48,25 +48,35 @@ function deviceSecret() {
 }
 
 // ── the last good answer, for the 24 h without a connection ─────────────────
-const CACHE_FILE = () => path.join(dataDir, 'ace-online.bin');
-function saveCache(o) {
+// Encrypted with the OS key store (Windows: DPAPI, this user on this computer).
+function saveSealed(name, o) {
   try {
     const text = JSON.stringify(o);
     const ss = electron && electron.safeStorage;
     const buf = ss && ss.isEncryptionAvailable() ? Buffer.concat([Buffer.from('E1'), ss.encryptString(text)]) : Buffer.concat([Buffer.from('P1'), Buffer.from(text)]);
-    fs.writeFileSync(CACHE_FILE(), buf);
+    fs.writeFileSync(path.join(dataDir, name), buf);
   } catch {}
 }
-function loadCache() {
+function loadSealed(name) {
   try {
-    const buf = fs.readFileSync(CACHE_FILE());
+    const buf = fs.readFileSync(path.join(dataDir, name));
     const tag = buf.subarray(0, 2).toString();
     const body = buf.subarray(2);
     const text = tag === 'E1' ? electron.safeStorage.decryptString(body) : body.toString('utf8');
     return JSON.parse(text);
   } catch { return null; }
 }
-function clearCache() { try { fs.unlinkSync(CACHE_FILE()); } catch {} }
+function removeSealed(name) { try { fs.unlinkSync(path.join(dataDir, name)); } catch {} }
+const saveCache = (o) => saveSealed('ace-online.bin', o);
+const loadCache = () => loadSealed('ace-online.bin');
+const clearCache = () => removeSealed('ace-online.bin');
+
+// The support password, once ace2me.com accepted it: asked again only after
+// the administrator changes it.
+const SUPPORT_FILE = 'ace-support.bin';
+function savedSupportPassword() { const o = loadSealed(SUPPORT_FILE); return o && typeof o.password === 'string' ? o.password : ''; }
+function saveSupportPassword(password) { saveSealed(SUPPORT_FILE, { password, at: Date.now() }); }
+function forgetSupportPassword() { removeSealed(SUPPORT_FILE); }
 
 async function post(pathname, body) {
   const ctrl = new AbortController();
@@ -132,6 +142,8 @@ const sessionBeat = (sessionId) => call('/api/ace/session', { action: 'beat', se
 const sessionEnd = (sessionId) => call('/api/ace/session', { action: 'end', sessionId });
 const sessionList = () => call('/api/ace/sessions', {});
 const join = (sessionId, password) => call('/api/ace/join', { sessionId, password });
+// Is this the support password the administrator set for this computer?
+const supportCheck = (password) => call('/api/ace/support-check', { password });
 
 function relayUrl(base, role, ticket) {
   const b = String(base || (last && last.relayUrl) || '').replace(/\/+$/, '');
@@ -141,5 +153,6 @@ function relayUrl(base, role, ticket) {
 module.exports = {
   PLATFORM, init, hello, current, primaryMac, formatMac,
   sessionStart, sessionBeat, sessionEnd, sessionList, join, relayUrl,
+  supportCheck, savedSupportPassword, saveSupportPassword, forgetSupportPassword,
   updateFeedUrl: PLATFORM + '/api/ace/update/',
 };

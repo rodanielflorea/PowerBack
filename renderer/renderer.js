@@ -4227,8 +4227,8 @@ if (window.api.onTriggerGetAnswer) window.api.onTriggerGetAnswer(() => submitCom
 if (window.api.onScrollAnswer) window.api.onScrollAnswer((dir) => {
   if (answerHistory) answerHistory.scrollTop += (dir || 0) * 120;
 });
-// Keys are built into the app (defaults/api-keys.json); there are no key
-// inputs any more. Only report a key for an input that actually exists so a
+// The keys come from ace2me.com and stay in the main process (a window only
+// sees "set"); there are no key inputs. Only report a key for an input that actually exists so a
 // provider switch never overwrites stored keys with empty strings.
 function collectAnswerKeys() {
   const keys = {};
@@ -7068,7 +7068,13 @@ const joinStatusEl = document.getElementById("joinStatus");
 const joinConnectBtn = document.getElementById("joinConnectBtn");
 const joinSessionListEl = document.getElementById("joinSessionList");
 const joinPasswordEl = document.getElementById("joinPassword");
-const joinLanEl = document.getElementById("joinLan");
+const joinStepPasswordEl = document.getElementById("joinStepPassword");
+const joinStepModeEl = document.getElementById("joinStepMode");
+const joinModeSegEl = document.getElementById("joinModeSeg");
+const joinPaneInternetEl = document.getElementById("joinPaneInternet");
+const joinPaneLanEl = document.getElementById("joinPaneLan");
+let joinStep = "";              // "password" | "mode" ("" while checking)
+let joinMode = "internet";      // "internet" | "lan"
 let joinSessions = [];          // live sessions on ace2me.com
 let joinSelected = "";          // the one picked
 let joinSessionsTimer = null;
@@ -7116,7 +7122,9 @@ const JOIN_REASONS = {
   ended: "Their session ended.",
   refused: "They refused the connection.",
   "bad-password": "Wrong support password.",
-  "no-password": "No support password is set for this computer on ace2me.com. Ask your administrator.",
+  reset: "This password was reset. Contact admin.",
+  locked: "Enter the support password first.",
+  "no-password": "No support password is set for this computer on ace2me.com. Contact admin.",
   "too-many-tries": "Too many wrong passwords. Wait 10 minutes and try again.",
   "no-session": "That session has ended.",
   pending: "This computer is not approved on ace2me.com.",
@@ -7162,7 +7170,6 @@ function renderJoinSessions(errorText) {
     b.addEventListener("click", () => {
       joinSelected = x.id;
       renderJoinSessions();
-      setTimeout(() => { try { joinPasswordEl && joinPasswordEl.focus(); } catch {} }, 0);
     });
     joinSessionListEl.appendChild(b);
   }
@@ -7189,17 +7196,63 @@ function setJoinStatus(text, kind) {
   joinStatusEl.className = "join-status" + (kind ? " " + kind : "");
 }
 
-function showJoin(message) {
+// Step 1, the password: asked once. Ace keeps it (encrypted) and checks it
+// with ace2me.com each time; when the administrator changes it, step 1 comes
+// back with "This password was reset. Contact admin."
+function showJoinStep(step, message) {
+  joinStep = step;
+  if (joinStepPasswordEl) joinStepPasswordEl.hidden = step !== "password";
+  if (joinStepModeEl) joinStepModeEl.hidden = step !== "mode";
+  const label = joinConnectBtn && joinConnectBtn.querySelector("span");
+  if (label) label.textContent = step === "password" ? "Continue" : "Connect";
+  if (joinConnectBtn) joinConnectBtn.disabled = !step;
+  setJoinStatus(message || "", message ? "err" : "");
+  watchJoinSessions(step === "mode" && joinMode === "internet");
+  if (step === "password" && joinPasswordEl) {
+    joinPasswordEl.value = "";
+    setTimeout(() => { try { joinPasswordEl.focus(); } catch {} }, 50);
+  }
+  if (step === "mode") setJoinMode(joinMode);
+}
+// Step 2: over the internet (sessions on ace2me.com) or on the same network.
+function setJoinMode(mode) {
+  joinMode = mode === "lan" ? "lan" : "internet";
+  if (joinModeSegEl) joinModeSegEl.querySelectorAll("button[data-join-mode]").forEach((b) => {
+    const on = b.dataset.joinMode === joinMode;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-checked", on ? "true" : "false");
+  });
+  if (joinPaneInternetEl) joinPaneInternetEl.hidden = joinMode !== "internet";
+  if (joinPaneLanEl) joinPaneLanEl.hidden = joinMode !== "lan";
+  if (joinStep === "mode") watchJoinSessions(joinMode === "internet");
+  if (joinMode === "lan") setTimeout(() => { try { joinAddressEl && joinAddressEl.focus(); } catch {} }, 50);
+}
+
+async function showJoin(message) {
   leaveInterviewUi();
   if (joinOverlayEl) joinOverlayEl.hidden = false;
   if (joinAddressEl && !joinAddressEl.value) {
     const saved = ipOnly(netCfg && netCfg.supporterAddress);
     if (saved && saved !== "172.16.98.11") joinAddressEl.value = saved;
   }
+  showJoinStep("");
+  setJoinStatus("Checking your support password…", "busy");
+  const r = await (window.api.supportStatus ? window.api.supportStatus() : Promise.resolve({ ok: false })).catch(() => ({ ok: false }));
+  if (!joinOverlayEl || joinOverlayEl.hidden) return;
+  if (r && r.ok) { showJoinStep("mode", message); return; }
+  showJoinStep("password", (r && r.reason) ? joinReasonText(r.reason) : (message || ""));
+}
+
+async function submitJoinPassword() {
+  const password = joinPasswordEl ? joinPasswordEl.value : "";
+  if (!password) { setJoinStatus("Enter the support password.", "err"); joinPasswordEl && joinPasswordEl.focus(); return; }
+  if (joinConnectBtn) joinConnectBtn.disabled = true;
+  setJoinStatus("Checking…", "busy");
+  const r = await window.api.supportLogin(password).catch((e) => ({ ok: false, reason: e.message }));
   if (joinConnectBtn) joinConnectBtn.disabled = false;
-  setJoinStatus(message || "", message ? "err" : "");
-  watchJoinSessions(true);
-  setTimeout(() => { try { (joinLanEl && joinLanEl.open ? joinAddressEl : joinPasswordEl) && (joinLanEl && joinLanEl.open ? joinAddressEl : joinPasswordEl).focus(); } catch {} }, 50);
+  if (r && r.ok) { showJoinStep("mode"); return; }
+  setJoinStatus(joinReasonText((r && r.reason) || "bad-password"), "err");
+  if (joinPasswordEl) { joinPasswordEl.select(); joinPasswordEl.focus(); }
 }
 
 function clearJoinPending() {
@@ -7208,18 +7261,23 @@ function clearJoinPending() {
   if (joinConnectBtn) joinConnectBtn.disabled = false;
 }
 
+// The one button: Continue (password) or Connect (internet / LAN).
 async function startJoin() {
   if (joinPending) return;
-  // Online, unless the same-network part is open with an address typed in.
-  const lanAddress = ipOnly(joinAddressEl && joinAddressEl.value);
-  if (!(joinLanEl && joinLanEl.open && lanAddress)) return startJoinOnline();
-  const address = lanAddress;
+  if (joinStep === "password") return submitJoinPassword();
+  if (joinStep !== "mode") return;
+  if (joinMode === "internet") return startJoinOnline();
+  const address = ipOnly(joinAddressEl && joinAddressEl.value);
   if (!address) { setJoinStatus("Enter their IP address.", "err"); joinAddressEl && joinAddressEl.focus(); return; }
   if (!isIpv4(address)) { setJoinStatus("Enter their IP address, for example 192.168.1.20.", "err"); joinAddressEl && joinAddressEl.focus(); return; }
   netCfg = { ...(netCfg || {}), role: "supporter" };
   teardownPeers();
   const r = await window.api.joinAsSupporter({ address }).catch((e) => ({ ok: false, error: e.message }));
-  if (!r || !r.ok) { setJoinStatus((r && r.error) || "Could not connect.", "err"); return; }
+  if (!r || !r.ok) {
+    if (r && r.reason) { showJoinStep("password", joinReasonText(r.reason)); return; }
+    setJoinStatus((r && r.error) || "Could not connect.", "err");
+    return;
+  }
   supporterAddress = address;
   if (joinConnectBtn) joinConnectBtn.disabled = true;
   setJoinStatus(`Connecting to ${address}…`, "busy");
@@ -7238,12 +7296,14 @@ async function startJoin() {
 async function startJoinOnline() {
   const session = joinSessions.find((x) => x.id === joinSelected);
   if (!session) { setJoinStatus(joinSessions.length ? "Pick a session first." : "There is no live session to join yet.", "err"); return; }
-  const password = joinPasswordEl ? joinPasswordEl.value : "";
-  if (!password) { setJoinStatus("Enter the support password.", "err"); joinPasswordEl && joinPasswordEl.focus(); return; }
   netCfg = { ...(netCfg || {}), role: "supporter" };
   teardownPeers();
-  const r = await window.api.joinOnline({ sessionId: session.id, password, label: session.label }).catch((e) => ({ ok: false, error: e.message }));
-  if (!r || !r.ok) { setJoinStatus((r && r.error) || "Could not connect.", "err"); return; }
+  const r = await window.api.joinOnline({ sessionId: session.id, label: session.label }).catch((e) => ({ ok: false, error: e.message }));
+  if (!r || !r.ok) {
+    if (r && r.reason) { showJoinStep("password", joinReasonText(r.reason)); return; }
+    setJoinStatus((r && r.error) || "Could not connect.", "err");
+    return;
+  }
   supporterAddress = session.label || "the speaker";
   if (joinConnectBtn) joinConnectBtn.disabled = true;
   setJoinStatus(`Connecting to ${supporterAddress}…`, "busy");
@@ -7343,6 +7403,10 @@ if (window.api.onJoinRejected)
       const addr = joinPending.address;
       clearJoinPending();
       window.api.leaveSupporter().catch(() => {});
+      if (reason === "reset" || reason === "bad-password" || reason === "no-password") {
+        showJoinStep("password", joinReasonText(reason === "bad-password" ? "reset" : reason));
+        return;
+      }
       setJoinStatus(joinReasonText(reason, addr), "err");
       return;
     }
@@ -7382,7 +7446,12 @@ if (joinConnectBtn) joinConnectBtn.addEventListener("click", () => startJoin());
 if (joinAddressEl)
   joinAddressEl.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); startJoin(); } });
 if (joinPasswordEl)
-  joinPasswordEl.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); startJoinOnline(); } });
+  joinPasswordEl.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); startJoin(); } });
+if (joinModeSegEl)
+  joinModeSegEl.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-join-mode]");
+    if (b) { setJoinMode(b.dataset.joinMode); setJoinStatus(""); }
+  });
 const joinRefreshBtn = document.getElementById("joinRefreshBtn");
 if (joinRefreshBtn) joinRefreshBtn.addEventListener("click", () => loadJoinSessions());
 

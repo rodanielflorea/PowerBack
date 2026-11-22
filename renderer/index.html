@@ -564,24 +564,32 @@
         <h2 class="setup-title">Join as supporter</h2>
         <button class="setup-gear-btn" id="joinSettingsBtn" title="Settings &amp; user guide"><i data-icon="settings"></i></button>
       </div>
-      <p class="setup-intro">You hear their call, see their screen and their answer panel live, can ask their AI for an answer, and can chat with them, from anywhere.</p>
-      <div class="join-online">
-        <div class="join-online-head">
-          <span class="field-label">Live sessions</span>
-          <button type="button" class="join-refresh" id="joinRefreshBtn" title="Look for sessions again">Refresh</button>
-        </div>
-        <div class="join-session-list" id="joinSessionList" role="listbox" aria-label="Live sessions"><p class="join-empty">Looking for sessions…</p></div>
+      <!-- Step 1: the support password (asked once; again only after the
+           administrator changes it on ace2me.com) -->
+      <div class="join-step" id="joinStepPassword" hidden>
+        <p class="setup-intro">Enter the support password your administrator gave you.</p>
         <label class="field-label" for="joinPassword">Support password</label>
-        <input type="password" id="joinPassword" class="profile-input" placeholder="The password your administrator gave you" autocomplete="off" spellcheck="false" />
+        <input type="password" id="joinPassword" class="profile-input" placeholder="Support password" autocomplete="off" spellcheck="false" required />
       </div>
-      <details class="join-lan" id="joinLan">
-        <summary>Same network: join by IP address</summary>
-        <div class="profile-inputs profile-inputs--vertical">
+      <!-- Step 2: over the internet, or on the same network -->
+      <div class="join-step" id="joinStepMode" hidden>
+        <div class="theme-seg join-mode-seg" id="joinModeSeg" role="radiogroup" aria-label="How to connect">
+          <button type="button" data-join-mode="internet" role="radio">Internet</button>
+          <button type="button" data-join-mode="lan" role="radio">LAN</button>
+        </div>
+        <div class="join-online" id="joinPaneInternet">
+          <div class="join-online-head">
+            <span class="field-label">Live sessions</span>
+            <button type="button" class="join-refresh" id="joinRefreshBtn" title="Look for sessions again">Refresh</button>
+          </div>
+          <div class="join-session-list" id="joinSessionList" role="listbox" aria-label="Live sessions"><p class="join-empty">Looking for sessions…</p></div>
+        </div>
+        <div class="profile-inputs profile-inputs--vertical" id="joinPaneLan" hidden>
           <label class="field-label" for="joinAddress">Their IP address</label>
           <input type="text" id="joinAddress" class="profile-input" placeholder="192.168.1.20" inputmode="decimal" maxlength="15" spellcheck="false" autocomplete="off" />
-          <p class="hint">In their Ace, the headset button at the top shows their IP address.</p>
+          <p class="hint">Same network only. In their Ace, the headset button at the top shows their IP address.</p>
         </div>
-      </details>
+      </div>
       <p class="join-status" id="joinStatus" role="status"></p>
       <div class="wizard-nav">
         <span class="wizard-steps"></span>
