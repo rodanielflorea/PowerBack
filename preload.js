@@ -259,6 +259,7 @@ contextBridge.exposeInMainWorld('api', {
   setPendingLink: (link) => ipcRenderer.invoke('set-pending-link', link),
   clearPendingLink: () => ipcRenderer.invoke('clear-pending-link'),
   onUploadProgress: (cb) => ipcRenderer.on('upload-progress', (_e, p) => cb(p)),
+  onPendingLink: (cb) => ipcRenderer.on('pending-link', (_e, link) => cb(link)),
   sessionFinalize: (company, position) => ipcRenderer.invoke('session-finalize', { company, position }),
   clearSessionLog: () => ipcRenderer.invoke('clear-session-log'),
   sessionLogAdd: (entry) => ipcRenderer.send('session-log-add', entry),

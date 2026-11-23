@@ -3820,7 +3820,7 @@ ipcMain.handle('get-stealth', () => state.stealth);
 ipcMain.handle('set-click-through', (_e, value) => setClickThrough(value));
 ipcMain.handle('get-click-through', () => state.clickThrough);
 ipcMain.handle('hide', () => hideMain());
-ipcMain.handle('quit', () => app.quit());
+ipcMain.handle('quit', () => quitWhenIdle());
 ipcMain.handle('get-anti-close', () => ({ supported: process.platform === 'win32', enabled: state.antiClose !== false }));
 ipcMain.handle('set-anti-close', (_e, v) => {
   state.antiClose = !!v;
@@ -4909,6 +4909,13 @@ async function recoverRecordings() {
       const folder = uniqueDir(path.join(sessionsRootDir(), sessionStamp() + '-Unsaved recording'));
       for (const f of left) await moveFile(path.join(dir, f), path.join(folder, f));
       appendLogLine('[recording] recovered ' + left.length + ' recording(s) into ' + folder);
+      // Ace was closed without End (killed, crashed, power off): upload what was
+      // recovered too, and show its link like any other session's.
+      if (!state.transcription || state.transcription.uploadSession !== false) {
+        uploadSessionFolder(folder).then((r) => {
+          if (r && r.ok && r.link && win && !win.isDestroyed()) win.webContents.send('pending-link', r.link);
+        });
+      }
     }
     await fs.promises.rmdir(dir).catch(() => {});
   } catch {}
@@ -4977,7 +4984,13 @@ ipcMain.handle('get-pending-link', () => String(state.pendingUploadLink || ''));
 ipcMain.handle('set-pending-link', (_e, link) => { state.pendingUploadLink = String(link || ''); saveState(); });
 ipcMain.handle('clear-pending-link', () => { state.pendingUploadLink = ''; saveState(); });
 
-ipcMain.handle('upload-session-bundle', async (_e, folder) => {
+// Closing Ace (X) while an upload runs no longer cuts it off: the windows hide,
+// the upload finishes, the link goes to the clipboard and a notification, and
+// it is kept (pendingUploadLink) to be shown on the next start. Then Ace quits.
+let uploadsRunning = 0;
+let quitWhenUploaded = false;
+async function uploadSessionFolder(folder) {
+  uploadsRunning++;
   try {
     const r = await uploadFolder(folder, (p) => {
       if (win && !win.isDestroyed()) win.webContents.send('upload-progress', p);
@@ -4987,10 +5000,41 @@ ipcMain.handle('upload-session-bundle', async (_e, folder) => {
       try { await fs.promises.writeFile(path.join(folder, 'gofile-link.txt'), r.link + '\n', 'utf8'); } catch {}
       const s = currentSession && currentSession();
       if (s) { s.uploadLink = r.link; saveSessions(); }
-    }
+      // kept until the user presses Copy link, whatever happens to the window
+      state.pendingUploadLink = r.link;
+      saveState();
+      appendLogLine('[upload] ' + r.link);
+      if (quitWhenUploaded) {
+        try { clipboard.writeText(r.link); } catch {}
+        try {
+          const { Notification } = require('electron');
+          if (Notification.isSupported()) new Notification({ title: 'Ace: session uploaded', body: 'Link copied to the clipboard: ' + r.link }).show();
+        } catch {}
+      }
+    } else if (!r.ok) appendLogLine('[upload] failed: ' + (r.error || 'unknown'));
     return r;
-  } catch (e) { return { ok: false, error: e.message }; }
+  } catch (e) {
+    appendLogLine('[upload] failed: ' + e.message);
+    return { ok: false, error: e.message };
+  } finally {
+    uploadsRunning--;
+    if (quitWhenUploaded && uploadsRunning <= 0) setTimeout(() => app.quit(), 1500); // let the notification show
+  }
+}
+ipcMain.handle('upload-session-bundle', (_e, folder) => uploadSessionFolder(folder));
+// Any other way of quitting (Alt+F4, the taskbar) waits for the upload as well.
+app.prependListener('before-quit', (e) => {
+  if (uploadsRunning > 0 && !quitWhenUploaded) { e.preventDefault(); quitWhenIdle(); }
 });
+function quitWhenIdle() {
+  if (uploadsRunning > 0) {
+    quitWhenUploaded = true;
+    appendLogLine('[upload] Ace closes when the upload finishes');
+    for (const w of BrowserWindow.getAllWindows()) { try { if (!w.isDestroyed()) w.hide(); } catch {} }
+    return;
+  }
+  app.quit();
+}
 
 ipcMain.handle('save-session-log', async (_e, suggestedName) => {
   if (sessionLog.length === 0) return null;

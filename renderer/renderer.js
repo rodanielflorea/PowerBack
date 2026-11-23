@@ -357,7 +357,20 @@ window.api.onClickThroughChanged((v) => {
 })();
 
 hideBtn.addEventListener("click", () => window.api.hide());
-quitBtn.addEventListener("click", () => window.api.quit());
+// X in the middle of a session ends it the way End does (everything saved,
+// then uploaded) before Ace closes; main keeps Ace running, hidden, until the
+// upload is done, and the link is shown on the next start.
+quitBtn.addEventListener("click", async () => {
+  const inSession = document.body.classList.contains("in-interview") && !document.body.classList.contains("role-supporter");
+  if (inSession && typeof endSessionAndSave === "function") {
+    quitBtn.disabled = true;
+    try { window.api.hide(); } catch {}
+    let info = { company: "", role: "" };
+    try { if (window.api.extractJdInfo) info = (await window.api.extractJdInfo()) || info; } catch {}
+    try { await endSessionAndSave(info.company || "", info.role || ""); } catch {}
+  }
+  window.api.quit();
+});
 
 function applyRoleClass(role) {
   if (!role && typeof closeSidePane === "function") closeSidePane();
@@ -1397,6 +1410,8 @@ if (window.api.onUploadProgress) {
 if (window.api.getPendingLink) {
   window.api.getPendingLink().then((link) => { if (link) showUploadModal({ link, pending: true }); }).catch(() => {});
 }
+// A recording recovered at start (Ace was closed without End) was uploaded.
+if (window.api.onPendingLink) window.api.onPendingLink((link) => { if (link) showUploadModal({ link, pending: true }); });
 
 async function uploadSessionToGofile(folder) {
   if (!window.api.uploadSessionBundle) return;
