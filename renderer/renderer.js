@@ -1081,15 +1081,53 @@ function wireContinueKbZones(id) {
     if (!zone || !input) return;
     zone.addEventListener("click", () => input.click());
     input.addEventListener("change", () => { addContinueKbFiles(id, kind, input.files); input.value = ""; });
-    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("dragover"); });
-    zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
-    zone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      zone.classList.remove("dragover");
-      addContinueKbFiles(id, kind, e.dataTransfer && e.dataTransfer.files);
-    });
+    wireFileDrop(zone, (files) => addContinueKbFiles(id, kind, files));
   });
 }
+
+// A drop zone for files from Finder / Explorer. On macOS a drop is accepted
+// only when the page takes the drag at dragenter as well as dragover and names
+// an operation Finder offers (copy); with just dragover, Windows takes the file
+// but a Mac may refuse it. The highlight counts enter/leave so moving over the
+// zone's own text doesn't make it flicker off.
+function wireFileDrop(zone, onFiles) {
+  let depth = 0;
+  const hasFiles = (e) => !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files"));
+  const take = (e) => {
+    if (!hasFiles(e)) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    try { e.dataTransfer.dropEffect = "copy"; } catch {}
+    return true;
+  };
+  zone.addEventListener("dragenter", (e) => { if (take(e)) { depth++; zone.classList.add("dragover"); } });
+  zone.addEventListener("dragover", (e) => { if (take(e)) zone.classList.add("dragover"); });
+  zone.addEventListener("dragleave", () => { depth = Math.max(0, depth - 1); if (!depth) zone.classList.remove("dragover"); });
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    depth = 0;
+    zone.classList.remove("dragover");
+    const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+    if (!files.length) {
+      log(`Drop on ${zone.id}: no file came with it (types: ${Array.from((e.dataTransfer && e.dataTransfer.types) || []).join(", ") || "none"})`, "err");
+      toast("Nothing to upload came with that drop. Click the box to pick the file instead.", "err");
+      return;
+    }
+    log(`Drop on ${zone.id}: ${files.map((f) => `${f.name} (${f.size} bytes)`).join(", ")}`, "info");
+    onFiles(files);
+  });
+}
+
+// A file let go anywhere else in the window must not open in it (the page
+// would be replaced by the file); the drop zones above handle their own.
+// (An element that already took the drag, like the message box, is left alone.)
+window.addEventListener("dragover", (e) => {
+  if (e.defaultPrevented) return;
+  e.preventDefault();
+  try { e.dataTransfer.dropEffect = "none"; } catch {}
+});
+window.addEventListener("drop", (e) => e.preventDefault());
 
 if (sessionSearch) sessionSearch.addEventListener("input", () => renderContinueList(sessionSearch.value));
 if (continueOkBtn) continueOkBtn.addEventListener("click", () => { if (_continueSelectedId) continueSession(_continueSelectedId); });
@@ -1280,13 +1318,7 @@ function wireKbZoneSet(dropPrefix, filePrefix) {
       input.click();
     });
     input.addEventListener("change", () => { addKbFiles(kind, input.files); input.value = ""; });
-    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("dragover"); });
-    zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
-    zone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      zone.classList.remove("dragover");
-      addKbFiles(kind, e.dataTransfer && e.dataTransfer.files);
-    });
+    wireFileDrop(zone, (files) => addKbFiles(kind, files));
   });
 }
 wireKbZoneSet("drop", "file");
@@ -6462,12 +6494,30 @@ function adoptScreenStream(stream, displayId) {
   };
 }
 
+// Why the supporter gets no screen, told to them with the "screen" message:
+// 'mac-permission' = this Mac has not given Ace Screen Recording, 'failed' =
+// the capture itself failed, '' = sharing works (or is switched off).
+let screenNoShareWhy = "";
 async function captureScreenForSupporter() {
   if (speakerScreenStream && speakerScreenStream.getVideoTracks().some((t) => t.readyState === "live")) return speakerScreenStream;
   stopScreenForSupporter();
+  screenNoShareWhy = "";
+  // Without the permission macOS still gives a "screen", but it holds only the
+  // wallpaper and the menu bar: the supporter would see an empty desktop. Say
+  // why instead. (Asking for a source still shows this Mac's own prompt and
+  // the speaker's notice, so the permission can be given.)
+  if (IS_MAC && window.api.getScreenPermission) {
+    const perm = await window.api.getScreenPermission().catch(() => "unknown");
+    if (perm !== "granted") {
+      log(`Screen for supporter: macOS Screen Recording permission is "${perm}", so the screen is not shared`, "err");
+      if (window.api.getDesktopSourceId) window.api.getDesktopSourceId("").catch(() => {});
+      screenNoShareWhy = "mac-permission";
+      return null;
+    }
+  }
   const want = (await shareDisplayInfo()).display;
   const s = await captureDisplayStream(shareDisplayId && want === shareDisplayId ? shareDisplayId : "");
-  if (!s) return null;
+  if (!s) { screenNoShareWhy = "failed"; return null; }
   adoptScreenStream(s, want);
   return speakerScreenStream;
 }
@@ -6483,7 +6533,8 @@ async function notifyScreenState(on, onlyConnId) {
   const info = await shareDisplayInfo();
   speakerPeers.forEach((entry, connId) => {
     if (onlyConnId && connId !== onlyConnId) return;
-    try { window.api.sendSignaling({ connId, type: "screen", on: !!on, ...info }); } catch {}
+    const why = on || !(netCfg && netCfg.shareScreen !== false) ? "" : screenNoShareWhy;
+    try { window.api.sendSignaling({ connId, type: "screen", on: !!on, why, ...info }); } catch {}
   });
 }
 
@@ -6647,6 +6698,11 @@ function clearScreenView(text) {
   setScreenStatus(text || "No screen.", true);
 }
 
+const SCREEN_NO_SHARE_TEXT = {
+  "": "The speaker is not sharing the screen.",
+  "mac-permission": "The speaker's Mac has not allowed Ace to record the screen. On their Mac: System Settings → Privacy & Security → Screen & System Audio Recording → turn Ace on, then quit and reopen Ace. If Ace is already on, remove it with − and add it again (an update makes macOS forget it).",
+  failed: "The speaker's screen could not be captured on their computer.",
+};
 function onScreenShareState(on, msg) {
   screenShareOn = on;
   if (msg && Array.isArray(msg.displays)) {
@@ -6654,7 +6710,7 @@ function onScreenShareState(on, msg) {
     remoteDisplay = String(msg.display || "");
     renderScreenDisplays();
   }
-  if (!on) clearScreenView("The speaker is not sharing the screen.");
+  if (!on) clearScreenView(SCREEN_NO_SHARE_TEXT[(msg && msg.why) || ""] || SCREEN_NO_SHARE_TEXT[""]);
   else if (!(screenVideoEl && screenVideoEl.srcObject)) setScreenStatus("Waiting for the speaker's screen…", true);
   else describeScreen();
   // Control was taken but the link dropped (new connection = no control on the

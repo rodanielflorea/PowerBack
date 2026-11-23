@@ -267,6 +267,7 @@ contextBridge.exposeInMainWorld('api', {
   onTranscriptLiveError: (cb) => ipcRenderer.on('transcript-live-error', (_e, v) => cb(v)),
   onUtteranceEnd: (cb) => ipcRenderer.on('transcript-utterance-end', () => cb()),
   getDesktopSourceId: (displayId) => ipcRenderer.invoke('get-desktop-source-id', displayId || ''),
+  getScreenPermission: () => ipcRenderer.invoke('get-screen-permission'),
   setCaptureDisplay: (displayId) => ipcRenderer.invoke('set-capture-display', displayId || ''),
   listDisplays: () => ipcRenderer.invoke('list-displays'),
   displayThumbnails: (opts) => ipcRenderer.invoke('display-thumbnails', opts || {}),

@@ -637,6 +637,8 @@ function createWindow() {
   if (clickThroughActive()) try { win.setIgnoreMouseEvents(true, { forward: true }); } catch {}
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  // A file dropped outside the drop zones must not replace the app with it.
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
   clickTraceLog(`--- Ace ${app.getVersion()} started; ${traceFlags()}`);
   clickTrace.start();
   // A frozen or crashed page (or a lost GPU process: the window goes black or
@@ -3947,6 +3949,12 @@ function bindDisplayEvents() {
     try { screen.on(ev, tell); } catch {}
   }
 }
+// macOS Screen Recording permission for this copy of Ace ('granted' elsewhere).
+// Without it macOS still hands out a "screen", but it shows only the wallpaper.
+ipcMain.handle('get-screen-permission', () => {
+  if (process.platform !== 'darwin') return 'granted';
+  try { return require('electron').systemPreferences.getMediaAccessStatus('screen'); } catch { return 'unknown'; }
+});
 ipcMain.handle('get-desktop-source-id', async (_e, displayId) => {
   macScreenPermissionWarn();
   try {
