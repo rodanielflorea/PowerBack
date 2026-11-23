@@ -13,7 +13,10 @@
 const fs = require('fs');
 const path = require('path');
 
-const API = 'https://api.gofile.io';
+// ACE_GOFILE_MOCK (a development run from source only, never the installed
+// app): a local stand-in for gofile, e.g. http://127.0.0.1:18700, for tests.
+const MOCK = process.defaultApp ? String(process.env.ACE_GOFILE_MOCK || '').replace(/\/+$/, '') : '';
+const API = MOCK || 'https://api.gofile.io';
 const LIST_TIMEOUT_MS = 15000;
 const UPLOAD_TIMEOUT_MS = 20 * 60 * 1000; // a screen recording can be big
 
@@ -58,7 +61,7 @@ async function uploadOne(server, file, { token, folderId } = {}) {
   const headers = token ? { Authorization: 'Bearer ' + token } : undefined;
   const t = withTimeout(UPLOAD_TIMEOUT_MS);
   try {
-    const res = await fetch(`https://${server}.gofile.io/contents/uploadfile`, {
+    const res = await fetch(MOCK ? `${MOCK}/contents/uploadfile` : `https://${server}.gofile.io/contents/uploadfile`, {
       method: 'POST', body: form, headers, signal: t.signal, duplex: 'half',
     });
     const j = await res.json().catch(() => null);

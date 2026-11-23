@@ -88,7 +88,7 @@ const {
 const { createKeyInjector, pasteKeystroke } = require('./platform-input');
 const { createRemoteInput, vkFor } = require('./remote-input');
 const { createClickTrace } = require('./click-trace');
-const license = require('./license');
+const aceOnline = require('./ace-online');
 const { uploadFolder } = require('./gofile');
 const { signatureDistance } = require('./speaker-detect');
 const { createSpeakerTracker, createVoiceNames, voiceRuns } = require('./speaker-tracker');
@@ -208,11 +208,10 @@ const HOTKEY_MIGRATIONS = {
 const DEFAULT_STATE = {
   x: null, y: null, width: 380, height: 800,
   opacity: 1.0, stealth: true, clickThrough: false,
+  // Size of the generated answers' text, 1 = 100% (14 px).
+  textScale: 1.1,
   transcription: {
     engine: 'deepgram',
-    // Transcription sockets leave outside the VPN (about 0.25 s sooner in a
-    // test through Astrill); falls back to the VPN when that does not connect.
-    bypassVpn: true,
     deepgramApiKey: '',
     xaiApiKey: '',
     language: 'auto',
@@ -303,13 +302,12 @@ let deepgramWs = null;
 let sessionLog = [];
 let state = { ...DEFAULT_STATE };
 
-// ── Built-in API keys ─────────────────────────────────────────────────────────
-// defaults/api-keys.json is shipped inside the app so users need no keys of
-// their own. A non-empty entry always wins over whatever is in state.json and
-// the matching settings field is hidden in the UI; an empty entry leaves that
-// provider user-configurable. (Anything shipped in the app can be extracted by
-// a user — rotate at the provider if a key leaks.)
-const BUILTIN_KEYS_FILE = path.join(__dirname, 'defaults', 'api-keys.json');
+// ── API keys from ace2me.com ─────────────────────────────────────────────────
+// The keys come with every check-in at ace2me.com (ace-online.js) instead of
+// being built into the installer. A non-empty key always wins over whatever is
+// in state.json and the matching settings field is hidden in the UI; an empty
+// one leaves that provider user-configurable. They are never written to
+// state.json (stateForDisk), so a computer that is turned off keeps none.
 
 // Bundled interview notes for "how do you use AI in your work" questions. Shipped
 // in the build (not committed). When present, answers follow it in detail.
@@ -320,28 +318,53 @@ function getAiUsageScript() {
   catch { aiUsageScript = ''; }
   return aiUsageScript;
 }
-let builtinKeys = null;
+const ONLINE_KEY_NAMES = ['deepgram', 'xai', 'anthropic', 'openai', 'openrouter'];
 function getBuiltinKeys() {
-  if (builtinKeys) return builtinKeys;
-  let raw = {};
-  try { raw = JSON.parse(fs.readFileSync(BUILTIN_KEYS_FILE, 'utf8')); } catch {}
-  builtinKeys = {};
-  for (const k of ['deepgram', 'xai', 'anthropic', 'openai', 'openrouter']) {
+  const cur = aceOnline.current();
+  const raw = (cur && cur.keys) || {};
+  const out = {};
+  for (const k of ONLINE_KEY_NAMES) {
     const v = String(raw[k] || '').trim();
-    if (v) builtinKeys[k] = v;
+    if (v) out[k] = v;
   }
-  return builtinKeys;
+  return out;
 }
+// The API keys come from ace2me.com only. They live in memory and in the
+// encrypted ace-online.bin cache; they are never written to state.json and
+// never handed to a window (the renderer sees only whether one is set).
+// Keys older versions saved in state.json are wiped on load.
+function withoutKeys(s) {
+  const t = s.transcription || {}, a = s.answer || {};
+  const names = Object.keys({ ...DEFAULT_STATE.answer.keys, ...(a.keys || {}) });
+  return {
+    ...s,
+    transcription: { ...t, deepgramApiKey: '', xaiApiKey: '' },
+    answer: { ...a, apiKey: '', keys: Object.fromEntries(names.map((k) => [k, ''])) },
+  };
+}
+function stateForDisk() { return withoutKeys(state); }
+// What a window may see of a key: that it is set, never its value.
+const KEY_SET = 'set';
+const keyShown = (v) => (v ? KEY_SET : '');
+// Exactly the keys ace2me.com gives now: one removed there stops here too.
 function applyBuiltinKeys() {
   const b = getBuiltinKeys();
   if (!state.transcription) state.transcription = { ...DEFAULT_STATE.transcription };
   if (!state.answer) state.answer = { ...DEFAULT_STATE.answer };
-  if (!state.answer.keys) state.answer.keys = { ...DEFAULT_STATE.answer.keys };
-  if (b.deepgram) state.transcription.deepgramApiKey = b.deepgram;
-  if (b.xai) { state.transcription.xaiApiKey = b.xai; state.answer.keys.xai = b.xai; state.answer.apiKey = b.xai; }
-  if (b.anthropic) state.answer.keys.anthropic = b.anthropic;
-  if (b.openai) state.answer.keys.openai = b.openai;
-  if (b.openrouter) state.answer.keys.openrouter = b.openrouter;
+  state.answer.keys = { ...DEFAULT_STATE.answer.keys, ...(state.answer.keys || {}) };
+  state.transcription.deepgramApiKey = b.deepgram || '';
+  state.transcription.xaiApiKey = b.xai || '';
+  state.answer.keys.xai = b.xai || '';
+  state.answer.apiKey = b.xai || '';
+  state.answer.keys.anthropic = b.anthropic || '';
+  state.answer.keys.openai = b.openai || '';
+  state.answer.keys.openrouter = b.openrouter || '';
+}
+// Turned off on ace2me.com: no key stays in memory either.
+function forgetOnlineKeys() {
+  const d = withoutKeys(state);
+  state.transcription = d.transcription;
+  state.answer = d.answer;
 }
 ipcMain.handle('get-builtin-keys', () => {
   const b = getBuiltinKeys();
@@ -407,7 +430,12 @@ function loadState() {
     state.transcription.captureMic = true;
     state.audioDefaultsV4 = true;
   }
+  // Keys from older versions (built in, then saved here in plain text): gone.
+  // Only ace2me.com's count from 2.7.26 on.
+  const hadOldKeys = JSON.stringify(state) !== JSON.stringify(withoutKeys(state));
+  forgetOnlineKeys();
   applyBuiltinKeys();
+  if (hadOldKeys) { try { fs.writeFileSync(STATE_FILE, JSON.stringify(stateForDisk())); } catch {} }
   seedAvoidPhrasesIfNeeded();
   migrateProfilesIfNeeded();
 }
@@ -499,7 +527,7 @@ function saveState() {
   }
   try {
     fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state));
+    fs.writeFileSync(STATE_FILE, JSON.stringify(stateForDisk()));
   } catch {}
 }
 
@@ -2446,6 +2474,7 @@ function broadcastNetworkStatus() {
     connected: wsClient ? wsClient.readyState === WebSocket.OPEN : false,
     supporters: supporterListSnapshot(),
     maxSupporters: state.network.maxSupporters || 5,
+    online: { hosting: !!(aceHost && aceHost.ws && aceHost.ws.readyState === WebSocket.OPEN), joined: supporterOnline ? supporterOnline.label : '', error: aceHostError },
   };
   win.webContents.send('network-status', status);
 }
@@ -2471,6 +2500,7 @@ function parseAddress(addr) {
 }
 
 function stopSignalingServer() {
+  aceHostStop();
   if (wsServerHeartbeat) { clearInterval(wsServerHeartbeat); wsServerHeartbeat = null; }
   // Tell the supporter the session is over, so it does not keep reconnecting.
   for (const entry of supporterConns.values()) {
@@ -2530,6 +2560,220 @@ function ensureFirewallRule(port, force) {
   }
 }
 
+// One supporter's socket: from this network (the signalling server) or from
+// anywhere through ace2me.com's relay (aceHost, a RelayConn for each).
+function onSupporterSocket(ws, req) {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+  let ip = (req && req.socket && req.socket.remoteAddress) || '';
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  if (ip === '::1') ip = '127.0.0.1';
+  const port = (req && req.socket && req.socket.remotePort) || 0;
+  const refuse = (reason, code) => {
+    try { ws.send(JSON.stringify({ type: 'reject', reason })); } catch {}
+    try { ws.close(code, reason); } catch {}
+  };
+  if (supporterConns.size >= 1) return refuse('capacity', 4002);
+  let id = null;
+  const admit = () => {
+    id = String(nextConnId++);
+    const initialMicMode = 'mute';
+    supporterConns.set(id, { ws, ip, port, micMode: initialMicMode });
+    appendLogLine(`[supporter] #${id} joined from ${ip}`);
+    try { ws.send(JSON.stringify({ type: 'hello', id, micMode: initialMicMode })); } catch {}
+    for (const m of chatHistory) {
+      if (!m || (m.type !== 'chat-text' && m.type !== 'chat-image')) continue;
+      try {
+        const payload = m.type === 'chat-text'
+          ? { type: 'chat-text', text: m.text, ts: m.ts, fromSupporter: !m.fromMe }
+          : { type: 'chat-image', dataUrl: m.dataUrl, ts: m.ts, fromSupporter: !m.fromMe };
+        ws.send(JSON.stringify(payload));
+      } catch {}
+    }
+    if (win) win.webContents.send('signaling-in', { connId: id, type: 'opened', ip });
+    broadcastNetworkStatus();
+  };
+  ws.on('message', (data) => {
+    let msg;
+    try { msg = JSON.parse(data.toString()); } catch { return; }
+    if (!id) return;
+    if (msg && msg.type === 'join') return; // an older supporter's Ace still sends its code
+    if (msg && msg.type === 'request-mic-mode') {
+      setSupporterMicMode(id, msg.mode);
+      return;
+    }
+    if (msg && msg.type === 'control-request') { controlRequest(id); return; }
+    if (msg && msg.type === 'control-release') { if (control.connId === id) controlStop('the supporter let go'); return; }
+    if (msg && msg.type === 'ci') { controlInput(id, msg.ev); return; }
+    if (msg && msg.type === 'remote-submit') {
+      const text = typeof msg.text === 'string' ? msg.text.slice(0, 4000) : '';
+      if (win) win.webContents.send('remote-submit', { connId: id, mode: msg.mode, text });
+      return;
+    }
+    if (msg && (msg.type === 'chat-text' || msg.type === 'chat-image')) {
+      const entry = msg.type === 'chat-text'
+        ? { type: 'chat-text', text: String(msg.text || ''), ts: msg.ts || Date.now(), fromId: id, fromMe: false }
+        : { type: 'chat-image', dataUrl: String(msg.dataUrl || ''), ts: msg.ts || Date.now(), fromId: id, fromMe: false };
+      chatHistory.push(entry);
+      if (chatHistory.length > CHAT_HISTORY_MAX) chatHistory.shift();
+      if (win) win.webContents.send('supporter-chat-in', entry);
+      // The speaker had put the window away: a message brings it back
+      // (without taking the keyboard from the meeting).
+      if (win && !win.isDestroyed() && !isMainShown()) showMain();
+      return;
+    }
+    if (msg && msg.type === 'chat-clear') {
+      chatHistory = [];
+      pushHistoryToStickyDom();
+      if (win) win.webContents.send('chat-clear');
+      for (const e2 of supporterConns.values()) {
+        if (e2 && e2.ws && e2.ws.readyState === WebSocket.OPEN) {
+          try { e2.ws.send(JSON.stringify({ type: 'chat-clear', ts: Date.now() })); } catch {}
+        }
+      }
+      return;
+    }
+    if (win) win.webContents.send('signaling-in', { connId: id, ...msg });
+  });
+  ws.on('close', () => {
+    if (!id) return;
+    const cur = supporterConns.get(id);
+    if (cur && cur.ws === ws) supporterConns.delete(id);
+    if (control.pending === id) control.pending = null;
+    if (control.connId === id) controlStop('the supporter left');
+    appendLogLine(`[supporter] #${id} left`);
+    if (win) win.webContents.send('signaling-in', { connId: id, type: 'closed' });
+    broadcastNetworkStatus();
+  });
+  ws.on('error', () => {});
+  admit();
+}
+
+// ── Online session (speaker) ─────────────────────────────────────────────────
+// While the speaker's session runs, it is also published on ace2me.com, and
+// this Ace keeps a connection open to the relay (RemoteDevJobs/ace-relay).
+// Supporters anywhere pick it from their list and join with their password;
+// ace2me.com checks it and gives them a ticket. Each one arrives here as a
+// RelayConn, which behaves like a supporter's socket on this network, so
+// everything after (chat, answers, screen, remote control) works the same.
+const { EventEmitter } = require('events');
+class RelayConn extends EventEmitter {
+  constructor(host, c) { super(); this.host = host; this.c = c; this.readyState = WebSocket.OPEN; this.isAlive = true; }
+  send(d) {
+    if (this.readyState !== WebSocket.OPEN) return;
+    aceHostSend(this.host, { t: 'msg', c: this.c, d: typeof d === 'string' ? d : String(d) });
+  }
+  close(code, reason) {
+    if (this.readyState !== WebSocket.OPEN) return;
+    aceHostSend(this.host, { t: 'close', c: this.c, code, reason });
+    this.gone(code, reason);
+  }
+  terminate() { this.close(4001, 'closed'); }
+  ping() { this.emit('pong'); } // the relay watches the supporter's link itself
+  gone(code, reason) {
+    if (this.readyState !== WebSocket.OPEN) return;
+    this.readyState = WebSocket.CLOSED;
+    this.emit('close', code || 1000, Buffer.from(String(reason || '')));
+  }
+}
+let aceHost = null;      // { sessionId, ticket, relayUrl, ws, conns, beatTimer, retryTimer, stopped }
+let aceHostError = '';
+function aceHostSend(h, o) {
+  if (h && h.ws && h.ws.readyState === WebSocket.OPEN) { try { h.ws.send(JSON.stringify(o)); } catch {} }
+}
+async function aceHostStart() {
+  aceHostStop();
+  if (state.network.role !== 'speaker' || !aceOnline.current()) return;
+  const h = { sessionId: '', ticket: '', relayUrl: '', ws: null, conns: new Map(), beatTimer: null, retryTimer: null, stopped: false };
+  aceHost = h;
+  const r = await aceOnline.sessionStart('');
+  if (h.stopped) { if (r.ok) aceOnline.sessionEnd(r.sessionId); return; }
+  if (!r.ok) {
+    aceHostError = r.error;
+    appendLogLine('[online] the session could not be published: ' + r.error);
+    h.retryTimer = setTimeout(() => { if (aceHost === h) aceHostStart(); }, 30000);
+    broadcastNetworkStatus();
+    return;
+  }
+  aceHostError = '';
+  Object.assign(h, { sessionId: r.sessionId, ticket: r.ticket, relayUrl: r.relayUrl });
+  appendLogLine('[online] session published on ace2me.com');
+  aceHostConnect(h);
+  h.beatTimer = setInterval(async () => {
+    const b = await aceOnline.sessionBeat(h.sessionId);
+    if (h.stopped) return;
+    if (b.ok && b.ticket) h.ticket = b.ticket;
+    if (b.ok && b.ended) {
+      appendLogLine('[online] the administrator ended the online session');
+      aceHostStop(true);
+      if (win && !win.isDestroyed()) win.webContents.send('capture-text', '[the online session was ended on ace2me.com]');
+    }
+  }, 30000);
+}
+function aceHostConnect(h) {
+  if (h.stopped) return;
+  let ws;
+  try { ws = new WebSocket(aceOnline.relayUrl(h.relayUrl, 'host', h.ticket)); }
+  catch (e) { appendLogLine('[online] relay: ' + e.message); return aceHostRetry(h); }
+  h.ws = ws;
+  ws.on('open', () => { aceHostError = ''; appendLogLine('[online] connected to the relay'); broadcastNetworkStatus(); });
+  ws.on('message', (data) => {
+    let m; try { m = JSON.parse(data.toString()); } catch { return; }
+    if (!m || m.c == null) return;
+    const c = String(m.c);
+    if (m.t === 'open') {
+      const old = h.conns.get(c); if (old) old.gone(1001, 'reopened');
+      const conn = new RelayConn(h, c);
+      h.conns.set(c, conn);
+      conn.on('close', () => { if (h.conns.get(c) === conn) h.conns.delete(c); });
+      const name = String(m.n || '').slice(0, 60);
+      onSupporterSocket(conn, { socket: { remoteAddress: name ? `online (${name})` : 'online', remotePort: 0 } });
+    } else if (m.t === 'msg') {
+      const conn = h.conns.get(c);
+      if (conn && typeof m.d === 'string') conn.emit('message', Buffer.from(m.d));
+    } else if (m.t === 'close') {
+      const conn = h.conns.get(c);
+      if (conn) conn.gone(1000, 'left');
+    }
+  });
+  ws.on('close', (code) => {
+    if (h.ws === ws) h.ws = null;
+    for (const conn of h.conns.values()) conn.gone(1006, 'relay');
+    h.conns.clear();
+    broadcastNetworkStatus();
+    if (h.stopped) return;
+    if (code === 4006) { appendLogLine('[online] ended by the administrator'); aceHostStop(true); return; }
+    aceHostRetry(h);
+  });
+  ws.on('error', (e) => { aceHostError = e.message; });
+}
+// Dropped: back in a few seconds, with a fresh ticket.
+function aceHostRetry(h) {
+  if (h.stopped || h.retryTimer) return;
+  h.retryTimer = setTimeout(async () => {
+    h.retryTimer = null;
+    if (h.stopped) return;
+    const b = await aceOnline.sessionBeat(h.sessionId);
+    if (h.stopped) return;
+    if (b.ok && b.ended) { aceHostStop(true); return; }
+    if (b.ok && b.ticket) h.ticket = b.ticket;
+    aceHostConnect(h);
+  }, 3000);
+}
+function aceHostStop(endedThere) {
+  const h = aceHost;
+  if (!h) return;
+  aceHost = null;
+  h.stopped = true;
+  if (h.beatTimer) clearInterval(h.beatTimer);
+  if (h.retryTimer) clearTimeout(h.retryTimer);
+  for (const conn of h.conns.values()) conn.close(4006, 'ended');
+  h.conns.clear();
+  if (h.ws) { try { h.ws.close(1000, 'ended'); } catch {} h.ws = null; }
+  if (h.sessionId && !endedThere) aceOnline.sessionEnd(h.sessionId).catch(() => {});
+  broadcastNetworkStatus();
+}
+
 function startSignalingServer() {
   stopSignalingServer();
   const addr = parseAddress(state.network.address);
@@ -2558,99 +2802,16 @@ function startSignalingServer() {
       try { c.ping(); } catch {}
     });
   }, WS_PING_MS);
-  wsServer.on('connection', (ws, req) => {
-    ws.isAlive = true;
-    ws.on('pong', () => { ws.isAlive = true; });
-    let ip = (req && req.socket && req.socket.remoteAddress) || '';
-    if (ip.startsWith('::ffff:')) ip = ip.slice(7);
-    if (ip === '::1') ip = '127.0.0.1';
-    const port = (req && req.socket && req.socket.remotePort) || 0;
-    const refuse = (reason, code) => {
-      try { ws.send(JSON.stringify({ type: 'reject', reason })); } catch {}
-      try { ws.close(code, reason); } catch {}
-    };
-    if (supporterConns.size >= 1) return refuse('capacity', 4002);
-    let id = null;
-    const admit = () => {
-      id = String(nextConnId++);
-      const initialMicMode = 'mute';
-      supporterConns.set(id, { ws, ip, port, micMode: initialMicMode });
-      appendLogLine(`[supporter] #${id} joined from ${ip}`);
-      try { ws.send(JSON.stringify({ type: 'hello', id, micMode: initialMicMode })); } catch {}
-      for (const m of chatHistory) {
-        if (!m || (m.type !== 'chat-text' && m.type !== 'chat-image')) continue;
-        try {
-          const payload = m.type === 'chat-text'
-            ? { type: 'chat-text', text: m.text, ts: m.ts, fromSupporter: !m.fromMe }
-            : { type: 'chat-image', dataUrl: m.dataUrl, ts: m.ts, fromSupporter: !m.fromMe };
-          ws.send(JSON.stringify(payload));
-        } catch {}
-      }
-      if (win) win.webContents.send('signaling-in', { connId: id, type: 'opened', ip });
-      broadcastNetworkStatus();
-    };
-    ws.on('message', (data) => {
-      let msg;
-      try { msg = JSON.parse(data.toString()); } catch { return; }
-      if (!id) return;
-      if (msg && msg.type === 'join') return; // an older supporter's Ace still sends its code
-      if (msg && msg.type === 'request-mic-mode') {
-        setSupporterMicMode(id, msg.mode);
-        return;
-      }
-      if (msg && msg.type === 'control-request') { controlRequest(id); return; }
-      if (msg && msg.type === 'control-release') { if (control.connId === id) controlStop('the supporter let go'); return; }
-      if (msg && msg.type === 'ci') { controlInput(id, msg.ev); return; }
-      if (msg && msg.type === 'remote-submit') {
-        const text = typeof msg.text === 'string' ? msg.text.slice(0, 4000) : '';
-        if (win) win.webContents.send('remote-submit', { connId: id, mode: msg.mode, text });
-        return;
-      }
-      if (msg && (msg.type === 'chat-text' || msg.type === 'chat-image')) {
-        const entry = msg.type === 'chat-text'
-          ? { type: 'chat-text', text: String(msg.text || ''), ts: msg.ts || Date.now(), fromId: id, fromMe: false }
-          : { type: 'chat-image', dataUrl: String(msg.dataUrl || ''), ts: msg.ts || Date.now(), fromId: id, fromMe: false };
-        chatHistory.push(entry);
-        if (chatHistory.length > CHAT_HISTORY_MAX) chatHistory.shift();
-        if (win) win.webContents.send('supporter-chat-in', entry);
-        // The speaker had put the window away: a message brings it back
-        // (without taking the keyboard from the meeting).
-        if (win && !win.isDestroyed() && !isMainShown()) showMain();
-        return;
-      }
-      if (msg && msg.type === 'chat-clear') {
-        chatHistory = [];
-        pushHistoryToStickyDom();
-        if (win) win.webContents.send('chat-clear');
-        for (const e2 of supporterConns.values()) {
-          if (e2 && e2.ws && e2.ws.readyState === WebSocket.OPEN) {
-            try { e2.ws.send(JSON.stringify({ type: 'chat-clear', ts: Date.now() })); } catch {}
-          }
-        }
-        return;
-      }
-      if (win) win.webContents.send('signaling-in', { connId: id, ...msg });
-    });
-    ws.on('close', () => {
-      if (!id) return;
-      const cur = supporterConns.get(id);
-      if (cur && cur.ws === ws) supporterConns.delete(id);
-      if (control.pending === id) control.pending = null;
-      if (control.connId === id) controlStop('the supporter left');
-      appendLogLine(`[supporter] #${id} left`);
-      if (win) win.webContents.send('signaling-in', { connId: id, type: 'closed' });
-      broadcastNetworkStatus();
-    });
-    ws.on('error', () => {});
-    admit();
-  });
+  wsServer.on('connection', onSupporterSocket);
   wsServer.on('error', (e) => {
     if (win) win.webContents.send('network-error', 'Server error: ' + e.message);
   });
+  aceHostStart();
   broadcastNetworkStatus();
 }
 
 function disconnectSignalingClient() {
+  supporterJoinSeq++;
   if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
   if (wsClientHeartbeat) { clearInterval(wsClientHeartbeat); wsClientHeartbeat = null; }
   if (wsClient) {
@@ -2661,14 +2822,40 @@ function disconnectSignalingClient() {
   broadcastNetworkStatus();
 }
 
+// Supporter joined online (a session from ace2me.com): { sessionId, password,
+// label }. Each connect, also a reconnect after a drop, asks ace2me.com for a
+// fresh ticket with the password, so a changed password or a turned-off
+// computer stops it.
+let supporterOnline = null;
+let supporterJoinSeq = 0;
 function connectSignalingClient() {
   disconnectSignalingClient();
+  if (supporterOnline) {
+    const seq = ++supporterJoinSeq;
+    const target = supporterOnline;
+    aceOnline.join(target.sessionId, target.password).then((r) => {
+      if (seq !== supporterJoinSeq || supporterOnline !== target) return;
+      if (!r.ok) {
+        appendLogLine('[online] join refused: ' + r.error);
+        // the administrator changed the password: ask for it again
+        if (r.error === 'bad-password' || r.error === 'no-password') { aceOnline.forgetSupportPassword(); supportUnlocked = false; }
+        supporterRefused = r.error;
+        supporterAdmitted = false;
+        if (win) win.webContents.send('join-rejected', { reason: r.error });
+        return;
+      }
+      openSignalingClient(aceOnline.relayUrl(r.relayUrl, 'join', r.ticket));
+    });
+    return;
+  }
   const addr = parseAddress(state.network.address);
   if (!addr) {
     if (win) win.webContents.send('network-error', 'Invalid address: ' + state.network.address);
     return;
   }
-  const url = `ws://${addr.host}:${addr.port}`;
+  openSignalingClient(`ws://${addr.host}:${addr.port}`);
+}
+function openSignalingClient(url) {
   let ws;
   try {
     ws = new WebSocket(url);
@@ -3022,6 +3209,8 @@ function setupAutoUpdater() {
   autoUpdater.logger = null;
   // same network rule as the app's own requests: no search for a proxy first
   try { autoUpdater.netSession.setProxy({ mode: 'direct' }).catch(() => {}); } catch {}
+  // Updates come from ace2me.com, which passes on the files of the GitHub release.
+  try { autoUpdater.setFeedURL({ provider: 'generic', url: aceOnline.updateFeedUrl }); } catch {}
   autoUpdater.on('checking-for-update', () => updaterStatus({ state: 'checking' }));
   autoUpdater.on('update-available', (info) => {
     updaterStatus({ state: 'available', version: info?.version });
@@ -3190,12 +3379,11 @@ ipcMain.handle('get-app-info', () => {
   return { version: app.getVersion(), buildDate };
 });
 
-// ── License gate ─────────────────────────────────────────────────────────────
-// The app only starts once a valid MAC-bound license is stored (license.js).
-// First run (or after expiry) shows a small window with this PC's MAC address;
-// the user sends it to the admin, receives a key from the admin generator
-// (license-admin/), and enters it once. Verification is offline against the
-// embedded public key, so no network is needed to activate.
+// ── Approval gate (ace2me.com) ───────────────────────────────────────────────
+// The app only starts on a computer the administrator approved on ace2me.com
+// (super admin → "Ace app"). Until then a small window shows this computer's
+// MAC address to send to the administrator and checks again every 10 s; it
+// opens the app by itself once the approval is there. See ace-online.js.
 
 let licenseWin = null;
 
@@ -3301,8 +3489,7 @@ process.on('unhandledRejection', (e) => {
 function startApp() {
   startWatchdog();
   recoverRecordings();
-  // Keep the license's last-seen time moving while the app runs (10 min).
-  setInterval(() => { try { license.touchStoredLicense(app.getPath('userData')); } catch {} }, 10 * 60 * 1000);
+  startAceCheckins();
   // macOS: ask for the microphone up front so the system prompt appears once,
   // instead of the first transcription silently getting no audio.
   if (process.platform === 'darwin') {
@@ -3337,15 +3524,15 @@ ipcMain.handle('set-vscode-config', (_e, cfg) => {
 });
 ipcMain.handle('get-vscode-status', () => vscodeBridge.status());
 
-function openLicenseWindow(reason) {
+function openLicenseWindow(first) {
   licenseWin = new BrowserWindow({
     width: 460,
-    height: 392,
+    height: 330,
     useContentSize: true,
     resizable: false,
     maximizable: false,
     minimizable: false,
-    title: 'Activation',
+    title: 'Ace',
     webPreferences: {
       preload: path.join(__dirname, 'preload-license.js'),
       contextIsolation: true,
@@ -3357,28 +3544,77 @@ function openLicenseWindow(reason) {
   const showLicense = () => { if (licenseWin && !licenseWin.isDestroyed() && !licenseWin.isVisible()) licenseWin.show(); };
   licenseWin.once('ready-to-show', showLicense);
   licenseWin.webContents.once('did-finish-load', () => setTimeout(showLicense, 100));
-  licenseWin.on('closed', () => { licenseWin = null; });
+  let poll = null;
+  licenseWin.on('closed', () => { licenseWin = null; if (poll) clearTimeout(poll); });
+
+  let info = first;
+  const view = (r) => ({ state: r.status, mac: r.mac || aceOnline.formatMac(aceOnline.primaryMac()), message: r.message || '', error: r.error || '', reason: r.reason || '', platform: aceOnline.PLATFORM });
+  const tell = () => { if (licenseWin && !licenseWin.isDestroyed()) licenseWin.webContents.send('license-state', view(info)); };
+  const check = async () => {
+    poll = null;
+    info = await aceOnline.hello(app.getVersion());
+    if (info.status === 'approved') {
+      appendLogLine('[ace2me] approved' + (info.offline ? ' (kept approval, ace2me.com not reachable)' : ''));
+      if (licenseWin && !licenseWin.isDestroyed()) { licenseWin.removeAllListeners('closed'); licenseWin.close(); licenseWin = null; }
+      applyBuiltinKeys();
+      startApp();
+      return info;
+    }
+    tell();
+    if (licenseWin && !licenseWin.isDestroyed()) poll = setTimeout(check, 10000);
+    return info;
+  };
+  poll = setTimeout(check, 10000);
 
   ipcMain.removeHandler('license-info');
-  ipcMain.removeHandler('license-submit');
+  ipcMain.removeHandler('license-check');
   ipcMain.removeHandler('license-copy-mac');
   ipcMain.removeHandler('license-quit');
-  ipcMain.handle('license-info', () => ({
-    mac: license.formatMac(license.primaryMac() || ''),
-    reason,
-  }));
-  ipcMain.handle('license-copy-mac', () => clipboard.writeText(license.formatMac(license.primaryMac() || '')));
-  ipcMain.handle('license-quit', () => app.quit());
-  ipcMain.handle('license-submit', (_e, code) => {
-    const r = license.verifyLicense(code, license.machineMacs(), Date.now());
-    if (!r.ok) return { ok: false, reason: r.reason };
-    license.saveStoredLicense(app.getPath('userData'), String(code).trim(), Date.now());
-    setTimeout(() => {
-      if (licenseWin && !licenseWin.isDestroyed()) { licenseWin.removeAllListeners('closed'); licenseWin.close(); licenseWin = null; }
-      startApp();
-    }, 900);
-    return { ok: true, expiresAt: r.expiresAt };
-  });
+  ipcMain.handle('license-info', () => view(info));
+  ipcMain.handle('license-check', async () => { if (poll) clearTimeout(poll); return view(await check()); });
+  ipcMain.handle('license-copy-mac', () => clipboard.writeText(view(info).mac));
+  ipcMain.handle('license-quit', () => { signalCleanQuit(); app.quit(); });
+}
+
+// While the app runs it checks in every minute: new keys take effect at once,
+// and a computer turned off on ace2me.com closes the app, also in a session.
+// Without an answer it keeps going until 24 h after the last good check-in.
+let aceCheckinTimer = null;
+function startAceCheckins() {
+  if (aceCheckinTimer) return;
+  const tick = async () => {
+    let r;
+    try { r = await aceOnline.hello(app.getVersion()); } catch (e) { r = { status: 'offline', error: e.message }; }
+    if (r.status === 'approved') {
+      aceCheckinTimer = setTimeout(tick, Math.max(30, Number(r.checkEverySec) || 60) * 1000);
+      if (r.offline) appendLogLine('[ace2me] no answer from ace2me.com (' + r.error + '); working on the approval from ' + new Date(r.at).toLocaleString());
+      try { applyBuiltinKeys(); } catch (e) { appendLogLine('[ace2me] keys: ' + (e.message || e)); }
+      return;
+    }
+    const why = r.status === 'terminated'
+      ? (r.message || 'This computer was turned off for Ace by the administrator.')
+      : r.status === 'pending'
+        ? 'This computer is no longer approved for Ace. Ask the administrator to approve it again.'
+        : 'Ace could not reach ace2me.com for 24 hours. Connect to the internet and start Ace again.';
+    aceShutdown(why);
+  };
+  aceCheckinTimer = setTimeout(tick, 60 * 1000);
+}
+function aceShutdown(why) {
+  // written at once: the message box below holds the app until it is closed
+  try { fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] [ace2me] closing: ${why}
+`); } catch {}
+  try { aceHostStop(); } catch {}
+  try { disconnectSignalingClient(); } catch {}
+  try { stopSignalingServer(); } catch {}
+  try { deepgramActive = false; xaiActive = false; micDgActive = false; clearDeepgramTimers(); clearXaiTimers(); } catch {}
+  forgetOnlineKeys();
+  saveState();
+  try { for (const w of BrowserWindow.getAllWindows()) w.hide(); } catch {}
+  try { dialog.showMessageBoxSync({ type: 'warning', title: 'Ace', message: why, buttons: ['Close'] }); } catch {}
+  signalCleanQuit();
+  appIsQuitting = true;
+  app.exit(0);
 }
 
 // A second start ends up here, in the app that is already running. It shows
@@ -3420,10 +3656,12 @@ app.on('second-instance', (_e, _argv, _cwd, data) => {
   showRunningApp();
 });
 
-app.whenReady().then(() => {
-  const check = license.checkStoredLicense(app.getPath('userData'));
-  if (check.ok) startApp();
-  else openLicenseWindow(check.reason);
+app.whenReady().then(async () => {
+  aceOnline.init(app.getPath('userData'), require('electron'));
+  const r = await aceOnline.hello(app.getVersion());
+  appendLogLine('[ace2me] ' + r.status + (r.offline ? ' (kept approval: ' + r.error + ')' : r.error ? ': ' + r.error : ''));
+  if (r.status === 'approved') { applyBuiltinKeys(); startApp(); }
+  else openLicenseWindow(r);
 });
 
 ipcMain.handle('set-opacity', (_e, value) => setOpacity(value));
@@ -3503,9 +3741,9 @@ ipcMain.handle('run-diagnostics', async () => {
   const add = (name, ok, detail, fix) => checks.push({ name, ok, detail: detail || '', fix: ok ? '' : (fix || '') });
   const keys = getBuiltinKeys();
   const dgKey = keys.deepgram || (state.transcription && state.transcription.deepgramApiKey);
-  add('Deepgram key (transcription)', !!dgKey, keys.deepgram ? 'built in' : (dgKey ? 'saved' : 'missing'), 'Rebuild with the API_KEYS_JSON secret (or defaults/api-keys.json) filled in.');
+  add('Deepgram key (transcription)', !!dgKey, keys.deepgram ? 'from ace2me.com' : (dgKey ? 'saved' : 'missing'), 'Set the Deepgram key on ace2me.com (Ace app → Settings).');
   const ap = getAnswerProvider();
-  add(`${ap.label} key (answers)`, !!getAnswerApiKey(ap.id), getAnswerApiKey(ap.id) ? 'built in' : 'missing', 'Rebuild with the API_KEYS_JSON secret filled in, or pick a provider that has a key.');
+  add(`${ap.label} key (answers)`, !!getAnswerApiKey(ap.id), getAnswerApiKey(ap.id) ? 'set' : 'missing', 'Set the key on ace2me.com (Ace app → Settings), or pick a provider that has a key.');
   if (mac) {
     const micSt = (() => { try { return sp.getMediaAccessStatus('microphone'); } catch { return 'unknown'; } })();
     add('Microphone permission', micSt === 'granted', micSt, 'System Settings → Privacy & Security → Microphone → enable Ace.');
@@ -3522,7 +3760,7 @@ ipcMain.handle('run-diagnostics', async () => {
     const typing = has('xdotool') || has('wtype') || has('ydotool');
     add('Typing tool (Write-to-IDE / paste): xdotool, wtype or ydotool', typing, typing ? 'installed' : 'none installed', 'Click "Install missing tools" below.');
   }
-  add('License', !!license.checkStoredLicense(app.getPath('userData')).ok, 'valid', 'Ask your administrator for a new key.');
+  { const cur = aceOnline.current(); add('Approved on ace2me.com', !!cur, cur ? (cur.offline ? 'kept approval, no answer now' : 'yes') : 'no', 'Ask the administrator to approve this computer.'); }
   return { platform: process.platform, macRestartHint: mac, checks, canInstallTools: process.platform === 'linux' && (has('apt-get') || has('dnf') || has('pacman')) && has('pkexec') };
 });
 
@@ -3582,7 +3820,7 @@ ipcMain.handle('get-stealth', () => state.stealth);
 ipcMain.handle('set-click-through', (_e, value) => setClickThrough(value));
 ipcMain.handle('get-click-through', () => state.clickThrough);
 ipcMain.handle('hide', () => hideMain());
-ipcMain.handle('quit', () => app.quit());
+ipcMain.handle('quit', () => quitWhenIdle());
 ipcMain.handle('get-anti-close', () => ({ supported: process.platform === 'win32', enabled: state.antiClose !== false }));
 ipcMain.handle('set-anti-close', (_e, v) => {
   state.antiClose = !!v;
@@ -3780,9 +4018,15 @@ ipcMain.handle('get-cursor-screen-source-id', async () => {
   return sources.map((s) => ({ id: s.id, name: s.name, display_id: s.display_id }));
 });
 
-ipcMain.handle('get-transcription-config', () => ({ ...state.transcription }));
+ipcMain.handle('get-transcription-config', () => ({
+  ...state.transcription,
+  deepgramApiKey: keyShown(state.transcription.deepgramApiKey),
+  xaiApiKey: keyShown(state.transcription.xaiApiKey),
+}));
 ipcMain.handle('set-transcription-config', (_e, cfg) => {
-  state.transcription = { ...state.transcription, ...(cfg || {}) };
+  // keys are ace2me.com's alone; a window can't set them
+  const { deepgramApiKey, xaiApiKey, ...rest } = (cfg && typeof cfg === 'object') ? cfg : {};
+  state.transcription = { ...state.transcription, ...rest };
   applyBuiltinKeys();
   saveState();
 });
@@ -3818,26 +4062,22 @@ function getMeetingConfig() {
   const type = normalizeMeetingType(m.type || m.hiringType);
   return { kind: MEETING_TYPES[type].kind, type };
 }
-// Who said what is worked out only in team meetings: the voices told apart by
-// the transcription (diarize) and named from the meeting screen. In a hiring
-// call everything the other side says is "Interviewer": no voice separation,
-// no screen watching, no name reads.
+// Voice separation and speaker names are for team meetings only. In a hiring
+// call every line is the interviewer.
 function speakerNamesOn() { return getMeetingConfig().kind === 'team'; }
 ipcMain.handle('get-meeting-config', () => getMeetingConfig());
 ipcMain.handle('set-meeting-config', (_e, cfg) => {
   cfg = cfg || {};
+  const wasNames = speakerNamesOn();
   const type = normalizeMeetingType(cfg.type || cfg.hiringType || getMeetingConfig().type);
   const changed = getMeetingConfig().type !== type;
-  const wasNames = speakerNamesOn();
   state.meeting = { kind: MEETING_TYPES[type].kind, type };
-  // Switched between hiring and team during transcription: names start or stop
-  // at once; voice separation follows at the next connection.
+  // Switched between hiring and team during transcription: names start or stop.
   if (wasNames !== speakerNamesOn() && (deepgramActive || xaiActive)) {
     if (speakerNamesOn()) startSpeakerWatch(); else stopSpeakerWatch();
   }
   // A new meeting type picks its models (unless that is switched off).
   if (changed && applyAutoModels()) emitAnswerConfig();
-  if (changed && preparedAnswers.run) prepareAnswers().catch(() => {});
   saveState();
   schedulePromptCacheWarm();
   return getMeetingConfig();
@@ -3851,37 +4091,27 @@ let deepgramReconnectTimer = null;
 let deepgramReconnectAttempts = 0;
 
 // Audio that arrives while a Deepgram socket is down (a drop, a reconnect) is
-// kept, up to 30 s, and sent first once the socket is back: a dropped
+// kept, up to 20 s, and sent first once the socket is back: a dropped
 // connection then delays those words instead of losing them.
 const DG_BYTES_PER_MS = 32; // 16 kHz, mono, 16-bit
-const DG_BACKLOG_MAX = 30000 * DG_BYTES_PER_MS;
-const dgLen = (buf) => (buf && (buf.byteLength || buf.length)) || 0;
+const DG_BACKLOG_MAX = 20000 * DG_BYTES_PER_MS;
 function makeAudioBacklog() {
   return {
     parts: [], bytes: 0,
     push(buf) {
-      const n = dgLen(buf);
+      const n = (buf && (buf.byteLength || buf.length)) || 0;
       if (!n) return;
       this.parts.push(buf);
       this.bytes += n;
-      this.trim();
+      while (this.bytes > DG_BACKLOG_MAX && this.parts.length) {
+        const d = this.parts.shift();
+        this.bytes -= (d.byteLength || d.length || 0);
+      }
     },
-    // Audio from before the drop that Deepgram never confirmed: it goes
-    // ahead of what was kept since.
-    prepend(bufs) {
-      if (!bufs.length) return;
-      this.parts = bufs.concat(this.parts);
-      this.bytes = this.parts.reduce((s, p) => s + dgLen(p), 0);
-      this.trim();
-    },
-    trim() {
-      while (this.bytes > DG_BACKLOG_MAX && this.parts.length) this.bytes -= dgLen(this.parts.shift());
-    },
-    // Sends what was kept (noting it in sent, the new socket's log); returns
-    // how many milliseconds of audio that was.
-    flush(ws, sent) {
+    // Sends what was kept; returns how many milliseconds of audio that was.
+    flush(ws) {
       const ms = Math.round(this.bytes / DG_BYTES_PER_MS);
-      for (const p of this.parts) { try { ws.send(p); if (sent) sent.push(p); } catch {} }
+      for (const p of this.parts) { try { ws.send(p); } catch {} }
       this.clear();
       return ms;
     },
@@ -3890,93 +4120,19 @@ function makeAudioBacklog() {
 }
 const deepgramBacklog = makeAudioBacklog();
 const micDgBacklog = makeAudioBacklog();
-
-// Audio sent on the open socket that Deepgram has not yet returned as final
-// text. A socket can die while it still looks open (a lost network often
-// leaves it so for seconds), and what went into it meanwhile was lost: those
-// words never came back. On a drop it is now sent again on the next socket,
-// from the end of the last final text, so nothing is lost and nothing shown
-// twice. Offsets are bytes since the socket opened, which is Deepgram's clock
-// (its start/duration seconds) times DG_BYTES_PER_MS.
-function makeSentLog() {
-  return {
-    parts: [], end: 0, confirmed: 0,
-    reset() { this.parts = []; this.end = 0; this.confirmed = 0; },
-    push(buf) {
-      const n = dgLen(buf);
-      if (!n) return;
-      this.parts.push({ at: this.end, buf });
-      this.end += n;
-      this.trim();
-    },
-    // Deepgram returned final text up to sec seconds of this socket's audio.
-    confirm(sec) {
-      if (!Number.isFinite(sec)) return;
-      const b = Math.floor(sec * 1000 * DG_BYTES_PER_MS);
-      if (b > this.confirmed) { this.confirmed = b; this.trim(); }
-    },
-    trim() {
-      while (this.parts.length) {
-        const p = this.parts[0];
-        if (p.at + dgLen(p.buf) <= this.confirmed || this.end - p.at > DG_BACKLOG_MAX) this.parts.shift();
-        else break;
-      }
-    },
-    unconfirmed() { return this.parts.filter((p) => p.at + dgLen(p.buf) > this.confirmed).map((p) => p.buf); },
-  };
-}
-const deepgramSent = makeSentLog();
-const micDgSent = makeSentLog();
-// On a drop: what the dead socket never confirmed goes to the front of the
-// backlog. Returns how many milliseconds that was, for the log.
-function dgReplayUnconfirmed(sent, backlog) {
-  const lost = sent.unconfirmed();
-  sent.reset();
-  backlog.prepend(lost);
-  return Math.round(lost.reduce((s, p) => s + dgLen(p), 0) / DG_BYTES_PER_MS);
-}
-// TCP settings for an opened socket: no batching of the small audio packets,
-// and the system's own keep-alive so a VPN or router does not forget the
-// connection.
-function dgTuneSocket(ws) {
-  try { ws._socket.setNoDelay(true); } catch {}
-  try { ws._socket.setKeepAlive(true, 5000); } catch {}
-}
-// A handshake refused for a reason that passes (busy, overloaded, a gateway
-// timeout) is tried again; a bad key, no credits or bad settings are not.
-const dgTransientStatus = (status) => status === 408 || status === 429 || status >= 500;
-
 // A connection attempt that has not opened by then is dropped and retried.
-// Through the VPN the TLS handshake alone took up to 5 s, so attempts that
-// would have succeeded were cut at 6 s.
-const DG_CONNECT_TIMEOUT_MS = 10000;
-// After a drop: one retry at once, then after 1 s, 2 s, and then every 3 s for
-// as long as it takes (the network may be gone for a while). The renderer also
-// asks for a retry at once when the computer's network comes back
-// ('network-online'), and the computer waking up does the same.
-function dgRetryDelay(attempt) { return [0, 1000, 2000][attempt] ?? 3000; }
-// While a socket is open it is checked every 2 s with a ping. Deepgram answers
+const DG_CONNECT_TIMEOUT_MS = 6000;
+// After a drop: one retry at once, then one every 5 s for as long as it takes
+// (the network may be gone for a while). The renderer also asks for a retry
+// at once when the computer's network comes back ('network-online').
+const DG_RETRY_MS = 5000;
+// While a socket is open it is checked every 5 s with a ping. Deepgram answers
 // a ping in under a second and sends about one message a second even during
-// silence, so 8 s with neither means the connection is dead though it has not
+// silence, so 12 s with neither means the connection is dead though it has not
 // closed (a lost network often leaves the socket looking open): end it, and
-// the close handler reconnects and sends the unconfirmed audio again.
-const DG_WATCH_MS = 2000;
-const DG_DEAD_MS = 8000;
-// Deepgram closes a socket (1011, NET-0001) that has had neither audio nor a
-// text message for 10 s. The keep-alive went every 7 s, which left 3 s for it
-// to cross the network; through the VPN a late one was enough for a drop while
-// the page's audio paused. Deepgram suggests every 3-5 s.
-const DG_KEEPALIVE_MS = 3000;
-// When the page last sent audio for each socket, and why a socket closed, for
-// the log: tells a network stall (audio kept coming, bytes stuck unsent) from
-// the page's audio stopping (nothing came for seconds).
-const dgAudioAt = { sys: 0, mic: 0 };
-function dgCloseDetail(ws, which) {
-  const since = dgAudioAt[which] ? Math.round((Date.now() - dgAudioAt[which]) / 100) / 10 + ' s' : 'never';
-  const unsent = (ws && ws.bufferedAmount) || 0;
-  return ` | last audio from the page ${since} ago, ${unsent} bytes still unsent`
-    + (unsent > 64000 ? ' (network stalled)' : (dgAudioAt[which] && Date.now() - dgAudioAt[which] > 5000 ? ' (the page stopped sending audio)' : ''));
-}
+// the close handler reconnects.
+const DG_WATCH_MS = 5000;
+const DG_DEAD_MS = 12000;
 function watchDeepgramSocket(ws, label) {
   let alive = Date.now();
   const mark = () => { alive = Date.now(); };
@@ -4006,45 +4162,16 @@ function clearDeepgramTimers() {
   if (deepgramReconnectTimer) { clearTimeout(deepgramReconnectTimer); deepgramReconnectTimer = null; }
 }
 
-// After sleep the open sockets are dead but look alive until the 8 s check:
-// on waking, they are ended at once and the close handlers
-// reconnect, sending the unconfirmed audio again. A socket with nothing to
-// end is started now instead of at its next retry.
-let dgPowerWatched = false;
-function watchPowerForDeepgram() {
-  if (dgPowerWatched) return;
-  dgPowerWatched = true;
-  const { powerMonitor } = require('electron');
-  const wake = (why) => {
-    if (deepgramActive) {
-      if (deepgramWs) { appendLogLine(`[deepgram] computer ${why} — reconnecting`); try { deepgramWs.terminate(); } catch {} }
-      else if (deepgramAuth) {
-        if (deepgramReconnectTimer) { clearTimeout(deepgramReconnectTimer); deepgramReconnectTimer = null; }
-        startDeepgramWs(deepgramAuth.apiKey, deepgramAuth.language);
-      }
-    }
-    if (micDgActive) {
-      if (micDgWs) { try { micDgWs.terminate(); } catch {} }
-      else if (micDgAuth) {
-        if (micDgRetryTimer) { clearTimeout(micDgRetryTimer); micDgRetryTimer = null; }
-        startMicDeepgramWs(micDgAuth.apiKey, micDgAuth.language);
-      }
-    }
-  };
-  powerMonitor.on('resume', () => wake('woke up'));
-}
-
-// minDelay: at least this long before the next attempt (a busy service).
-function scheduleDeepgramReconnect(minDelay = 0) {
+function scheduleDeepgramReconnect() {
   if (!deepgramActive || deepgramReconnectTimer || deepgramWs) return;
-  // At once the first time (the audio meanwhile is kept), then soon after.
-  const delay = Math.max(minDelay, dgRetryDelay(deepgramReconnectAttempts));
+  // At once the first time (the audio meanwhile is kept), then every 5 s.
+  const delay = deepgramReconnectAttempts === 0 ? 0 : DG_RETRY_MS;
   deepgramReconnectAttempts++;
   if (deepgramReconnectAttempts === 1) {
-    appendLogLine('[deepgram] connection lost — reconnecting now, then every few seconds until it is back');
+    appendLogLine('[deepgram] connection lost — reconnecting now, then every 5 s until it is back');
     if (!deepgramLost) { deepgramLost = true; notifyTranscriptConnection('lost'); }
-  } else if (deepgramReconnectAttempts % 10 === 0) {
-    appendLogLine(`[deepgram] still not connected after ${deepgramReconnectAttempts} attempts — retrying every 3 s`);
+  } else if (deepgramReconnectAttempts % 6 === 0) {
+    appendLogLine(`[deepgram] still not connected after ${deepgramReconnectAttempts} attempts — retrying every 5 s`);
   }
   deepgramReconnectTimer = setTimeout(() => {
     deepgramReconnectTimer = null;
@@ -4166,7 +4293,7 @@ ipcMain.on('speaker-watch-grabbed', (_e, r) => {
 });
 
 function startSpeakerWatch() {
-  if (!speakerNamesOn()) return; // hiring call: no names (see speakerNamesOn)
+  if (!speakerNamesOn()) return; // hiring call: no names
   if (watchWin && !watchWin.isDestroyed()) return;
   if (!macScreenPermissionWarn()) return;
   speakerTracker.reset();
@@ -4224,7 +4351,6 @@ function parseTranscriptAlternative(alt, window, isFinal) {
   const text = transcript || words.map((w) => w.punctuated_word || w.word || '').join(' ').replace(/\s+/g, ' ').trim();
   if (!text) return { text: '', labeled: '', speaker: 0, turns: [] };
   lastSpeechAt = Date.now();
-  // Hiring call: one side, no names.
   if (!speakerNamesOn()) return { text, labeled: 'Interviewer: ' + text, speaker: 0, turns: [{ speaker: 0, who: 'Interviewer', text }] };
   const runs = voiceRuns(words);
   if (!runs.length) {
@@ -4253,38 +4379,12 @@ function parseTranscriptAlternative(alt, window, isFinal) {
 
 // A final line spoken while nobody was framed waits briefly for the caption
 // read that is under way, so it gets the caption's name instead of the fallback.
-// The wait is short and only for a voice that has no name yet: every line
-// behind it in the queue waits too, live words included, so the 2 s this used
-// to allow showed as a transcript running 2 s late whenever no tile was framed.
-const SPEAKER_NAME_WAIT_MS = 250;
-async function settleSpeakerName(window, isFinal, alt) {
+async function settleSpeakerName(window, isFinal) {
   if (!isFinal || !window || !captionRead || !speakerNamesOn()) return;
   if (speakerTracker.nameAt(window[0] + SCREEN_LAG_MS, window[1] + SCREEN_LAG_MS)) return;
-  const runs = voiceRuns((alt && alt.words) || []);
-  if (runs.length && runs.every((r) => voiceNames.nameFor(r.voice))) return;
-  await Promise.race([captionRead, new Promise((r) => setTimeout(r, SPEAKER_NAME_WAIT_MS))]);
+  await Promise.race([captionRead, new Promise((r) => setTimeout(r, 2000))]);
 }
 let transcriptQueue = Promise.resolve();   // keeps lines in order across that wait
-
-// How late the transcript runs, in the activity log once a minute while there
-// is speech: from a word being spoken (the service's clock) to its final text
-// arriving here, and how long lines then waited in the queue above.
-const transcriptLag = { arrive: [], queued: [], timer: null };
-function noteTranscriptLag(spokenEndAt, arrivedAt) {
-  if (spokenEndAt) transcriptLag.arrive.push(arrivedAt - spokenEndAt);
-  transcriptLag.queued.push(Date.now() - arrivedAt);
-  if (transcriptLag.timer) return;
-  transcriptLag.timer = setTimeout(() => {
-    transcriptLag.timer = null;
-    const stat = (a) => {
-      if (!a.length) return '-';
-      const s = a.slice().sort((x, y) => x - y);
-      return `median ${Math.round(s[s.length >> 1])} ms, worst ${Math.round(s[s.length - 1])} ms`;
-    };
-    appendLogLine(`[transcript] ${transcriptLag.queued.length} final lines in the last minute | spoken to received: ${stat(transcriptLag.arrive)} | waiting in the app: ${stat(transcriptLag.queued)}`);
-    transcriptLag.arrive = []; transcriptLag.queued = [];
-  }, 60000);
-}
 
 function startDeepgramWs(apiKey, language) {
   if (deepgramWs) return;
@@ -4293,10 +4393,7 @@ function startDeepgramWs(apiKey, language) {
     sample_rate: '16000', channels: '1',
     smart_format: 'true', interim_results: 'true',
     // VAD + utterance-end events for smoother, more natural finalization.
-    // endpointing: the pause that closes a piece of speech as final text.
-    // utterance_end_ms: the silence that ends the utterance (1000 is the
-    // service's minimum).
-    vad_events: 'true', endpointing: '100', no_delay: 'true', utterance_end_ms: '1000',
+    vad_events: 'true', endpointing: '150', no_delay: 'true', utterance_end_ms: '1500',
     punctuate: 'true',
   });
   // Each word comes with the voice that said it, for the speaker names: team
@@ -4305,13 +4402,9 @@ function startDeepgramWs(apiKey, language) {
   params.set('model', 'nova-2');
   params.set('language', (language && language !== 'auto') ? language : 'en-US');
 
-  const url = `wss://api.deepgram.com/v1/listen?${params}`;
-  const localAddress = dgLocalAddress('deepgram');
-  const ws = new WebSocket(url, {
+  const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, {
     headers: { Authorization: `Token ${apiKey}` },
-    ...(localAddress ? { localAddress } : {}),
   });
-  ws._aceBypass = !!localAddress;
   deepgramWs = ws;
   const startedAt = Date.now();
   const connectTimer = setTimeout(() => {
@@ -4326,15 +4419,12 @@ function startDeepgramWs(apiKey, language) {
     clearTimeout(connectTimer);
     if (deepgramWs !== ws) { try { ws.close(); } catch {} return; } // replaced meanwhile
     opened = true;
-    dgTuneSocket(ws);
     // The audio kept while the socket was down goes first; Deepgram's clock
     // starts at its first byte, so the session clock starts that much earlier.
-    deepgramSent.reset();
-    const heldMs = deepgramBacklog.flush(ws, deepgramSent);
+    const heldMs = deepgramBacklog.flush(ws);
     deepgramT0 = Date.now() - heldMs;
     voiceNames.reset(); // a new connection numbers the voices afresh
-    dgBypassFails = 0;
-    appendLogLine(`[deepgram] connected in ${Date.now() - startedAt} ms` + (ws._aceBypass ? ' around the VPN' : '') + (heldMs > 200 ? ` (sent ${heldMs} ms of audio held meanwhile)` : ''));
+    appendLogLine(`[deepgram] connected in ${Date.now() - startedAt} ms` + (heldMs > 200 ? ` (sent ${heldMs} ms of audio held meanwhile)` : ''));
     deepgramReconnectAttempts = 0;
     watchDeepgramSocket(ws, 'deepgram');
     if (deepgramLost) { deepgramLost = false; notifyTranscriptConnection('connected'); }
@@ -4345,20 +4435,46 @@ function startDeepgramWs(apiKey, language) {
       if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) {
         try { deepgramWs.send(JSON.stringify({ type: 'KeepAlive' })); } catch {}
       }
-    }, DG_KEEPALIVE_MS);
+    }, 7000);
   });
   deepgramWs.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
-      if (msg.type === 'UtteranceEnd') { emitUtteranceEnd(); return; }
+      if (msg.type === 'UtteranceEnd') {
+        latencyMark('uttEndAt');
+        // Speech-gap boundary — tells the renderer to flush any pending interim.
+        transcriptQueue = transcriptQueue.then(() => {
+          if (win && !win.isDestroyed()) win.webContents.send('transcript-utterance-end');
+        }).catch(() => {});
+        return;
+      }
       if (msg.type !== 'Results') return;
-      // Final text up to here: that audio need not be sent again after a drop.
-      if (msg.is_final && deepgramWs === ws) deepgramSent.confirm(msg.start + msg.duration);
       const window = Number.isFinite(msg.start) && Number.isFinite(msg.duration)
         ? [deepgramT0 + msg.start * 1000, deepgramT0 + (msg.start + msg.duration) * 1000] : null;
-      // The short pause (endpointing, 100 ms): the hidden answer starts
-      // then instead of at UtteranceEnd (1 s of silence).
-      emitTranscript(msg.channel?.alternatives?.[0], window, !!msg.is_final, !!(msg.is_final && msg.speech_final));
+      lastSpeechAt = Date.now();
+      transcriptQueue = transcriptQueue.then(() => settleSpeakerName(window, !!msg.is_final)).then(() => {
+        const parsed = parseTranscriptAlternative(msg.channel?.alternatives?.[0], window, !!msg.is_final);
+        if (!parsed.text) return;
+        if (msg.is_final) {
+          sessionLog.push({ ts: Date.now(), kind: 'voice', text: parsed.labeled || parsed.text });
+          latencySpeech(window ? window[1] : Date.now());
+        }
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('transcript-live', {
+            text: parsed.text,
+            labeled: parsed.labeled,
+            speaker: parsed.speaker,
+            turns: parsed.turns || [],
+            isFinal: !!msg.is_final,
+          });
+          // The short pause (endpointing, 150 ms): the hidden answer starts
+          // now instead of at UtteranceEnd (1.5 s of silence).
+          if (msg.is_final && msg.speech_final) {
+            latencyMark('pauseAt');
+            win.webContents.send('transcript-speech-final');
+          }
+        }
+      }).catch(() => {});
     } catch {}
   });
   // A rejected WS handshake (bad key, bad params, no credits) comes through here
@@ -4372,15 +4488,6 @@ function startDeepgramWs(apiKey, language) {
       try { const j = JSON.parse(body); detail = j.err_msg || j.reason || j.message || ''; } catch {}
       const msg = friendlyDeepgramError(res.statusCode, detail);
       appendLogLine(`[deepgram] handshake ${res.statusCode}: ${body.slice(0, 200)}`);
-      // Busy or failing for the moment: keep the audio and try again. Before,
-      // any refusal stopped transcription for the rest of the call.
-      if (dgTransientStatus(res.statusCode)) {
-        clearTimeout(connectTimer);
-        try { ws.terminate(); } catch {}
-        if (deepgramWs === ws) deepgramWs = null;
-        scheduleDeepgramReconnect(res.statusCode === 429 ? 5000 : 2000);
-        return;
-      }
       if (win && !win.isDestroyed()) win.webContents.send('transcript-live-error', msg);
       // A handshake rejection (bad key / params / no credits) won't fix itself —
       // stop so we don't reconnect-loop against a 401.
@@ -4406,70 +4513,11 @@ function startDeepgramWs(apiKey, language) {
     if (deepgramWs !== ws) return;
     if (deepgramKeepAlive) { clearInterval(deepgramKeepAlive); deepgramKeepAlive = null; }
     deepgramWs = null;
-    if (!opened && ws._aceBypass && ++dgBypassFails === 2) appendLogLine('[deepgram] connecting around the VPN failed twice — going through the VPN until a connection works');
-    // The audio this socket took but never returned as final text is sent
-    // again on the next one.
-    const replayMs = deepgramActive && opened ? dgReplayUnconfirmed(deepgramSent, deepgramBacklog) : (deepgramSent.reset(), 0);
     // Why it closed, for the log (Deepgram puts its error code in the reason).
-    if (deepgramActive && opened) appendLogLine(`[deepgram] closed: ${code}${reason && reason.length ? ' ' + reason.toString().slice(0, 160) : ''}${dgCloseDetail(ws, 'sys')}${replayMs > 200 ? ` | ${replayMs} ms of audio it never answered will be sent again` : ''}`);
+    if (deepgramActive && opened) appendLogLine(`[deepgram] closed: ${code}${reason && reason.length ? ' ' + reason.toString().slice(0, 160) : ''}`);
     // If the user is still recording, transparently reconnect.
     if (deepgramActive && !handshakeFailed) scheduleDeepgramReconnect();
   });
-}
-
-// One piece of meeting speech to the page, in order (see transcriptQueue).
-// speechFinal: they paused, so the hidden answer may start.
-function emitTranscript(alt, window, isFinal, speechFinal) {
-  lastSpeechAt = Date.now();
-  const arrivedAt = lastSpeechAt;
-  transcriptQueue = transcriptQueue.then(() => settleSpeakerName(window, isFinal, alt)).then(() => {
-    const parsed = parseTranscriptAlternative(alt, window, isFinal);
-    if (!parsed.text) return;
-    if (isFinal) {
-      noteTranscriptLag(window ? window[1] : 0, arrivedAt);
-      sessionLog.push({ ts: Date.now(), kind: 'voice', text: parsed.labeled || parsed.text });
-      latencySpeech(window ? window[1] : Date.now());
-    }
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('transcript-live', {
-        text: parsed.text,
-        labeled: parsed.labeled,
-        speaker: parsed.speaker,
-        turns: parsed.turns || [],
-        isFinal,
-      });
-      if (speechFinal) {
-        latencyMark('pauseAt');
-        win.webContents.send('transcript-speech-final');
-      }
-    }
-  }).catch(() => {});
-}
-// The end of what they said: the page flushes any pending live words.
-function emitUtteranceEnd() {
-  latencyMark('uttEndAt');
-  transcriptQueue = transcriptQueue.then(() => {
-    if (win && !win.isDestroyed()) win.webContents.send('transcript-utterance-end');
-  }).catch(() => {});
-}
-
-// ── Around the VPN ───────────────────────────────────────────────────────────
-// With the setting on, the transcription sockets leave from the computer's own
-// network adapter instead of the VPN's (its address as the local address;
-// Windows then routes them by that adapter). Faster and steadier through
-// Astrill in a test, but Deepgram then sees this network's real address.
-// When it fails to connect twice in a row, it is dropped until a connection
-// works again.
-let dgBypassFails = 0;
-function dgLocalAddress(label) {
-  if (!state.transcription || !state.transcription.bypassVpn) return null;
-  if (dgBypassFails >= 2) return null;
-  const own = lanAddresses().find((a) => !a.virtual);
-  if (!own) {
-    appendLogLine(`[${label}] no network adapter outside the VPN found — connecting through the VPN`);
-    return null;
-  }
-  return own.address;
 }
 
 function friendlyDeepgramError(status, detail) {
@@ -4608,7 +4656,8 @@ function startXaiWs(apiKey, language) {
   });
 }
 
-ipcMain.handle('start-xai-stream', (_e, { apiKey, language }) => {
+ipcMain.handle('start-xai-stream', (_e, { language } = {}) => {
+  const apiKey = state.transcription.xaiApiKey; // ace2me.com's, never the window's
   xaiActive = true;
   startSpeakerWatch();
   xaiAuth = { apiKey, language };
@@ -4628,7 +4677,8 @@ ipcMain.handle('stop-xai-stream', () => {
   xaiReady = false;
 });
 
-ipcMain.handle('start-deepgram-stream', (_e, { apiKey, language }) => {
+ipcMain.handle('start-deepgram-stream', (_e, { language } = {}) => {
+  const apiKey = state.transcription.deepgramApiKey; // ace2me.com's, never the window's
   deepgramActive = true;
   startSpeakerWatch();
   deepgramAuth = { apiKey, language };
@@ -4636,9 +4686,6 @@ ipcMain.handle('start-deepgram-stream', (_e, { apiKey, language }) => {
   deepgramLost = false;
   clearDeepgramTimers();
   deepgramBacklog.clear();
-  deepgramSent.reset();
-  dgBypassFails = 0;
-  watchPowerForDeepgram();
   startDeepgramWs(apiKey, language);
 });
 ipcMain.handle('stop-deepgram-stream', () => {
@@ -4646,7 +4693,6 @@ ipcMain.handle('stop-deepgram-stream', () => {
   stopSpeakerWatch();
   clearDeepgramTimers();
   deepgramBacklog.clear();
-  deepgramSent.reset();
   if (deepgramLost) { deepgramLost = false; notifyTranscriptConnection('stopped'); }
   if (deepgramWs) {
     try { deepgramWs.send(JSON.stringify({ type: 'CloseStream' })); } catch {}
@@ -4655,8 +4701,7 @@ ipcMain.handle('stop-deepgram-stream', () => {
   }
 });
 ipcMain.on('audio-chunk', (_e, buf) => {
-  dgAudioAt.sys = Date.now();
-  if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) { deepgramWs.send(buf); deepgramSent.push(buf); }
+  if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) deepgramWs.send(buf);
   else if (deepgramActive) deepgramBacklog.push(buf); // reconnecting: keep it
   else if (xaiWs && xaiWs.readyState === WebSocket.OPEN && xaiReady) xaiWs.send(buf);
 });
@@ -4691,47 +4736,38 @@ function startMicDeepgramWs(apiKey, language) {
   });
   params.set('model', 'nova-2');
   params.set('language', (language && language !== 'auto') ? language : 'en-US');
-  const localAddress = dgLocalAddress('deepgram mic');
-  const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, { headers: { Authorization: `Token ${apiKey}` }, ...(localAddress ? { localAddress } : {}) });
-  ws._aceBypass = !!localAddress;
-  let micOpened = false;
+  const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, { headers: { Authorization: `Token ${apiKey}` } });
   micDgWs = ws;
   const connectTimer = setTimeout(() => { if (ws.readyState === WebSocket.CONNECTING) { try { ws.terminate(); } catch {} } }, DG_CONNECT_TIMEOUT_MS);
   micDgWs.on('open', () => {
     clearTimeout(connectTimer);
     if (micDgWs !== ws) { try { ws.close(); } catch {} return; } // replaced meanwhile
-    micOpened = true;
-    dgTuneSocket(ws);
-    micDgSent.reset();
-    micDgBacklog.flush(ws, micDgSent); // the voice heard while it was reconnecting
+    micDgBacklog.flush(ws); // the voice heard while it was reconnecting
     micDgAttempts = 0;
     watchDeepgramSocket(ws, 'deepgram mic');
     if (micDgKeepAlive) clearInterval(micDgKeepAlive);
-    micDgKeepAlive = setInterval(() => { if (micDgWs && micDgWs.readyState === WebSocket.OPEN) { try { micDgWs.send(JSON.stringify({ type: 'KeepAlive' })); } catch {} } }, DG_KEEPALIVE_MS);
+    micDgKeepAlive = setInterval(() => { if (micDgWs && micDgWs.readyState === WebSocket.OPEN) { try { micDgWs.send(JSON.stringify({ type: 'KeepAlive' })); } catch {} } }, 7000);
   });
   micDgWs.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
       if (msg.type !== 'Results') return;
-      if (msg.is_final && micDgWs === ws) micDgSent.confirm(msg.start + msg.duration);
       const alt = msg.channel && msg.channel.alternatives && msg.channel.alternatives[0];
       const text = String((alt && alt.transcript) || '').trim();
       if (text && win && !win.isDestroyed()) win.webContents.send('transcript-mic', { text, isFinal: !!msg.is_final });
     } catch {}
   });
-  micDgWs.on('close', (code, reason) => {
+  micDgWs.on('close', (code) => {
     clearTimeout(connectTimer);
     // Only the current socket reconnects (see the system-audio socket above).
     if (micDgWs !== ws) return;
     if (micDgKeepAlive) { clearInterval(micDgKeepAlive); micDgKeepAlive = null; }
     micDgWs = null;
-    if (!micOpened && ws._aceBypass) dgBypassFails++;
-    const replayMs = micDgActive ? dgReplayUnconfirmed(micDgSent, micDgBacklog) : (micDgSent.reset(), 0);
     if (micDgActive && !micDgRetryTimer) {
-      // At once the first time, then soon after, until it is back.
-      const delay = dgRetryDelay(micDgAttempts);
+      // At once the first time, then every 5 s until it is back.
+      const delay = micDgAttempts === 0 ? 0 : DG_RETRY_MS;
       micDgAttempts++;
-      if (micDgAttempts === 1) appendLogLine(`[deepgram mic] closed: ${code}${reason && reason.length ? ' ' + reason.toString().slice(0, 120) : ''} — reconnecting now, then every few seconds${dgCloseDetail(ws, 'mic')}${replayMs > 200 ? ` | ${replayMs} ms of audio it never answered will be sent again` : ''}`);
+      if (micDgAttempts === 1) appendLogLine(`[deepgram mic] closed: ${code} — reconnecting now, then every 5 s`);
       micDgRetryTimer = setTimeout(() => {
         micDgRetryTimer = null;
         if (micDgActive && !micDgWs && micDgAuth) startMicDeepgramWs(micDgAuth.apiKey, micDgAuth.language);
@@ -4739,22 +4775,7 @@ function startMicDeepgramWs(apiKey, language) {
     }
   });
   micDgWs.on('error', () => {});
-  micDgWs.on('unexpected-response', (_r, res) => {
-    res.resume();
-    clearTimeout(connectTimer);
-    appendLogLine(`[deepgram mic] handshake ${res.statusCode}`);
-    try { ws.terminate(); } catch {}
-    if (micDgWs === ws) micDgWs = null;
-    // Busy or failing for the moment: try again (before, any refusal ended
-    // the mic transcript for the rest of the call). Anything else stops it.
-    if (!dgTransientStatus(res.statusCode)) { micDgActive = false; return; }
-    if (micDgActive && !micDgRetryTimer) {
-      micDgRetryTimer = setTimeout(() => {
-        micDgRetryTimer = null;
-        if (micDgActive && !micDgWs && micDgAuth) startMicDeepgramWs(micDgAuth.apiKey, micDgAuth.language);
-      }, res.statusCode === 429 ? 5000 : 2000);
-    }
-  });
+  micDgWs.on('unexpected-response', (_r, res) => { res.resume(); micDgActive = false; try { if (micDgWs) micDgWs.terminate(); } catch {} micDgWs = null; });
 }
 ipcMain.handle('extract-jd-info', async () => {
   try {
@@ -4775,20 +4796,19 @@ ipcMain.handle('extract-jd-info', async () => {
     return { company: String((d && d.company) || '').trim(), role: String((d && d.role) || '').trim() };
   } catch { return { company: '', role: '' }; }
 });
-ipcMain.handle('start-mic-deepgram-stream', (_e, { apiKey, language } = {}) => { micDgActive = true; micDgAuth = { apiKey, language }; micDgAttempts = 0; micDgBacklog.clear(); micDgSent.reset(); watchPowerForDeepgram(); startMicDeepgramWs(apiKey, language); });
+ipcMain.handle('start-mic-deepgram-stream', (_e, { language } = {}) => { const apiKey = state.transcription.deepgramApiKey; micDgActive = true; micDgAuth = { apiKey, language }; micDgAttempts = 0; micDgBacklog.clear(); startMicDeepgramWs(apiKey, language); });
 ipcMain.handle('stop-mic-deepgram-stream', () => {
   micDgActive = false;
   micDgBacklog.clear();
-  micDgSent.reset();
   if (micDgRetryTimer) { clearTimeout(micDgRetryTimer); micDgRetryTimer = null; }
   if (micDgKeepAlive) { clearInterval(micDgKeepAlive); micDgKeepAlive = null; }
   if (micDgWs) { try { micDgWs.send(JSON.stringify({ type: 'CloseStream' })); } catch {} try { micDgWs.close(); } catch {} micDgWs = null; }
 });
 ipcMain.on('mic-audio-chunk', (_e, buf) => {
-  dgAudioAt.mic = Date.now();
-  if (micDgWs && micDgWs.readyState === WebSocket.OPEN) { micDgWs.send(buf); micDgSent.push(buf); }
+  if (micDgWs && micDgWs.readyState === WebSocket.OPEN) micDgWs.send(buf);
   else if (micDgActive) micDgBacklog.push(buf); // reconnecting: keep it
 });
+ipcMain.on('session-log-add', (_e, entry) => { sessionLog.push(entry); });
 ipcMain.on('session-log-add', (_e, entry) => { sessionLog.push(entry); });
 ipcMain.handle('clear-session-log', () => { sessionLog = []; });
 // Where each finished interview's folder goes.
@@ -4889,6 +4909,13 @@ async function recoverRecordings() {
       const folder = uniqueDir(path.join(sessionsRootDir(), sessionStamp() + '-Unsaved recording'));
       for (const f of left) await moveFile(path.join(dir, f), path.join(folder, f));
       appendLogLine('[recording] recovered ' + left.length + ' recording(s) into ' + folder);
+      // Ace was closed without End (killed, crashed, power off): upload what was
+      // recovered too, and show its link like any other session's.
+      if (!state.transcription || state.transcription.uploadSession !== false) {
+        uploadSessionFolder(folder).then((r) => {
+          if (r && r.ok && r.link && win && !win.isDestroyed()) win.webContents.send('pending-link', r.link);
+        });
+      }
     }
     await fs.promises.rmdir(dir).catch(() => {});
   } catch {}
@@ -4957,7 +4984,13 @@ ipcMain.handle('get-pending-link', () => String(state.pendingUploadLink || ''));
 ipcMain.handle('set-pending-link', (_e, link) => { state.pendingUploadLink = String(link || ''); saveState(); });
 ipcMain.handle('clear-pending-link', () => { state.pendingUploadLink = ''; saveState(); });
 
-ipcMain.handle('upload-session-bundle', async (_e, folder) => {
+// Closing Ace (X) while an upload runs no longer cuts it off: the windows hide,
+// the upload finishes, the link goes to the clipboard and a notification, and
+// it is kept (pendingUploadLink) to be shown on the next start. Then Ace quits.
+let uploadsRunning = 0;
+let quitWhenUploaded = false;
+async function uploadSessionFolder(folder) {
+  uploadsRunning++;
   try {
     const r = await uploadFolder(folder, (p) => {
       if (win && !win.isDestroyed()) win.webContents.send('upload-progress', p);
@@ -4967,10 +5000,41 @@ ipcMain.handle('upload-session-bundle', async (_e, folder) => {
       try { await fs.promises.writeFile(path.join(folder, 'gofile-link.txt'), r.link + '\n', 'utf8'); } catch {}
       const s = currentSession && currentSession();
       if (s) { s.uploadLink = r.link; saveSessions(); }
-    }
+      // kept until the user presses Copy link, whatever happens to the window
+      state.pendingUploadLink = r.link;
+      saveState();
+      appendLogLine('[upload] ' + r.link);
+      if (quitWhenUploaded) {
+        try { clipboard.writeText(r.link); } catch {}
+        try {
+          const { Notification } = require('electron');
+          if (Notification.isSupported()) new Notification({ title: 'Ace: session uploaded', body: 'Link copied to the clipboard: ' + r.link }).show();
+        } catch {}
+      }
+    } else if (!r.ok) appendLogLine('[upload] failed: ' + (r.error || 'unknown'));
     return r;
-  } catch (e) { return { ok: false, error: e.message }; }
+  } catch (e) {
+    appendLogLine('[upload] failed: ' + e.message);
+    return { ok: false, error: e.message };
+  } finally {
+    uploadsRunning--;
+    if (quitWhenUploaded && uploadsRunning <= 0) setTimeout(() => app.quit(), 1500); // let the notification show
+  }
+}
+ipcMain.handle('upload-session-bundle', (_e, folder) => uploadSessionFolder(folder));
+// Any other way of quitting (Alt+F4, the taskbar) waits for the upload as well.
+app.prependListener('before-quit', (e) => {
+  if (uploadsRunning > 0 && !quitWhenUploaded) { e.preventDefault(); quitWhenIdle(); }
 });
+function quitWhenIdle() {
+  if (uploadsRunning > 0) {
+    quitWhenUploaded = true;
+    appendLogLine('[upload] Ace closes when the upload finishes');
+    for (const w of BrowserWindow.getAllWindows()) { try { if (!w.isDestroyed()) w.hide(); } catch {} }
+    return;
+  }
+  app.quit();
+}
 
 ipcMain.handle('save-session-log', async (_e, suggestedName) => {
   if (sessionLog.length === 0) return null;
@@ -5842,8 +5906,8 @@ function publicAnswerConfig() {
     model: slots.answer,
     slots,
     autoModels: !state.answer || state.answer.autoModels !== false,
-    apiKey: keys.xai || ((state.answer && state.answer.apiKey) || ''),
-    keys,
+    apiKey: keyShown(keys.xai || (state.answer && state.answer.apiKey)),
+    keys: Object.fromEntries(Object.entries(keys).map(([k, v]) => [k, keyShown(v)])),
     models,
     providers: providerList(),
     fallbackModels: provider.fallbackModels.slice(),
@@ -5860,17 +5924,10 @@ function applyAnswerConfig(cfg) {
   if (!cfg || typeof cfg !== 'object') return publicAnswerConfig();
   const prev = state.answer || { ...DEFAULT_STATE.answer };
   const next = { ...prev };
-  if (cfg.keys && typeof cfg.keys === 'object') {
-    next.keys = { ...(prev.keys || {}), ...cfg.keys };
-  }
+  // cfg.keys / cfg.apiKey are ignored: the keys are ace2me.com's alone.
   if (cfg.models && typeof cfg.models === 'object') {
     next.models = { ...(prev.models || {}), ...cfg.models };
   }
-  if (cfg.apiKey !== undefined) {
-    next.apiKey = String(cfg.apiKey || '');
-    next.keys = { ...(next.keys || {}), xai: next.apiKey };
-  }
-  if (next.keys && next.keys.xai !== undefined) next.apiKey = next.keys.xai;
   delete next.activePromptId;
 
   const nextProvider = (cfg.provider && PROVIDERS[cfg.provider]) ? cfg.provider : (next.provider || 'openai');
@@ -6092,148 +6149,6 @@ function latencyReport(how, sendAt, shownAt, model) {
   appendLogLine(`[latency] ${how} model=${model} | after their last word: final text ${rel(latency.finalAt)}, short pause ${rel(latency.pauseAt)}, utterance end ${rel(latency.uttEndAt)}, hidden answer started ${rel(latency.specStart)} first words ${rel(latency.specFirst)}, Send ${rel(sendAt)}, on screen ${rel(shownAt)} (${shownAt - sendAt}ms after Send)`);
 }
 
-// ── Answers written before the question is asked ────────────────────────────
-// When an interview starts (and when its meeting type changes), the answers to
-// the questions most interviews of that type ask, and to the ones this job
-// description makes likely, are written in the background with the model the
-// meeting type uses for spoken answers. When the interviewer then asks one of
-// them, Send shows it at once (labelled as prepared; ↻ writes a fresh one).
-const PREPARED_COMMON = [
-  { q: 'Tell me about yourself.', p: /\b(tell|walk)\s+(me|us)\b.{0,30}\b(yourself|your (background|career|experience|journey|resume|cv))\b|\bintroduce yourself\b/i },
-  { q: 'Why are you interested in this role and this company?', p: /\bwhy (are you interested|do you want to (work|join)|did you apply|this (role|company|position|job))|\bwhat (attracted|attracts|interests|excites) you\b|\binterested in (this|the) (role|position|company|job)\b/i },
-  { q: 'What are your salary expectations?', p: /\bsalary|\bcompensation\b|\bpay (range|expectations?)\b|\bhow much (are you|do you) (expect|want|looking)/i },
-  { q: 'Why are you looking to leave your current job?', p: /\bwhy (are you|did you|do you want to) (leav|look|mov)|\breason (for|you'?re) (leaving|looking)\b|\blooking for a (new|change)\b/i },
-  { q: 'What are your greatest strengths?', p: /\b(greatest|biggest|key|main|top) strengths?\b|\bwhat are you (really )?(good|best) at\b/i },
-  { q: 'What is your biggest weakness?', p: /\bweakness(es)?\b|\barea(s)? (for|of|to) (improvement|improve)\b/i },
-  { q: 'Tell me about a time you disagreed with a colleague or your manager.', p: /\b(disagree(d|ment)?|conflict)\b/i },
-  { q: 'What is the achievement you are most proud of?', p: /\b(biggest|greatest|proudest)\b.{0,20}\b(achievement|accomplishment)\b|\bproud(est)? of\b/i },
-  { q: 'Tell me about a time you failed or made a mistake.', p: /\b(a )?(failure|failed|mistake)\b|\bwent wrong\b/i },
-  { q: 'When could you start, and what is your notice period?', p: /\bnotice period\b|\bwhen (could|can|would) you start\b|\bavailable to start\b|\bstart date\b/i },
-  { q: 'Where do you see yourself in five years?', p: /\b(five|5) years\b|\blong[- ]term (goals?|plans?|career)\b|\bsee yourself\b/i },
-  { q: 'Do you have any questions for us?', p: /\b(any|do you have( any)?) questions for (me|us)\b|\bwhat (questions|would you like to ask)\b/i },
-];
-const PREPARED_TECH = [
-  { q: 'Tell me about the most challenging project you have worked on.', p: /\b(most )?(challenging|difficult|complex|hardest|toughest) (project|problem|technical challenge|thing you)/i },
-  { q: 'How do you handle production incidents and outages?', p: /\b(production (incident|issue|outage|problem)s?|outage|on-?call|incident)\b/i },
-  { q: 'How do you approach testing and code quality?', p: /\b(test(ing)? (strategy|approach)|how do you test|code quality|code reviews?)\b/i },
-  { q: 'Describe the architecture of a system you designed.', p: /\b(architecture|system design|design(ed)? (a|the) system)\b/i },
-];
-const PREPARED_LEADER = [
-  { q: 'How do you prioritise when everything is urgent?', p: /\bprioriti[sz](e|ing|ation)\b/i },
-  { q: 'How do you work with product and business stakeholders?', p: /\b(product|business|stakeholders?)\b.{0,40}\b(work|collaborat|partner)/i },
-  { q: 'Tell me about a time you took ownership of something outside your role.', p: /\b(ownership|took the lead|stepped up)\b/i },
-];
-const PREPARED_TEAM = {
-  standup: [{ q: 'Can you give us your update: what you did, what is next, and any blockers?', p: /\b(update|status|yesterday|today|blockers?)\b/i }],
-  sprint: [{ q: 'What did you finish this sprint, and what are you taking on next?', p: /\b(this sprint|last sprint|next sprint|sprint (review|goal|planning)|what did you (finish|complete|deliver))\b/i }],
-  discussion: [],
-};
-function preparedQuestionsFor(type) {
-  const kind = MEETING_TYPES[type] ? MEETING_TYPES[type].kind : 'hiring';
-  if (kind === 'team') return (PREPARED_TEAM[type] || []).slice();
-  let list = PREPARED_COMMON.slice();
-  if (['technical_interview', 'live_coding', 'leader_round'].includes(type)) list = list.concat(PREPARED_TECH);
-  if (type === 'leader_round') list = list.concat(PREPARED_LEADER);
-  if (type === 'ai_interview') list = list.concat(PREPARED_TECH.slice(0, 2));
-  return list;
-}
-// Words that carry the meaning of a question, roughly stemmed.
-const MATCH_STOP = new Set('a an the and or but to of in on for with at by from as is are was were be been being do does did done you your yours yourself i me my we us our it its this that these those what which who whom how why when where can could would should will may might must have has had about tell please so just really kind sort bit little give some any there here than then them they their like also into over more most much very'.split(' '));
-function meaningWords(s) {
-  return String(s || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/)
-    .filter((w) => w.length > 2 && !MATCH_STOP.has(w))
-    .map((w) => w.replace(/(ing|ed|es|s)$/, ''));
-}
-// The prepared answer for what they just asked, if one fits: its pattern
-// matches the end of what they said, or most of its question's words are in it.
-function matchPrepared(text) {
-  const tail = String(text || '').replace(/\s+/g, ' ').trim().split(/(?<=[.?!])\s+/).slice(-2).join(' ');
-  if (tail.length < 8) return null;
-  const words = new Set(meaningWords(tail));
-  let best = null, bestScore = 0;
-  for (const item of preparedAnswers.items) {
-    if (!item.answer) continue;
-    let score = item.p && item.p.test(tail) ? 1 : 0;
-    if (!score) {
-      const qw = [...new Set(meaningWords(item.q))];
-      const hit = qw.filter((w) => words.has(w)).length;
-      if (qw.length >= 2 && hit >= 2) score = hit / qw.length;
-    }
-    if (score > bestScore) { bestScore = score; best = item; }
-  }
-  return bestScore >= 0.75 ? best : null;
-}
-const preparedAnswers = { run: 0, type: '', items: [] };
-// The questions this interviewer is likely to ask, from the CV and the job description.
-async function predictQuestions(provider, apiKey, type) {
-  const text = (list) => (Array.isArray(list) ? list : []).map((d) => (d && d.text) || '').join('\n').slice(0, 6000);
-  const cv = text(state.knowledge && state.knowledge.cv);
-  const jd = text(state.knowledge && state.knowledge.jd);
-  if (!cv && !jd) return [];
-  const label = (MEETING_TYPES[type] && MEETING_TYPES[type].label) || type;
-  const prompt = `A candidate is about to have this meeting: ${label}. From the job description and CV below, list the 6 questions the other side is most likely to ask that are specific to this job or this candidate (not generic ones like "tell me about yourself", salary or strengths). One question per line, no numbering, nothing else.\n\nJOB DESCRIPTION:\n${jd || '(none)'}\n\nCV:\n${cv || '(none)'}`;
-  let raw = '';
-  try {
-    raw = await completeChat({ provider, apiKey, model: pickTierModel(provider.id, 'fast'), messages: [{ role: 'user', content: prompt }], maxTokens: 400 });
-  } catch { return []; }
-  return String(raw || '').split(/\r?\n/).map((l) => l.replace(/^[\s\d.)*-]+/, '').trim()).filter((l) => l.length > 12 && /\?$/.test(l)).slice(0, 6).map((q) => ({ q, p: null }));
-}
-async function prepareAnswers() {
-  const run = ++preparedAnswers.run;
-  const type = getMeetingConfig().type;
-  preparedAnswers.type = type;
-  preparedAnswers.items = [];
-  const provider = getAnswerProvider();
-  const apiKey = getAnswerApiKey(provider.id);
-  if (!apiKey || state.network.role === 'supporter') return;
-  // Without a CV, job description or notes there is nothing to build them on.
-  const kb = state.knowledge || {};
-  const hasMaterials = ['cv', 'jd', 'support', 'meetings'].some((k) => Array.isArray(kb[k]) && kb[k].some((d) => d && String(d.text || '').trim()));
-  if (!hasMaterials) { appendLogLine('[prepared] skipped: no CV, job description or notes uploaded'); return; }
-  // Let the interview's first moments (transcription, the cache warm) go first.
-  await new Promise((r) => setTimeout(r, 2500));
-  if (run !== preparedAnswers.run) return;
-  const t0 = Date.now();
-  const items = preparedQuestionsFor(type).map((x) => ({ ...x, answer: '' }));
-  preparedAnswers.items = items;
-  predictQuestions(provider, apiKey, type).then((more) => {
-    if (run !== preparedAnswers.run) return;
-    for (const m of more) if (!items.some((x) => meaningWords(x.q).join(' ') === meaningWords(m.q).join(' '))) items.push({ ...m, answer: '' });
-  }).catch(() => {});
-  const model = getAnswerModel(provider.id, 'ANSWER');
-  let next = 0, done = 0;
-  const worker = async () => {
-    for (;;) {
-      if (run !== preparedAnswers.run) return;
-      // Live answers come first: wait while one is being written.
-      while (answerAbort && run === preparedAnswers.run) await new Promise((r) => setTimeout(r, 500));
-      // The next question, claimed with no await in between, so the two
-      // workers never take the same one. The predicted questions may still be
-      // on their way: wait for them a little.
-      let item = null;
-      while (!(item = items[next]) && Date.now() - t0 < 15000 && run === preparedAnswers.run) {
-        await new Promise((r) => setTimeout(r, 800));
-      }
-      if (!item || run !== preparedAnswers.run) return;
-      next++;
-      try {
-        const messages = await buildAnswerMessages(item.q, null, 'ANSWER', '');
-        let text = '';
-        await streamChat({ provider, apiKey, model, messages, maxTokens: maxTokensForMode('ANSWER'), purpose: 'answer', convId: answerConvId(), onDelta: (d) => { text += d; } });
-        if (run !== preparedAnswers.run) return;
-        item.answer = spokenSanitize(text, 'ANSWER').trim();
-        item.model = model;
-        done++;
-      } catch (e) {
-        appendLogLine(`[prepared] "${item.q.slice(0, 50)}" failed: ${e.status || e.message}`);
-      }
-    }
-  };
-  await Promise.all([worker(), worker()]);
-  if (run === preparedAnswers.run) appendLogLine(`[prepared] ${done} of ${items.length} answers ready for ${type} in ${Math.round((Date.now() - t0) / 1000)} s (model ${model})`);
-}
-ipcMain.handle('prepare-answers', () => { prepareAnswers().catch((e) => appendLogLine('[prepared] ' + e.message)); return true; });
-
 async function buildAnswerMessages(q, imgs, mode, transcript) {
   const messages = [];
   let staticText = assembleStaticSystem(mode);
@@ -6340,22 +6255,6 @@ async function generateAnswer(question, images, forcedMode, transcript) {
 
   const displayQ = q || (imgs ? `[${imgs.length} image${imgs.length > 1 ? 's' : ''}]` : '');
   const sendAt = Date.now();
-  // Asked before and answered in advance: show that answer at once.
-  const prepared = !imgs && mode === 'ANSWER' ? matchPrepared(q || lastInterviewerText(mt)) : null;
-  if (prepared) {
-    clearTimeout(watchdog);
-    answerAbort = null;
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('answer-start', { question: displayQ, hasImage: false, mode, prepared: prepared.q });
-      win.webContents.send('answer-chunk', prepared.answer);
-      win.webContents.send('answer-done', { text: prepared.answer });
-    }
-    latencyReport('prepared', sendAt, Date.now(), prepared.model || model);
-    sessionLog.push({ ts: Date.now(), kind: 'question', text: q || lastInterviewerText(mt) });
-    sessionLog.push({ ts: Date.now(), kind: 'answer', text: prepared.answer });
-    recordTurn(q, prepared.answer, mode, null, mt);
-    return;
-  }
   // Show the bubble before we build/send the prompt so Send never looks idle.
   if (win && !win.isDestroyed()) win.webContents.send('answer-start', { question: displayQ, hasImage: !!imgs, mode });
 
@@ -6524,12 +6423,6 @@ async function warmPromptCache() {
 
 // ── Speculative answer: start streaming before the user hits send.
 // Shares the same message-building logic as generateAnswer but is abortable.
-// The interviewer's latest words (the end of the meeting transcript).
-function lastInterviewerText(mt) {
-  const lines = String(mt || '').trim().split(/\n+/);
-  return (lines[lines.length - 1] || '').replace(/^[^:]{1,40}:\s*/, '');
-}
-
 async function startSpeculative(question, forcedMode, transcript, latest) {
   // Never kill a live, user-visible stream to prefetch the next question.
   if (speculativeCommitted || answerAbort) return;
@@ -6556,18 +6449,6 @@ async function startSpeculative(question, forcedMode, transcript, latest) {
   ac._model = model;
   latencyMark('specStart');
   latency.specFirst = 0;
-
-  // Answered in advance: that answer is ready now, no request needed.
-  const prepared = specMode === 'ANSWER' ? matchPrepared(q || latest || lastInterviewerText(mt)) : null;
-  if (prepared) {
-    ac._buffer = prepared.answer;
-    ac._done = true;
-    ac._prepared = prepared.q;
-    ac._model = prepared.model || model;
-    latency.specFirst = latency.specStart;
-    appendLogLine(`[prepared] ready for "${(q || latest || '').slice(0, 60)}" -> "${prepared.q}"`);
-    return;
-  }
 
   const messages = await buildAnswerMessages(q, null, specMode, mt);
   // Do NOT send answer-start yet — we buffer silently and only show the UI
@@ -6661,11 +6542,11 @@ function commitSpeculative(question, images, forcedMode, transcript) {
       const specModeCommit = (ac && ac._mode) || 'ANSWER';
       if (!streamDone) speculativeCommitted = true;
       const sendAt = Date.now();
-      win.webContents.send('answer-start', { question: q, hasImage: false, mode: specModeCommit, prepared: (ac && ac._prepared) || undefined });
+      win.webContents.send('answer-start', { question: q, hasImage: false, mode: specModeCommit });
       const buffered = (ac && ac._buffer) || '';
       const clean = buffered ? spokenSanitize(buffered, specModeCommit) : '';
       if (clean) win.webContents.send('answer-chunk', clean);
-      const how = ac && ac._prepared ? 'prepared' : 'hidden answer';
+      const how = 'hidden answer';
       if (clean) latencyReport(how, sendAt, Date.now(), (ac && ac._model) || '');
       else latency.pending = { how, sendAt };
       if (ac) ac._flushed = true;
@@ -7212,8 +7093,10 @@ function normalizeSpeakerAddress(addr) {
   return `${ip}:${SUPPORTER_PORT}`;
 }
 ipcMain.handle('join-as-supporter', (_e, { address } = {}) => {
+  if (!supportUnlocked) return { ok: false, reason: 'locked' };
   const addr = normalizeSpeakerAddress(address);
   if (!addr) return { ok: false, error: 'Enter their IP address, for example 192.168.1.20.' };
+  supporterOnline = null;
   stopSignalingServer();
   state.network = { ...state.network, role: 'supporter', supporterAddress: addr, address: addr };
   saveState();
@@ -7266,6 +7149,31 @@ ipcMain.handle('remote-submit', (_e, mode, text) => {
 // Both sides, while a supporter is connected: the window grows to the right by
 // the chat column and can be resized. Closed (the supporter left, or the
 // column was closed): back to the fixed size, which cannot be resized.
+// ── Answer text size ────────────────────────────────────────────────────────
+// Only the generated answers change size (Settings → Appearance, or Ctrl+= /
+// Ctrl+- / Ctrl+0 in the window); buttons and the rest of the app stay as
+// they are. The renderer applies it as --answer-scale.
+const TEXT_SCALES = [0.9, 1, 1.1, 1.25, 1.4, 1.6];
+function textScale() {
+  const v = Number(state.textScale);
+  return Number.isFinite(v) ? Math.min(1.6, Math.max(0.8, v)) : 1.1;
+}
+function setTextScale(v) {
+  state.textScale = Math.min(1.6, Math.max(0.8, Math.round(Number(v) * 100) / 100 || 1.1));
+  saveState();
+  const now = textScale();
+  if (win && !win.isDestroyed()) win.webContents.send('text-scale', now);
+  return now;
+}
+ipcMain.handle('get-text-scale', () => ({ value: textScale(), steps: TEXT_SCALES }));
+ipcMain.handle('set-text-scale', (_e, v) => setTextScale(v));
+ipcMain.handle('step-text-scale', (_e, dir) => {
+  const cur = textScale();
+  if (!dir) return setTextScale(1.1);
+  const next = dir > 0 ? TEXT_SCALES.find((x) => x > cur + 0.001) : [...TEXT_SCALES].reverse().find((x) => x < cur - 0.001);
+  return setTextScale(next || cur);
+});
+
 ipcMain.handle('set-side-pane', (_e, open, width) => {
   if (!win || win.isDestroyed()) return false;
   const b = win.getBounds();
@@ -7297,7 +7205,63 @@ ipcMain.handle('set-side-pane', (_e, open, width) => {
   }
   return true;
 });
+// Online: the live sessions on ace2me.com, and joining one with the support
+// password the administrator set for this computer.
+ipcMain.handle('ice-servers', () => { const c = aceOnline.current(); return (c && Array.isArray(c.iceServers)) ? c.iceServers : []; });
+ipcMain.handle('online-sessions', async () => {
+  const r = await aceOnline.sessionList();
+  return r.ok ? { ok: true, sessions: r.sessions || [] } : { ok: false, error: r.error };
+});
+// The support password: asked once, kept encrypted (ace-support.bin) and
+// checked with ace2me.com each time the join screen opens. Changed there by
+// the administrator, it is asked for again ("This password was reset").
+// Without a connection the saved one still opens LAN joining.
+let supportUnlocked = false;
+const PASSWORD_GONE = new Set(['bad-password', 'no-password']);
+async function checkSupportPassword(password) {
+  const r = await aceOnline.supportCheck(password);
+  if (r.ok) return { ok: true };
+  if (r.status) return { ok: false, reason: r.error };   // ace2me.com said no
+  return { ok: false, offline: true, reason: r.error };  // no answer
+}
+ipcMain.handle('support-status', async () => {
+  const pw = aceOnline.savedSupportPassword();
+  supportUnlocked = false;
+  if (!pw) return { ok: false };
+  const r = await checkSupportPassword(pw);
+  if (r.ok || r.offline) { supportUnlocked = true; return { ok: true, offline: !!r.offline }; }
+  if (PASSWORD_GONE.has(r.reason)) {
+    aceOnline.forgetSupportPassword();
+    return { ok: false, reason: r.reason === 'bad-password' ? 'reset' : r.reason };
+  }
+  return { ok: false, reason: r.reason };
+});
+ipcMain.handle('support-login', async (_e, password) => {
+  const pw = typeof password === 'string' ? password : '';
+  if (!pw) return { ok: false, reason: 'bad-password' };
+  const r = await checkSupportPassword(pw);
+  if (!r.ok) return { ok: false, reason: r.reason };
+  aceOnline.saveSupportPassword(pw);
+  supportUnlocked = true;
+  return { ok: true };
+});
+ipcMain.handle('join-online', (_e, { sessionId, label } = {}) => {
+  if (!sessionId) return { ok: false, error: 'Pick a session first.' };
+  const password = aceOnline.savedSupportPassword();
+  if (!supportUnlocked || !password) return { ok: false, reason: 'locked' };
+  stopSignalingServer();
+  supporterOnline = { sessionId: String(sessionId), password: String(password), label: String(label || 'the speaker') };
+  state.network = { ...state.network, role: 'supporter' };
+  saveState();
+  registerHotkeys();
+  supporterAdmitted = false;
+  supporterRefused = '';
+  supporterOwnMicMode = 'mute';
+  connectSignalingClient();
+  return { ok: true, label: supporterOnline.label };
+});
 ipcMain.handle('leave-supporter', () => {
+  supporterOnline = null;
   disconnectSignalingClient();
   supporterAdmitted = false;
   state.network.role = 'speaker';

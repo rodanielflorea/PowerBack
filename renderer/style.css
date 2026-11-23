@@ -361,9 +361,13 @@ body:not(.in-interview) .right-rail { display: none !important; }
   justify-content: center;
   padding: 12px;
 }
+/* Full height, so switching tabs never moves the tab row: centred, a short
+   tab shrank the box and the tabs jumped away from the pointer (the next
+   click landed on the backdrop and closed Settings). */
 .settings-modal {
   width: 100%;
   max-width: 560px;
+  height: 100%;
   max-height: 100%;
   background: var(--elev);
   border: 1px solid var(--border);
@@ -387,16 +391,17 @@ body:not(.in-interview) .right-rail { display: none !important; }
   flex-shrink: 0;
 }
 
+/* Tabs wrap onto a second row in a narrow window: with a hidden horizontal
+   scroll the last ones (Guide) sat past the edge and could not be clicked. */
 .settings-tabs {
   display: flex;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: 0 4px;
   padding: 0 10px;
   border-bottom: 1px solid var(--border);
-  overflow-x: auto;
-  scrollbar-width: none;
   flex-shrink: 0;
+  -webkit-app-region: no-drag;
 }
-.settings-tabs::-webkit-scrollbar { display: none; }
 
 .tab-btn {
   -webkit-app-region: no-drag;
@@ -1204,7 +1209,8 @@ textarea.meet-editbox {
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
   color: var(--text);
-  font-size: 14px;
+  /* Settings → Appearance → Answer text size */
+  font-size: calc(14px * var(--answer-scale, 1.1));
   line-height: 1.6;
   padding: 10px 14px;
   border-radius: 3px 16px 16px 16px;
@@ -2994,6 +3000,19 @@ body.role-supporter .rec-btn { display: none !important; }
 .join-status { min-height: 18px; margin: 4px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
 .join-status.err { color: var(--rec-on); }
 .join-status.busy { color: var(--accent-text); }
+.join-online { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.join-online-head { display: flex; align-items: center; justify-content: space-between; }
+.join-refresh { font: inherit; font-size: 12px; background: none; border: none; color: var(--accent-text); cursor: pointer; padding: 2px 4px; }
+.join-session-list { display: flex; flex-direction: column; gap: 4px; max-height: 168px; overflow-y: auto; margin-bottom: 6px; }
+.join-session { display: flex; justify-content: space-between; align-items: center; gap: 8px; text-align: left; font: inherit; font-size: 13px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface, transparent); color: var(--text); cursor: pointer; }
+.join-session:hover { border-color: var(--accent-text); }
+.join-session.active { border-color: var(--accent-text); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-text) 25%, transparent); }
+.join-session small { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.join-empty { color: var(--muted); font-size: 12.5px; margin: 2px 0; }
+.join-step { display: flex; flex-direction: column; gap: 6px; }
+.join-step[hidden] { display: none; }
+.join-mode-seg { display: flex; margin-bottom: 10px; }
+.join-mode-seg button { flex: 1 1 0; }
 
 /* Speaker: invite button and panel */
 .supporter-invite-btn { position: relative; }
@@ -3149,6 +3168,9 @@ body.side-pane-open .chat-empty { margin: auto; text-align: center; color: var(-
 }
 .theme-seg button:hover { color: var(--text); }
 .theme-seg button.active { background: var(--seg-active); color: var(--text); box-shadow: var(--seg-shadow); }
+#textScaleSeg { display: flex; flex-wrap: wrap; max-width: 100%; }
+#textScaleSeg button { padding: 0 8px; flex: 1 0 auto; }
+:root { --answer-scale: 1.1; }
 
 /* New transcript arrived below the answer being read: the answer stays put and
    this button offers the rest (renderer.js, revealMeetBubble). */

@@ -68,6 +68,7 @@
       <button class="icon-btn" id="supporterPanelClose" title="Close"><i data-icon="x"></i></button>
     </div>
     <p class="supporter-panel-lead">On the other computer, open Ace, choose <b>Join as supporter</b> and enter:</p>
+    <div class="supporter-panel-row"><span class="supporter-panel-key">Online</span><span class="supporter-panel-val" id="supporterPanelOnline">&nbsp;</span></div>
     <div class="supporter-panel-row"><span class="supporter-panel-key">IP address</span><span class="supporter-panel-val" id="supporterPanelAddr">&nbsp;</span></div>
     <p class="supporter-panel-other" id="supporterPanelOther" hidden></p>
     <p class="supporter-panel-status" id="supporterPanelStatus">&nbsp;</p>
@@ -111,6 +112,16 @@
             <button type="button" data-theme-pref="light" role="radio">Light</button>
             <button type="button" data-theme-pref="system" role="radio">System</button>
           </div>
+          <label class="field-label" style="margin-top:12px;display:block">Answer text size</label>
+          <div class="theme-seg" id="textScaleSeg" role="radiogroup" aria-label="Answer text size">
+            <button type="button" data-scale="0.9" role="radio">90%</button>
+            <button type="button" data-scale="1" role="radio">100%</button>
+            <button type="button" data-scale="1.1" role="radio">110%</button>
+            <button type="button" data-scale="1.25" role="radio">125%</button>
+            <button type="button" data-scale="1.4" role="radio">140%</button>
+            <button type="button" data-scale="1.6" role="radio">160%</button>
+          </div>
+          <p class="hint">The size of the generated answers only. Or press <span class="kbd">Ctrl+=</span> / <span class="kbd">Ctrl+-</span> in Ace&rsquo;s window, and <span class="kbd">Ctrl+0</span> for the default (110%).</p>
         </section>
 
         <section class="settings-section">
@@ -176,10 +187,6 @@
               <option value="hi">Hindi</option>
               <option value="uk">Ukrainian</option>
             </select>
-          </div>
-          <div class="field">
-            <label class="checkbox"><input type="checkbox" id="dgBypassVpn" /> Send transcription around the VPN</label>
-            <p class="hint">The transcription connection leaves from this computer's own network instead of the VPN: faster and steadier, but Deepgram sees your real network address. If it cannot connect that way, it goes through the VPN. Changes apply at the next connection.</p>
           </div>
         </section>
 
@@ -557,10 +564,31 @@
         <h2 class="setup-title">Join as supporter</h2>
         <button class="setup-gear-btn" id="joinSettingsBtn" title="Settings &amp; user guide"><i data-icon="settings"></i></button>
       </div>
-      <p class="setup-intro">You hear their call, see their screen and their answer panel live, can ask their AI for an answer, and can chat with them. Both computers must be on the same network. In their Ace, the headset button at the top shows their IP address.</p>
-      <div class="profile-inputs profile-inputs--vertical">
-        <label class="field-label" for="joinAddress">Their IP address</label>
-        <input type="text" id="joinAddress" class="profile-input" placeholder="192.168.1.20" inputmode="decimal" maxlength="15" spellcheck="false" autocomplete="off" />
+      <!-- Step 1: the support password (asked once; again only after the
+           administrator changes it on ace2me.com) -->
+      <div class="join-step" id="joinStepPassword" hidden>
+        <p class="setup-intro">Enter the support password your administrator gave you.</p>
+        <label class="field-label" for="joinPassword">Support password</label>
+        <input type="password" id="joinPassword" class="profile-input" placeholder="Support password" autocomplete="off" spellcheck="false" required />
+      </div>
+      <!-- Step 2: over the internet, or on the same network -->
+      <div class="join-step" id="joinStepMode" hidden>
+        <div class="theme-seg join-mode-seg" id="joinModeSeg" role="radiogroup" aria-label="How to connect">
+          <button type="button" data-join-mode="internet" role="radio">Internet</button>
+          <button type="button" data-join-mode="lan" role="radio">LAN</button>
+        </div>
+        <div class="join-online" id="joinPaneInternet">
+          <div class="join-online-head">
+            <span class="field-label">Live sessions</span>
+            <button type="button" class="join-refresh" id="joinRefreshBtn" title="Look for sessions again">Refresh</button>
+          </div>
+          <div class="join-session-list" id="joinSessionList" role="listbox" aria-label="Live sessions"><p class="join-empty">Looking for sessions…</p></div>
+        </div>
+        <div class="profile-inputs profile-inputs--vertical" id="joinPaneLan" hidden>
+          <label class="field-label" for="joinAddress">Their IP address</label>
+          <input type="text" id="joinAddress" class="profile-input" placeholder="192.168.1.20" inputmode="decimal" maxlength="15" spellcheck="false" autocomplete="off" />
+          <p class="hint">Same network only. In their Ace, the headset button at the top shows their IP address.</p>
+        </div>
       </div>
       <p class="join-status" id="joinStatus" role="status"></p>
       <div class="wizard-nav">

@@ -1,6 +1,6 @@
 {
   "name": "ace",
-  "version": "2.7.23",
+  "version": "2.7.27",
   "description": "Answer Coaching Engine",
   "main": "main.js",
   "scripts": {
@@ -28,7 +28,6 @@
       "speaker-detect.js",
       "speaker-tracker.js",
       "vscode-bridge.js",
-      "defaults/api-keys.json",
       "defaults/ai-usage.md",
       "defaults/avoid.txt",
       "preload*.js",
@@ -40,6 +39,7 @@
       "remote-input.js",
       "click-trace.js",
       "license.js",
+      "ace-online.js",
       "license-public.key",
       "watchdog.js"
     ],

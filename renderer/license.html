@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Activation</title>
+  <title>Ace</title>
   <style>
     :root {
       --bg: #ffffff; --surface: #f6f7fb; --border: #e4e7ef; --border-hi: #c9cdd8;
@@ -64,7 +64,7 @@
     }
     textarea::placeholder { color: #a0a4b5; }
     textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,76,240,.15); }
-    #status { font-size: 12.5px; min-height: 18px; margin-top: 8px; }
+    #status { font-size: 12.5px; min-height: 40px; margin-top: 2px; color: var(--muted); }
     #status.err { color: var(--danger); }
     #status.ok { color: var(--green); }
     .actions { display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding-top: 10px; }
@@ -74,8 +74,8 @@
   <div class="head">
     <div class="badge">🔐</div>
     <div>
-      <h1>Activate this computer</h1>
-      <div class="sub">A one-time license key from your administrator unlocks the app.</div>
+      <h1>Approve this computer</h1>
+      <div class="sub">Ace works once your administrator approves this computer on ace2me.com.</div>
     </div>
   </div>
 
@@ -85,23 +85,36 @@
     <button id="copyBtn">Copy</button>
   </div>
 
-  <p class="step"><b>2</b>Enter the license key you receive</p>
-  <textarea id="code" spellcheck="false" placeholder="Paste the license key here"></textarea>
-  <div id="status"></div>
+  <p class="step"><b>2</b>Wait for the approval</p>
+  <div id="status">Checking…</div>
 
   <div class="actions">
     <button id="quitBtn" class="ghost">Quit</button>
-    <button id="okBtn" class="primary">Activate</button>
+    <button id="okBtn" class="primary">Check now</button>
   </div>
   <script>
     const $ = (id) => document.getElementById(id);
-    window.licenseApi.getInfo().then((info) => {
+    function show(info) {
       $('mac').textContent = info.mac || 'no network adapter found';
-      if (info.reason === 'expired') {
-        $('status').className = 'err';
-        $('status').textContent = 'Your license has expired. Ask your administrator for a new key.';
+      const st = $('status');
+      if (info.state === 'terminated') {
+        st.className = 'err';
+        st.textContent = info.message || 'This computer was turned off for Ace by the administrator.';
+      } else if (info.state === 'offline') {
+        st.className = 'err';
+        st.textContent = 'Cannot reach ace2me.com. Check the internet connection; Ace keeps trying every 10 seconds.';
+      } else if (info.state === 'approved') {
+        st.className = 'ok';
+        st.textContent = 'Approved. Starting…';
+      } else {
+        st.className = '';
+        st.textContent = info.reason === 'new-install'
+          ? 'Ace was installed again on this computer: the administrator needs to approve it once more. Ace checks every 10 seconds and starts by itself.'
+          : 'Waiting for the administrator. Ace checks every 10 seconds and starts by itself once approved.';
       }
-    });
+    }
+    window.licenseApi.getInfo().then(show);
+    window.licenseApi.onState(show);
     $('copyBtn').onclick = async () => {
       await window.licenseApi.copyMac();
       $('copyBtn').textContent = 'Copied ✓';
@@ -109,25 +122,10 @@
     };
     $('quitBtn').onclick = () => window.licenseApi.quit();
     $('okBtn').onclick = async () => {
-      const code = $('code').value.trim();
-      const st = $('status');
-      if (!code) { st.className = 'err'; st.textContent = 'Enter a license key first.'; return; }
       $('okBtn').disabled = true;
-      const r = await window.licenseApi.submit(code);
-      $('okBtn').disabled = false;
-      if (r.ok) {
-        st.className = 'ok';
-        st.textContent = 'License accepted — valid until ' + new Date(r.expiresAt).toLocaleDateString() + '. Starting…';
-      } else {
-        st.className = 'err';
-        st.textContent = r.reason === 'expired'
-          ? 'This license key has expired.'
-          : 'Invalid license key for this computer. Check that you sent the ID shown above.';
-      }
+      $('status').className = ''; $('status').textContent = 'Checking…';
+      try { show(await window.licenseApi.check()); } finally { $('okBtn').disabled = false; }
     };
-    $('code').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('okBtn').click(); }
-    });
   </script>
 </body>
 </html>

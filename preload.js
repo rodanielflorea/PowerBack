@@ -130,6 +130,13 @@ contextBridge.exposeInMainWorld('api', {
   kickSupporter: (id) => ipcRenderer.invoke('kick-supporter', id),
   joinAsSupporter: (opts) => ipcRenderer.invoke('join-as-supporter', opts),
   leaveSupporter: () => ipcRenderer.invoke('leave-supporter'),
+  onlineSessions: () => ipcRenderer.invoke('online-sessions'),
+  joinOnline: (opts) => ipcRenderer.invoke('join-online', opts),
+  getIceServers: () => ipcRenderer.invoke('ice-servers'),
+  getTextScale: () => ipcRenderer.invoke('get-text-scale'),
+  setTextScale: (v) => ipcRenderer.invoke('set-text-scale', v),
+  stepTextScale: (dir) => ipcRenderer.invoke('step-text-scale', dir),
+  onTextScale: (cb) => ipcRenderer.on('text-scale', (_e, v) => cb(v)),
   getSupporterInvite: () => ipcRenderer.invoke('get-supporter-invite'),
   onJoinRejected: (cb) => ipcRenderer.on('join-rejected', (_e, v) => cb(v)),
   mirrorOut: (payload) => ipcRenderer.send('mirror-out', payload),
@@ -236,6 +243,8 @@ contextBridge.exposeInMainWorld('api', {
   onTranscriptConnection: (cb) => ipcRenderer.on('transcript-connection', (_e, s) => cb(s)),
   extractJdInfo: () => ipcRenderer.invoke('extract-jd-info'),
   startMicDeepgramStream: (cfg) => ipcRenderer.invoke('start-mic-deepgram-stream', cfg),
+  supportStatus: () => ipcRenderer.invoke('support-status'),
+  supportLogin: (password) => ipcRenderer.invoke('support-login', password),
   stopMicDeepgramStream: () => ipcRenderer.invoke('stop-mic-deepgram-stream'),
   sendMicAudioChunk: (buf) => ipcRenderer.send('mic-audio-chunk', buf),
   onTranscriptMic: (cb) => ipcRenderer.on('transcript-mic', (_e, v) => cb(v)),
@@ -250,6 +259,7 @@ contextBridge.exposeInMainWorld('api', {
   setPendingLink: (link) => ipcRenderer.invoke('set-pending-link', link),
   clearPendingLink: () => ipcRenderer.invoke('clear-pending-link'),
   onUploadProgress: (cb) => ipcRenderer.on('upload-progress', (_e, p) => cb(p)),
+  onPendingLink: (cb) => ipcRenderer.on('pending-link', (_e, link) => cb(link)),
   sessionFinalize: (company, position) => ipcRenderer.invoke('session-finalize', { company, position }),
   clearSessionLog: () => ipcRenderer.invoke('clear-session-log'),
   sessionLogAdd: (entry) => ipcRenderer.send('session-log-add', entry),
@@ -274,7 +284,6 @@ contextBridge.exposeInMainWorld('api', {
   // Deepgram heard the speaker pause (its short end-of-speech signal).
   onTranscriptSpeechFinal: (cb) => ipcRenderer.on('transcript-speech-final', () => cb()),
   // Write answers to the likely questions in the background (interview start).
-  prepareAnswers: () => ipcRenderer.invoke('prepare-answers'),
   onAnswerCancelSpeculative: (cb) => ipcRenderer.on('answer-cancel-speculative', () => cb()),
   onAnswerCommitSpeculative: (cb) => ipcRenderer.on('answer-commit-speculative', () => cb()),
 });
