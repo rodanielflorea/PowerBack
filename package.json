@@ -1,6 +1,6 @@
 {
   "name": "ace",
-  "version": "2.7.29",
+  "version": "2.7.30",
   "description": "Answer Coaching Engine",
   "main": "main.js",
   "scripts": {

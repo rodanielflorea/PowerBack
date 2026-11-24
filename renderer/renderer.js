@@ -730,15 +730,21 @@ async function stageNext() {
   try { await saveWizardMeetingType(); showProfile(); } finally { stageAdvancing = false; }
 }
 if (stageNextBtn) stageNextBtn.addEventListener("click", stageNext);
-// Picking a meeting (also the one already picked) goes on to the next step by
-// itself; the short pause lets the choice show first. (A click on the label
-// reaches its radio as a click too, so this covers both.)
-let stageAutoTimer = null;
+// The first click on a meeting picks it and opens its description; a click on
+// the meeting already picked goes on to the next step (Next does too). What
+// was picked is noted at the press, before the click changes it. (A click on
+// the label reaches its radio as a click too, so this covers both.)
+let stageAutoTimer = null, stagePickedAtPress = null;
 document.querySelectorAll('input[name="setupMeetingType"]').forEach((el) => {
+  const card = el.closest(".stage-card") || el;
+  card.addEventListener("pointerdown", () => { stagePickedAtPress = el.checked ? el.value : null; });
   el.addEventListener("click", () => {
     if (stageOverlay && stageOverlay.hidden) return;
+    const again = stagePickedAtPress === el.value;
+    stagePickedAtPress = null;
+    if (!again) return;
     clearTimeout(stageAutoTimer);
-    stageAutoTimer = setTimeout(() => { if (stageOverlay && !stageOverlay.hidden) stageNext(); }, 220);
+    stageAutoTimer = setTimeout(() => { if (stageOverlay && !stageOverlay.hidden) stageNext(); }, 120);
   });
 });
 if (profileBackBtn) profileBackBtn.addEventListener("click", () => showStage());

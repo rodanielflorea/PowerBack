@@ -32,18 +32,26 @@
       text: "When you are about to have an interview, click Interview mode. The next three screens prepare your answers — it takes about a minute." },
     { screen: "welcome", target: "#modeSelectSettingsBtn", title: "Settings and guide",
       text: "The gear opens Settings: which audio to listen to, hotkeys, and the written user guide you can read any time." },
+    { screen: "welcome", target: "#historyBtn", title: "Session history",
+      text: "The clock opens your past sessions: continue one where you left off, search by company or role, or delete them — one at a time, or all of them with Remove all." },
     { screen: "welcome", target: "#stealthBtn", title: "Staying invisible",
       text: "The eye is Stealth: a crossed-out green eye means the app is hidden from screen sharing and recordings (Windows). Next to it: click-through, the − button to hide the window, and × to quit. The red power icon next to them ends the interview. Bring a hidden window back with Ctrl+Alt+H or the round A button on your screen." },
-    { screen: "stage", target: ".stage-cards", title: "Step 1 — what kind of call?",
-      text: "Pick Intro, Technical, HR or CEO. This changes how every answer is written: simple and friendly for a recruiter, precise and factual for engineers, ownership and leadership for HR and CEO. Then press Next." },
-    { screen: "profile", target: ".profile-inputs", title: "Step 2 — who you are",
+    { screen: "welcome", target: "#themeBtn", title: "Light or dark",
+      text: "The sun / moon switches Ace between the light and the dark theme. It remembers your choice." },
+    { screen: "stage", target: 'details.stage-group[data-kind="hiring"] > summary', title: "Step 1 — what kind of call?",
+      text: "Hiring interviews: you are applying for a job. Click it to see the calls — Recruiter / HR screen, Technical interview, Live coding, Leader round, AI interview. Every answer is written to fit the call you pick." },
+    { screen: "stage", target: 'details.stage-group[data-kind="team"] > summary', title: "Team meetings",
+      text: "Team meetings: standups, sprint reviews and planning, discussions at work. Answers are written as a teammate, and Ace shows who is speaking. No resume, job description or salary is needed for these." },
+    { screen: "stage", target: "#stageNextBtn", title: "Pick, then go on",
+      text: "The first click on a call picks it and shows what it is about. Click the same call again, or press Next, to go on." },
+    { screen: "profile", target: "#profileOverlay .profile-inputs", title: "Step 2 — who you are",
       text: "Type your name and pick your country and city — the timezone fills in by itself. Answers speak as this person, and the info panel shows the local time and weather for this place." },
-    { screen: "profile", target: ".profile-picker", title: "Save your profile",
-      text: "Press ＋ to save these details under a name. Next time just pick it from the list. ⟳ updates the selected profile, 🗑 deletes it." },
-    { screen: "materials", target: ".upload-grid", title: "Step 3 — your materials",
-      text: "Drag your CV and the job description into these boxes (PDF, Word or text). Extra notes go into Support material; notes from earlier rounds into Previous meeting records. Answers are built only from what you upload here." },
-    { screen: "materials", target: ".salary-block", title: "Salary expectation (optional)",
-      text: "If they might ask, enter the amount, currency and whether it is per month, year or hour. The app will answer that question the way you want." },
+    { screen: "profile", target: ".profile-picker", title: "Your saved profiles",
+      text: "Pick a saved profile from this list, or “New profile”. A new profile is kept for next time when you press Next. Change a saved one and a bar appears: Save keeps the change, Undo puts it back. The bin deletes the profile." },
+    { screen: "materials", target: "#setupOverlay .upload-grid", title: "Step 3 — your materials",
+      text: "For a hiring interview, drag your CV and the job description into these boxes (PDF, Word or text) — both are needed. Extra notes go into Support material. A team meeting only has Support material. Answers are built only from what you upload here." },
+    { screen: "materials", target: "#setupOverlay .salary-block", hiringOnly: true, title: "Salary expectation",
+      text: "Enter the amount, currency and whether it is per month, year or hour. When they ask, the app answers with this." },
     { screen: "materials", target: "#setupStartBtnV", title: "Start the interview",
       text: "Press Start interview. Listening begins by itself — you do not need to press anything else." },
     { screen: "interview", target: "#answerHistory", title: "Questions appear here",
@@ -51,15 +59,15 @@
     { screen: "interview", target: ".answer-composer", title: "Ask your own question",
       text: "Type here and press Enter to prepare an answer before they ask — for example \"Tell me about yourself\". It gets the same header and buttons as a transcript bubble." },
     { screen: "interview", target: "#modeSeg", title: "Answer format",
-      text: "Text is the normal spoken answer. Choose Code for coding questions and Diagram for architecture questions. The drop-down on the left switches the call type mid-interview." },
+      text: "Text is the normal spoken answer. Choose Code for coding questions and Diagram for architecture questions. Double-click a code block or a diagram to open it in a window of its own; double-click any other answer to send it to the sticky note. The drop-down on the left switches the call type mid-interview." },
     { screen: "interview", target: "#recBtn", title: "Is it listening?",
       text: "This microphone is red and blinking while the app is listening. Click it to pause, click again to continue (Alt+C does the same)." },
-    { screen: "interview", target: "#modeToggleBtn", title: "Voice or screen",
-      text: "The waveform means the app listens to the call audio (normal). Switch to the scan icon to read text from an area of your screen instead — useful for written tests." },
+    { screen: "interview", target: "#captureAreaBtn", title: "A question on the screen",
+      text: "For a written test or a task shared on screen: this button captures an area you drag over (Alt+S), the one under it the whole screen (Alt+A). The picture is added to your question; press Send to get the answer." },
     { screen: "interview", target: "#endBtn", title: "Ending the call",
       text: "Press End when the interview is over. You return to the start screen; your profile stays saved for next time." },
     { screen: "welcome", target: null, title: "You're ready",
-      text: "That is the whole flow: Interview mode → call type → profile → materials → Start. Tick the box below if you do not want to see this tour again; you can replay it any time from the welcome screen, and the written guide is in Settings." },
+      text: "That is the whole flow: Interview mode → meeting type → profile → materials → Start. Tick the box below if you do not want to see this tour again; you can replay it any time from the welcome screen, and the written guide is in Settings." },
   ];
 
   let i = 0;
@@ -68,7 +76,8 @@
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
   function place(step) {
-    const target = step.target ? document.querySelector(step.target) : null;
+    let target = step.target ? document.querySelector(step.target) : null;
+    if (target && !target.getClientRects().length) target = null; // not shown now: card in the middle
     const vw = window.innerWidth, vh = window.innerHeight;
     const M = 12;
     const cardW = Math.min(330, vw - 2 * M);
@@ -119,14 +128,21 @@
     card.style.left = Math.round(clamp(r.left, M, vw - cardW - M)) + "px";
   }
 
+  // The steps for the meeting type picked now: a team meeting has no salary.
+  let steps = STEPS;
+  function pickSteps() {
+    const hiring = document.body.classList.contains("meeting-hiring");
+    steps = STEPS.filter((s) => !s.hiringOnly || hiring);
+  }
+
   function render() {
-    const step = STEPS[i];
+    const step = steps[i];
     SCREENS[step.screen]();
     elTitle.textContent = step.title;
     elText.textContent = step.text;
-    elStep.textContent = (i + 1) + " / " + STEPS.length;
+    elStep.textContent = (i + 1) + " / " + steps.length;
     btnBack.disabled = i === 0;
-    btnNext.textContent = i === STEPS.length - 1 ? "Finish" : "Next →";
+    btnNext.textContent = i === steps.length - 1 ? "Finish" : "Next →";
     // Let the screen switch paint before measuring the target.
     requestAnimationFrame(() => setTimeout(() => place(step), 80));
   }
@@ -138,9 +154,9 @@
     window.removeEventListener("resize", onResize);
     showModeSelect();
   }
-  function onResize() { if (active) place(STEPS[i]); }
+  function onResize() { if (active) place(steps[i]); }
 
-  btnNext.addEventListener("click", () => { if (i >= STEPS.length - 1) finish(); else { i++; render(); } });
+  btnNext.addEventListener("click", () => { if (i >= steps.length - 1) finish(); else { i++; render(); } });
   btnBack.addEventListener("click", () => { if (i > 0) { i--; render(); } });
   btnSkip.addEventListener("click", finish);
   document.addEventListener("keydown", (e) => {
@@ -154,6 +170,7 @@
   window.startTour = function startTour() {
     i = 0;
     active = true;
+    pickSteps();
     // The tour must be clickable: make sure click-through is off.
     if (window.api.setClickThrough) window.api.setClickThrough(false).catch(() => {});
     root.hidden = false;
