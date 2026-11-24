@@ -330,8 +330,21 @@ window.api.onClickThroughChanged((v) => {
   if (v) { try { toast("Click-through is ON: the mouse passes through Ace. Press Alt+Q (or the cursor button at the top) to turn it off.", "info"); } catch {} }
 });
 (() => {
-  const b = document.getElementById("clickTraceBtn");
-  if (b && window.api.revealClickTrace) b.addEventListener("click", () => window.api.revealClickTrace().catch(() => {}));
+  const reveal = () => window.api.revealClickTrace && window.api.revealClickTrace().catch(() => {});
+  for (const id of ["clickTraceBtn", "clickTraceShowBtn"]) {
+    const b = document.getElementById(id);
+    if (b) b.addEventListener("click", reveal);
+  }
+  // Settings → Check: the lost-click helper, off unless switched on (Windows).
+  const box = document.getElementById("clickTraceEnabled");
+  const section = document.getElementById("clickTraceSection");
+  if (box && window.api.getClickTrace) {
+    window.api.getClickTrace().then((r) => {
+      if (section) section.hidden = !(r && r.supported);
+      box.checked = !!(r && r.enabled);
+    }).catch(() => {});
+    box.addEventListener("change", () => { window.api.setClickTrace(box.checked).then((v) => { box.checked = !!v; }).catch(() => {}); });
+  }
 })();
 // Keep the header bar usable while click-through is on (so it can be switched
 // off again and the window moved): re-enable mouse events over the header only.
@@ -457,12 +470,21 @@ function showSetup() {
   if (typeof refreshProfiles === "function") refreshProfiles();
 }
 
-// ── Named profiles: picker + save/update/delete on the New-session form ───────
+// ── Named profiles on the profile step ────────────────────────────────────────
+// One picker: the saved profiles plus "New profile". A saved profile fills the
+// fields; editing it brings up a bar with Save (keep the change in the
+// profile) and Undo. "New profile" starts empty and is saved under the
+// person's name with Save, or by itself on Next, so it is there next time.
+// Edits not saved still apply to this call.
 const profileSelect = document.getElementById("profileSelect");
-const profileSaveNewBtn = document.getElementById("profileSaveNewBtn");
-const profileUpdateBtn = document.getElementById("profileUpdateBtn");
 const profileDeleteBtn = document.getElementById("profileDeleteBtn");
+const profileSaveBar = document.getElementById("profileSaveBar");
+const profileSaveText = document.getElementById("profileSaveText");
+const profileSaveBtn = document.getElementById("profileSaveBtn");
+const profileRevertBtn = document.getElementById("profileRevertBtn");
+const NEW_PROFILE = "__new";
 let _profiles = [];
+let _profileSaved = null; // the selected profile's fields as saved (null = new profile)
 
 function readProfileFields() {
   const v = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ""; };
@@ -513,12 +535,14 @@ function timezoneForCity(country, city) {
     populateCitySelect(countrySel.value, "");
     const z = timezoneForCity(countrySel.value, "");
     if (tz && z) { tz.value = z; if (tz._cselRefresh) tz._cselRefresh(); }
+    syncProfileSaveBar();
   });
   if (citySel) citySel.addEventListener("change", () => {
     if (custom) custom.hidden = citySel.value !== "__other";
-    if (citySel.value === "__other") { if (custom) custom.focus(); return; }
+    if (citySel.value === "__other") { if (custom) custom.focus(); syncProfileSaveBar(); return; }
     const z = timezoneForCity(countrySel ? countrySel.value : "", citySel.value);
     if (tz && z) { tz.value = z; if (tz._cselRefresh) tz._cselRefresh(); }
+    syncProfileSaveBar();
   });
 })();
 function fillProfileFields(p) {
@@ -531,80 +555,128 @@ function fillProfileFields(p) {
   if (tz) { tz.value = p.timezone || ""; if (tz._cselRefresh) tz._cselRefresh(); }
 }
 
+const profileFieldsOf = (p) => ({ name: (p && p.name) || "", city: (p && p.city) || "", country: (p && p.country) || "", timezone: (p && p.timezone) || "" });
+const sameProfileFields = (a, b) => ["name", "city", "country", "timezone"].every((k) => (a[k] || "") === (b[k] || ""));
+const selectedProfile = () => _profiles.find((p) => profileSelect && p.id === profileSelect.value) || null;
+
+// The bar under the fields: a new profile can be saved once it has a name; a
+// saved one shows the bar only when the fields differ from what is saved.
+function syncProfileSaveBar() {
+  if (!profileSaveBar) return;
+  const now = readProfileFields();
+  const cur = selectedProfile();
+  if (profileDeleteBtn) profileDeleteBtn.hidden = !cur;
+  if (!cur) {
+    profileSaveBar.hidden = !now.name;
+    if (profileSaveText) profileSaveText.textContent = "New profile, not saved yet.";
+    if (profileSaveBtn) profileSaveBtn.textContent = "Save profile";
+    if (profileRevertBtn) profileRevertBtn.hidden = true;
+    return;
+  }
+  const changed = !!_profileSaved && !sameProfileFields(now, _profileSaved);
+  profileSaveBar.hidden = !changed;
+  if (profileSaveText) profileSaveText.textContent = `You changed “${cur.label || "this profile"}”.`;
+  if (profileSaveBtn) profileSaveBtn.textContent = "Save changes";
+  if (profileRevertBtn) profileRevertBtn.hidden = false;
+}
+["profileName", "profileCityCustom", "profileTimezone"].forEach((id) => {
+  const el = document.getElementById(id);
+  if (el) { el.addEventListener("input", syncProfileSaveBar); el.addEventListener("change", syncProfileSaveBar); }
+});
+
+function showProfileChoice(id) {
+  const p = _profiles.find((x) => x.id === id);
+  if (profileSelect) { profileSelect.value = p ? p.id : NEW_PROFILE; if (profileSelect._cselRefresh) profileSelect._cselRefresh(); }
+  hideProfileDeleteConfirm();
+  if (p) { fillProfileFields(p); _profileSaved = profileFieldsOf(p); }
+  else { fillProfileFields({}); _profileSaved = null; }
+  syncProfileSaveBar();
+}
+
 async function refreshProfiles(selectId) {
-  if (typeof closeSaveRow === "function") closeSaveRow();
   if (!profileSelect || !window.api.profilesList) return;
   const data = await window.api.profilesList().catch(() => null);
   _profiles = (data && data.profiles) || [];
   const wantId = selectId || (data && data.activeProfileId) || (_profiles[0] && _profiles[0].id) || "";
   profileSelect.innerHTML = "";
-  const blank = document.createElement("option");
-  blank.value = "";
-  blank.textContent = _profiles.length ? "— Select profile —" : "— No saved profiles —";
-  profileSelect.appendChild(blank);
   _profiles.forEach((p) => {
     const o = document.createElement("option");
-    o.value = p.id; o.textContent = p.label || "(unnamed)";
+    o.value = p.id; o.textContent = p.label || p.name || "(unnamed)";
     profileSelect.appendChild(o);
   });
-  profileSelect.value = _profiles.some((p) => p.id === wantId) ? wantId : "";
-  if (profileSelect._cselRefresh) profileSelect._cselRefresh();
-  const active = _profiles.find((p) => p.id === profileSelect.value);
-  if (active) fillProfileFields(active);
+  const add = document.createElement("option");
+  add.value = NEW_PROFILE; add.textContent = "＋ New profile";
+  profileSelect.appendChild(add);
+  showProfileChoice(_profiles.some((p) => p.id === wantId) ? wantId : NEW_PROFILE);
 }
 
 if (profileSelect) {
   profileSelect.addEventListener("change", () => {
-    const p = _profiles.find((x) => x.id === profileSelect.value);
-    if (p) { fillProfileFields(p); if (window.api.profileSetActive) window.api.profileSetActive(p.id); }
+    const p = selectedProfile();
+    showProfileChoice(p ? p.id : NEW_PROFILE);
+    if (p && window.api.profileSetActive) window.api.profileSetActive(p.id);
+    if (!p) { const n = document.getElementById("profileName"); if (n) n.focus(); }
   });
 }
-// Inline "save as new" row (Electron has no window.prompt).
-const profileSaveRow = document.getElementById("profileSaveRow");
-const profileLabelInput = document.getElementById("profileLabelInput");
-const profileSaveConfirm = document.getElementById("profileSaveConfirm");
-const profileSaveCancel = document.getElementById("profileSaveCancel");
 
-function openSaveRow() {
-  if (!profileSaveRow) return;
-  if (profileLabelInput) profileLabelInput.value = readProfileFields().name || "";
-  profileSaveRow.hidden = false;
-  if (profileLabelInput) { profileLabelInput.focus(); profileLabelInput.select(); }
+// A name for a new profile: the person's name, made unique ("Jane Doe 2").
+function newProfileLabel(name) {
+  const base = (name || "").trim() || "Profile";
+  const taken = new Set(_profiles.map((p) => (p.label || "").toLowerCase()));
+  if (!taken.has(base.toLowerCase())) return base;
+  for (let i = 2; ; i++) if (!taken.has(`${base} ${i}`.toLowerCase())) return `${base} ${i}`;
 }
-function closeSaveRow() { if (profileSaveRow) profileSaveRow.hidden = true; }
-async function confirmSaveRow() {
-  const label = (profileLabelInput ? profileLabelInput.value : "").trim();
-  if (!label) { if (profileLabelInput) profileLabelInput.focus(); return; }
-  if (!window.api.profileSaveNew) { window.alert("Profiles need the latest app version — fully close and reopen the app."); return; }
+
+// Save what is in the fields: into the selected profile, or as a new one.
+// Returns true when saved.
+async function saveProfileFields({ quiet } = {}) {
+  const now = readProfileFields();
+  if (!now.name) { const n = document.getElementById("profileName"); if (n) n.focus(); return false; }
+  const cur = selectedProfile();
   try {
-    const id = await window.api.profileSaveNew(label, readProfileFields());
-    closeSaveRow();
-    await refreshProfiles(id);
-    if (!id) window.alert("Could not save the profile.");
+    if (cur) {
+      // The list shows the label; when it was the person's name, it follows a renamed person.
+      const label = !cur.label || cur.label === cur.name ? now.name : cur.label;
+      await window.api.profileUpdate(cur.id, label, now);
+      await refreshProfiles(cur.id);
+      if (!quiet) toast(`Saved “${label}”.`, "ok");
+    } else {
+      const label = newProfileLabel(now.name);
+      const id = await window.api.profileSaveNew(label, now);
+      if (!id) throw new Error("not saved");
+      await refreshProfiles(id);
+      if (!quiet) toast(`Saved the new profile “${label}”.`, "ok");
+    }
+    return true;
   } catch (e) {
-    window.alert("Could not save the profile — please fully close and reopen the app to load the update.\n\n" + (e && e.message ? e.message : e));
+    toast("Could not save the profile: " + (e && e.message ? e.message : e), "err");
+    return false;
   }
 }
-if (profileSaveNewBtn) profileSaveNewBtn.addEventListener("click", openSaveRow);
-if (profileSaveConfirm) profileSaveConfirm.addEventListener("click", confirmSaveRow);
-if (profileSaveCancel) profileSaveCancel.addEventListener("click", closeSaveRow);
-if (profileLabelInput) profileLabelInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") { e.preventDefault(); confirmSaveRow(); }
-  else if (e.key === "Escape") { e.preventDefault(); closeSaveRow(); }
+if (profileSaveBtn) profileSaveBtn.addEventListener("click", () => saveProfileFields());
+if (profileRevertBtn) profileRevertBtn.addEventListener("click", () => {
+  const cur = selectedProfile();
+  if (cur) showProfileChoice(cur.id);
 });
-if (profileUpdateBtn) profileUpdateBtn.addEventListener("click", async () => {
-  const id = profileSelect ? profileSelect.value : "";
-  if (!id) { window.alert("Select a profile to update, or press ＋ to save a new one."); return; }
-  const cur = _profiles.find((p) => p.id === id);
-  await window.api.profileUpdate(id, cur ? cur.label : null, readProfileFields());
-  await refreshProfiles(id);
+
+// Delete asks in place (no system dialog over the meeting).
+const profileDeleteConfirm = document.getElementById("profileDeleteConfirm");
+const profileDeleteText = document.getElementById("profileDeleteText");
+function hideProfileDeleteConfirm() { if (profileDeleteConfirm) profileDeleteConfirm.hidden = true; }
+if (profileDeleteBtn) profileDeleteBtn.addEventListener("click", () => {
+  const cur = selectedProfile();
+  if (!cur || !profileDeleteConfirm) return;
+  if (profileDeleteText) profileDeleteText.textContent = `Delete “${cur.label || cur.name || "this profile"}”?`;
+  profileDeleteConfirm.hidden = false;
 });
-if (profileDeleteBtn) profileDeleteBtn.addEventListener("click", async () => {
-  const id = profileSelect ? profileSelect.value : "";
-  if (!id) return;
-  const cur = _profiles.find((p) => p.id === id);
-  if (!window.confirm(`Delete profile "${cur ? cur.label : ""}"?`)) return;
-  await window.api.profileDelete(id);
+const profileDeleteNo = document.getElementById("profileDeleteNo");
+const profileDeleteYes = document.getElementById("profileDeleteYes");
+if (profileDeleteNo) profileDeleteNo.addEventListener("click", hideProfileDeleteConfirm);
+if (profileDeleteYes) profileDeleteYes.addEventListener("click", async () => {
+  const cur = selectedProfile();
+  hideProfileDeleteConfirm();
+  if (!cur) return;
+  await window.api.profileDelete(cur.id);
   await refreshProfiles();
 });
 
@@ -651,14 +723,37 @@ const stageNextBtn = document.getElementById("stageNextBtn");
 const profileBackBtn = document.getElementById("profileBackBtn");
 const profileNextBtn = document.getElementById("profileNextBtn");
 if (stageBackBtn) stageBackBtn.addEventListener("click", () => showModeSelect());
-if (stageNextBtn) stageNextBtn.addEventListener("click", async () => {
-  await saveWizardMeetingType();
-  showProfile();
+let stageAdvancing = false;
+async function stageNext() {
+  if (stageAdvancing) return;
+  stageAdvancing = true;
+  try { await saveWizardMeetingType(); showProfile(); } finally { stageAdvancing = false; }
+}
+if (stageNextBtn) stageNextBtn.addEventListener("click", stageNext);
+// The first click on a meeting picks it and opens its description; a click on
+// the meeting already picked goes on to the next step (Next does too). What
+// was picked is noted at the press, before the click changes it. (A click on
+// the label reaches its radio as a click too, so this covers both.)
+let stageAutoTimer = null, stagePickedAtPress = null;
+document.querySelectorAll('input[name="setupMeetingType"]').forEach((el) => {
+  const card = el.closest(".stage-card") || el;
+  card.addEventListener("pointerdown", () => { stagePickedAtPress = el.checked ? el.value : null; });
+  el.addEventListener("click", () => {
+    if (stageOverlay && stageOverlay.hidden) return;
+    const again = stagePickedAtPress === el.value;
+    stagePickedAtPress = null;
+    if (!again) return;
+    clearTimeout(stageAutoTimer);
+    stageAutoTimer = setTimeout(() => { if (stageOverlay && !stageOverlay.hidden) stageNext(); }, 120);
+  });
 });
 if (profileBackBtn) profileBackBtn.addEventListener("click", () => showStage());
-if (profileNextBtn) profileNextBtn.addEventListener("click", () => {
+if (profileNextBtn) profileNextBtn.addEventListener("click", async () => {
   const nameEl = document.getElementById("profileName");
   if (nameEl && !nameEl.value.trim()) { nameEl.focus(); nameEl.classList.add("input-error"); setTimeout(() => nameEl.classList.remove("input-error"), 1200); return; }
+  // A new profile is kept for next time without an extra click. (Changes to a
+  // saved profile are used for this call; Save keeps them.)
+  if (!selectedProfile()) await saveProfileFields({ quiet: true });
   showSetup();
 });
 // Next / Start buttons: a ripple spreads from where the button was pressed.
@@ -741,7 +836,41 @@ function renderHistory() {
     row.appendChild(del);
     historyList.appendChild(row);
   });
+  // Remove all: every session in the list (only the matching ones while searching).
+  _historyShown = items;
+  if (historyClearBtn) {
+    historyClearBtn.hidden = !items.length;
+    historyClearBtn.textContent = q ? `Remove these (${items.length})` : "Remove all";
+  }
+  hideHistoryClearConfirm();
 }
+
+const historyClearBtn = document.getElementById("historyClearBtn");
+const historyClearConfirm = document.getElementById("historyClearConfirm");
+const historyClearText = document.getElementById("historyClearText");
+let _historyShown = [];
+function hideHistoryClearConfirm() { if (historyClearConfirm) historyClearConfirm.hidden = true; }
+if (historyClearBtn) historyClearBtn.addEventListener("click", () => {
+  if (!_historyShown.length || !historyClearConfirm) return;
+  const n = _historyShown.length;
+  if (historyClearText) historyClearText.textContent = `Delete ${n === 1 ? "this session" : `all ${n} sessions`} and ${n === 1 ? "its" : "their"} saved folders? This can't be undone.`;
+  historyClearConfirm.hidden = false;
+});
+const historyClearNo = document.getElementById("historyClearNo");
+const historyClearYes = document.getElementById("historyClearYes");
+if (historyClearNo) historyClearNo.addEventListener("click", hideHistoryClearConfirm);
+if (historyClearYes) historyClearYes.addEventListener("click", async () => {
+  const ids = _historyShown.map((s) => s.id);
+  hideHistoryClearConfirm();
+  if (!ids.length) return;
+  if (window.api.sessionDeleteMany) await window.api.sessionDeleteMany(ids);
+  else for (const id of ids) await window.api.sessionDelete(id);
+  const gone = new Set(ids);
+  _historyItems = _historyItems.filter((x) => !gone.has(x.id));
+  if (historySearch) historySearch.value = "";
+  renderHistory();
+  toast(`Deleted ${ids.length} session${ids.length === 1 ? "" : "s"}.`, "ok");
+});
 
 async function openHistory() {
   if (!historyOverlay || !window.api.sessionList) return;
@@ -873,7 +1002,11 @@ if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
     clearAnswerPanel();
     const val = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ""; };
     const profile = readProfileFields();
-    const amount = Number(val("salaryAmount"));
+    // A team meeting has no resume, job description or salary (those boxes are
+    // hidden): a CV/JD left from switching the type is not used either.
+    const team = !document.body.classList.contains("meeting-hiring");
+    if (team && !resumeSessionId) { await clearKb("cv"); await clearKb("jd"); }
+    const amount = team ? 0 : Number(val("salaryAmount"));
     const salary = amount > 0 ? { amount, currency: val("salaryCurrency") || "USD", period: val("salaryPeriod") || "month" } : null;
     if (resumeSessionId && window.api.sessionResume) {
       const data = await window.api.sessionResume(resumeSessionId, { profile, salary });
@@ -1081,15 +1214,53 @@ function wireContinueKbZones(id) {
     if (!zone || !input) return;
     zone.addEventListener("click", () => input.click());
     input.addEventListener("change", () => { addContinueKbFiles(id, kind, input.files); input.value = ""; });
-    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("dragover"); });
-    zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
-    zone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      zone.classList.remove("dragover");
-      addContinueKbFiles(id, kind, e.dataTransfer && e.dataTransfer.files);
-    });
+    wireFileDrop(zone, (files) => addContinueKbFiles(id, kind, files));
   });
 }
+
+// A drop zone for files from Finder / Explorer. On macOS a drop is accepted
+// only when the page takes the drag at dragenter as well as dragover and names
+// an operation Finder offers (copy); with just dragover, Windows takes the file
+// but a Mac may refuse it. The highlight counts enter/leave so moving over the
+// zone's own text doesn't make it flicker off.
+function wireFileDrop(zone, onFiles) {
+  let depth = 0;
+  const hasFiles = (e) => !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files"));
+  const take = (e) => {
+    if (!hasFiles(e)) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    try { e.dataTransfer.dropEffect = "copy"; } catch {}
+    return true;
+  };
+  zone.addEventListener("dragenter", (e) => { if (take(e)) { depth++; zone.classList.add("dragover"); } });
+  zone.addEventListener("dragover", (e) => { if (take(e)) zone.classList.add("dragover"); });
+  zone.addEventListener("dragleave", () => { depth = Math.max(0, depth - 1); if (!depth) zone.classList.remove("dragover"); });
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    depth = 0;
+    zone.classList.remove("dragover");
+    const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+    if (!files.length) {
+      log(`Drop on ${zone.id}: no file came with it (types: ${Array.from((e.dataTransfer && e.dataTransfer.types) || []).join(", ") || "none"})`, "err");
+      toast("Nothing to upload came with that drop. Click the box to pick the file instead.", "err");
+      return;
+    }
+    log(`Drop on ${zone.id}: ${files.map((f) => `${f.name} (${f.size} bytes)`).join(", ")}`, "info");
+    onFiles(files);
+  });
+}
+
+// A file let go anywhere else in the window must not open in it (the page
+// would be replaced by the file); the drop zones above handle their own.
+// (An element that already took the drag, like the message box, is left alone.)
+window.addEventListener("dragover", (e) => {
+  if (e.defaultPrevented) return;
+  e.preventDefault();
+  try { e.dataTransfer.dropEffect = "none"; } catch {}
+});
+window.addEventListener("drop", (e) => e.preventDefault());
 
 if (sessionSearch) sessionSearch.addEventListener("input", () => renderContinueList(sessionSearch.value));
 if (continueOkBtn) continueOkBtn.addEventListener("click", () => { if (_continueSelectedId) continueSession(_continueSelectedId); });
@@ -1280,13 +1451,7 @@ function wireKbZoneSet(dropPrefix, filePrefix) {
       input.click();
     });
     input.addEventListener("change", () => { addKbFiles(kind, input.files); input.value = ""; });
-    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("dragover"); });
-    zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
-    zone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      zone.classList.remove("dragover");
-      addKbFiles(kind, e.dataTransfer && e.dataTransfer.files);
-    });
+    wireFileDrop(zone, (files) => addKbFiles(kind, files));
   });
 }
 wireKbZoneSet("drop", "file");
@@ -2032,6 +2197,24 @@ if (themeSegEl) themeSegEl.addEventListener("click", (e) => {
 });
 window.addEventListener("ace-theme", syncThemeSeg);
 syncThemeSeg();
+
+// Title-bar button: one click between light and dark (the theme on screen
+// now decides which; "System" stays available in Settings → Appearance).
+const themeBtnEl = document.getElementById("themeBtn");
+function syncThemeBtn() {
+  if (!themeBtnEl) return;
+  const dark = document.documentElement.dataset.theme !== "light";
+  themeBtnEl.classList.toggle("is-dark", dark);
+  const t = dark ? "Switch to light theme" : "Switch to dark theme";
+  themeBtnEl.title = t;
+  themeBtnEl.setAttribute("aria-label", t);
+}
+if (themeBtnEl) themeBtnEl.addEventListener("click", () => {
+  if (!window.aceTheme) return;
+  window.aceTheme.set(document.documentElement.dataset.theme === "light" ? "dark" : "light");
+});
+window.addEventListener("ace-theme", syncThemeBtn);
+syncThemeBtn();
 
 // ── Display cards: a small picture of each display ─────────────────────────
 // Used wherever a display is picked (the recording's screen, the screen a
@@ -6462,12 +6645,30 @@ function adoptScreenStream(stream, displayId) {
   };
 }
 
+// Why the supporter gets no screen, told to them with the "screen" message:
+// 'mac-permission' = this Mac has not given Ace Screen Recording, 'failed' =
+// the capture itself failed, '' = sharing works (or is switched off).
+let screenNoShareWhy = "";
 async function captureScreenForSupporter() {
   if (speakerScreenStream && speakerScreenStream.getVideoTracks().some((t) => t.readyState === "live")) return speakerScreenStream;
   stopScreenForSupporter();
+  screenNoShareWhy = "";
+  // Without the permission macOS still gives a "screen", but it holds only the
+  // wallpaper and the menu bar: the supporter would see an empty desktop. Say
+  // why instead. (Asking for a source still shows this Mac's own prompt and
+  // the speaker's notice, so the permission can be given.)
+  if (IS_MAC && window.api.getScreenPermission) {
+    const perm = await window.api.getScreenPermission().catch(() => "unknown");
+    if (perm !== "granted") {
+      log(`Screen for supporter: macOS Screen Recording permission is "${perm}", so the screen is not shared`, "err");
+      if (window.api.getDesktopSourceId) window.api.getDesktopSourceId("").catch(() => {});
+      screenNoShareWhy = "mac-permission";
+      return null;
+    }
+  }
   const want = (await shareDisplayInfo()).display;
   const s = await captureDisplayStream(shareDisplayId && want === shareDisplayId ? shareDisplayId : "");
-  if (!s) return null;
+  if (!s) { screenNoShareWhy = "failed"; return null; }
   adoptScreenStream(s, want);
   return speakerScreenStream;
 }
@@ -6483,7 +6684,8 @@ async function notifyScreenState(on, onlyConnId) {
   const info = await shareDisplayInfo();
   speakerPeers.forEach((entry, connId) => {
     if (onlyConnId && connId !== onlyConnId) return;
-    try { window.api.sendSignaling({ connId, type: "screen", on: !!on, ...info }); } catch {}
+    const why = on || !(netCfg && netCfg.shareScreen !== false) ? "" : screenNoShareWhy;
+    try { window.api.sendSignaling({ connId, type: "screen", on: !!on, why, ...info }); } catch {}
   });
 }
 
@@ -6647,6 +6849,11 @@ function clearScreenView(text) {
   setScreenStatus(text || "No screen.", true);
 }
 
+const SCREEN_NO_SHARE_TEXT = {
+  "": "The speaker is not sharing the screen.",
+  "mac-permission": "The speaker's Mac has not allowed Ace to record the screen. On their Mac: System Settings → Privacy & Security → Screen & System Audio Recording → turn Ace on, then quit and reopen Ace. If Ace is already on, remove it with − and add it again (an update makes macOS forget it).",
+  failed: "The speaker's screen could not be captured on their computer.",
+};
 function onScreenShareState(on, msg) {
   screenShareOn = on;
   if (msg && Array.isArray(msg.displays)) {
@@ -6654,7 +6861,7 @@ function onScreenShareState(on, msg) {
     remoteDisplay = String(msg.display || "");
     renderScreenDisplays();
   }
-  if (!on) clearScreenView("The speaker is not sharing the screen.");
+  if (!on) clearScreenView(SCREEN_NO_SHARE_TEXT[(msg && msg.why) || ""] || SCREEN_NO_SHARE_TEXT[""]);
   else if (!(screenVideoEl && screenVideoEl.srcObject)) setScreenStatus("Waiting for the speaker's screen…", true);
   else describeScreen();
   // Control was taken but the link dropped (new connection = no control on the
@@ -7083,12 +7290,11 @@ const joinStatusEl = document.getElementById("joinStatus");
 const joinConnectBtn = document.getElementById("joinConnectBtn");
 const joinSessionListEl = document.getElementById("joinSessionList");
 const joinPasswordEl = document.getElementById("joinPassword");
-const joinStepPasswordEl = document.getElementById("joinStepPassword");
-const joinStepModeEl = document.getElementById("joinStepMode");
+const joinPasswordBlockEl = document.getElementById("joinPasswordBlock");
 const joinModeSegEl = document.getElementById("joinModeSeg");
 const joinPaneInternetEl = document.getElementById("joinPaneInternet");
 const joinPaneLanEl = document.getElementById("joinPaneLan");
-let joinStep = "";              // "password" | "mode" ("" while checking)
+let joinNeedsPassword = false;  // no saved support password: the box is shown
 let joinMode = "internet";      // "internet" | "lan"
 let joinSessions = [];          // live sessions on ace2me.com
 let joinSelected = "";          // the one picked
@@ -7211,25 +7417,20 @@ function setJoinStatus(text, kind) {
   joinStatusEl.className = "join-status" + (kind ? " " + kind : "");
 }
 
-// Step 1, the password: asked once. Ace keeps it (encrypted) and checks it
-// with ace2me.com each time; when the administrator changes it, step 1 comes
-// back with "This password was reset. Contact admin."
-function showJoinStep(step, message) {
-  joinStep = step;
-  if (joinStepPasswordEl) joinStepPasswordEl.hidden = step !== "password";
-  if (joinStepModeEl) joinStepModeEl.hidden = step !== "mode";
-  const label = joinConnectBtn && joinConnectBtn.querySelector("span");
-  if (label) label.textContent = step === "password" ? "Continue" : "Connect";
-  if (joinConnectBtn) joinConnectBtn.disabled = !step;
-  setJoinStatus(message || "", message ? "err" : "");
-  watchJoinSessions(step === "mode" && joinMode === "internet");
-  if (step === "password" && joinPasswordEl) {
+// The support password box: shown only while no password is saved — the
+// first join, or after the administrator changed it ("This password was
+// reset. Contact admin."). It goes with Connect; once a join takes it, Ace
+// keeps it and later joins don't ask.
+function showJoinPassword(on, message) {
+  joinNeedsPassword = !!on;
+  if (joinPasswordBlockEl) joinPasswordBlockEl.hidden = !on;
+  if (on && joinPasswordEl) {
     joinPasswordEl.value = "";
-    setTimeout(() => { try { joinPasswordEl.focus(); } catch {} }, 50);
+    if (message) setTimeout(() => { try { joinPasswordEl.focus(); } catch {} }, 50);
   }
-  if (step === "mode") setJoinMode(joinMode);
+  if (message) setJoinStatus(message, "err");
 }
-// Step 2: over the internet (sessions on ace2me.com) or on the same network.
+// Over the internet (sessions on ace2me.com) or on the same network.
 function setJoinMode(mode) {
   joinMode = mode === "lan" ? "lan" : "internet";
   if (joinModeSegEl) joinModeSegEl.querySelectorAll("button[data-join-mode]").forEach((b) => {
@@ -7239,7 +7440,7 @@ function setJoinMode(mode) {
   });
   if (joinPaneInternetEl) joinPaneInternetEl.hidden = joinMode !== "internet";
   if (joinPaneLanEl) joinPaneLanEl.hidden = joinMode !== "lan";
-  if (joinStep === "mode") watchJoinSessions(joinMode === "internet");
+  if (joinOverlayEl && !joinOverlayEl.hidden) watchJoinSessions(joinMode === "internet");
   if (joinMode === "lan") setTimeout(() => { try { joinAddressEl && joinAddressEl.focus(); } catch {} }, 50);
 }
 
@@ -7250,25 +7451,28 @@ async function showJoin(message) {
     const saved = ipOnly(netCfg && netCfg.supporterAddress);
     if (saved && saved !== "172.16.98.11") joinAddressEl.value = saved;
   }
-  showJoinStep("");
-  setJoinStatus("Checking your support password…", "busy");
-  const r = await (window.api.supportStatus ? window.api.supportStatus() : Promise.resolve({ ok: false })).catch(() => ({ ok: false }));
+  if (joinConnectBtn) joinConnectBtn.disabled = false;
+  setJoinStatus(message || "", message ? "err" : "");
+  setJoinMode(joinMode);
+  // Only "is a password saved?" — local, no network, so nothing to wait for.
+  const r = await (window.api.supportStatus ? window.api.supportStatus() : Promise.resolve({ saved: false })).catch(() => ({ saved: false }));
   if (!joinOverlayEl || joinOverlayEl.hidden) return;
-  if (r && r.ok) { showJoinStep("mode", message); return; }
-  showJoinStep("password", (r && r.reason) ? joinReasonText(r.reason) : (message || ""));
+  showJoinPassword(!(r && r.saved));
 }
 
-async function submitJoinPassword() {
+// The password typed for this join ('' = use the saved one). Missing when the
+// box is shown: say so and return null.
+function joinPasswordForConnect() {
+  if (!joinNeedsPassword) return "";
   const password = joinPasswordEl ? joinPasswordEl.value : "";
-  if (!password) { setJoinStatus("Enter the support password.", "err"); joinPasswordEl && joinPasswordEl.focus(); return; }
-  if (joinConnectBtn) joinConnectBtn.disabled = true;
-  setJoinStatus("Checking…", "busy");
-  const r = await window.api.supportLogin(password).catch((e) => ({ ok: false, reason: e.message }));
-  if (joinConnectBtn) joinConnectBtn.disabled = false;
-  if (r && r.ok) { showJoinStep("mode"); return; }
-  setJoinStatus(joinReasonText((r && r.reason) || "bad-password"), "err");
-  if (joinPasswordEl) { joinPasswordEl.select(); joinPasswordEl.focus(); }
+  if (!password) { setJoinStatus("Enter the support password.", "err"); joinPasswordEl && joinPasswordEl.focus(); return null; }
+  return password;
 }
+// A join refused over the password: the box (again), with why.
+function joinPasswordRefused(reason) {
+  showJoinPassword(true, joinReasonText(reason));
+}
+const JOIN_PASSWORD_REASONS = new Set(["reset", "bad-password", "no-password", "locked", "too-many-tries"]);
 
 function clearJoinPending() {
   if (joinPending && joinPending.timer) clearTimeout(joinPending.timer);
@@ -7276,23 +7480,30 @@ function clearJoinPending() {
   if (joinConnectBtn) joinConnectBtn.disabled = false;
 }
 
-// The one button: Continue (password) or Connect (internet / LAN).
+// Connect (internet / LAN), with the password when none is saved yet.
+let joinStarting = false;
 async function startJoin() {
-  if (joinPending) return;
-  if (joinStep === "password") return submitJoinPassword();
-  if (joinStep !== "mode") return;
+  if (joinPending || joinStarting) return;
   if (joinMode === "internet") return startJoinOnline();
   const address = ipOnly(joinAddressEl && joinAddressEl.value);
   if (!address) { setJoinStatus("Enter their IP address.", "err"); joinAddressEl && joinAddressEl.focus(); return; }
   if (!isIpv4(address)) { setJoinStatus("Enter their IP address, for example 192.168.1.20.", "err"); joinAddressEl && joinAddressEl.focus(); return; }
+  const password = joinPasswordForConnect();
+  if (password === null) return;
   netCfg = { ...(netCfg || {}), role: "supporter" };
   teardownPeers();
-  const r = await window.api.joinAsSupporter({ address }).catch((e) => ({ ok: false, error: e.message }));
+  joinStarting = true;
+  if (joinConnectBtn) joinConnectBtn.disabled = true;
+  if (password) setJoinStatus("Checking the password…", "busy");
+  const r = await window.api.joinAsSupporter({ address, password }).catch((e) => ({ ok: false, error: e.message }));
+  joinStarting = false;
+  if (joinConnectBtn) joinConnectBtn.disabled = false;
   if (!r || !r.ok) {
-    if (r && r.reason) { showJoinStep("password", joinReasonText(r.reason)); return; }
-    setJoinStatus((r && r.error) || "Could not connect.", "err");
+    if (r && JOIN_PASSWORD_REASONS.has(r.reason)) { joinPasswordRefused(r.reason); return; }
+    setJoinStatus((r && (r.error || (r.reason && joinReasonText(r.reason)))) || "Could not connect.", "err");
     return;
   }
+  if (password) showJoinPassword(false);
   supporterAddress = address;
   if (joinConnectBtn) joinConnectBtn.disabled = true;
   setJoinStatus(`Connecting to ${address}…`, "busy");
@@ -7311,11 +7522,14 @@ async function startJoin() {
 async function startJoinOnline() {
   const session = joinSessions.find((x) => x.id === joinSelected);
   if (!session) { setJoinStatus(joinSessions.length ? "Pick a session first." : "There is no live session to join yet.", "err"); return; }
+  const password = joinPasswordForConnect();
+  if (password === null) return;
   netCfg = { ...(netCfg || {}), role: "supporter" };
   teardownPeers();
-  const r = await window.api.joinOnline({ sessionId: session.id, label: session.label }).catch((e) => ({ ok: false, error: e.message }));
+  // The join itself checks the password on ace2me.com: one call, no extra wait.
+  const r = await window.api.joinOnline({ sessionId: session.id, label: session.label, password }).catch((e) => ({ ok: false, error: e.message }));
   if (!r || !r.ok) {
-    if (r && r.reason) { showJoinStep("password", joinReasonText(r.reason)); return; }
+    if (r && JOIN_PASSWORD_REASONS.has(r.reason)) { joinPasswordRefused(r.reason); return; }
     setJoinStatus((r && r.error) || "Could not connect.", "err");
     return;
   }
@@ -7418,11 +7632,14 @@ if (window.api.onJoinRejected)
       const addr = joinPending.address;
       clearJoinPending();
       window.api.leaveSupporter().catch(() => {});
-      if (reason === "reset" || reason === "bad-password" || reason === "no-password") {
-        showJoinStep("password", joinReasonText(reason === "bad-password" ? "reset" : reason));
-        return;
-      }
+      if (JOIN_PASSWORD_REASONS.has(reason)) { joinPasswordRefused(reason); return; }
       setJoinStatus(joinReasonText(reason, addr), "err");
+      return;
+    }
+    // A saved password found changed after the attempt already ended (e.g.
+    // "can't reach" came first): on the join screen, ask for it now.
+    if (JOIN_PASSWORD_REASONS.has(reason) && joinOverlayEl && !joinOverlayEl.hidden && !document.body.classList.contains("role-supporter")) {
+      joinPasswordRefused(reason);
       return;
     }
     supporterLostConnection(joinReasonText(reason, supporterAddress));

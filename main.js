@@ -582,7 +582,7 @@ function createWindow() {
     else callback(false);
   });
   session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
-    desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
+    screenSources().then((sources) => {
       // The session recording takes its video from here on Windows, so this is
       // the screen chosen for recording, unless the page asked for another one
       // for this capture (the screen a supporter watches). System audio does
@@ -591,9 +591,12 @@ function createWindow() {
       // Chromium supports system-audio loopback capture only on Windows.
       if (src) callback({ video: src, audio: process.platform === 'win32' ? 'loopback' : undefined });
       else callback({});
-    });
+    }).catch(() => { try { callback({}); } catch {} });
   }, { useSystemPicker: false });
   bindDisplayEvents();
+  // The one screen lookup this run needs, done now while nothing is going on
+  // rather than when a session starts (see screenSources).
+  if (process.platform === 'win32') setTimeout(() => { screenSources().catch(() => {}); }, 4000);
 
   win = new BrowserWindow({
     x: startBounds.x,
@@ -637,16 +640,37 @@ function createWindow() {
   if (clickThroughActive()) try { win.setIgnoreMouseEvents(true, { forward: true }); } catch {}
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  // A file dropped outside the drop zones must not replace the app with it.
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
   clickTraceLog(`--- Ace ${app.getVersion()} started; ${traceFlags()}`);
-  clickTrace.start();
+  // The press-watching helper (a PowerShell process, ~100 MB, compiled at
+  // every start) only when switched on in Settings → Check; the page-side
+  // reports (freezes, slow frames, errors) cost nothing and always run.
+  if (state.clickTrace === true) clickTrace.start();
   // A frozen or crashed page (or a lost GPU process: the window goes black or
   // keeps a stale picture) also looks like "the mouse does nothing while the
   // hotkeys still work", because the hotkeys live in this process.
+  // A left release with no press before it is the sign of the lost presses
+  // (see reviveMouseInput): make the window take them again at once.
+  let leftHeld = false, lastRevive = 0;
   try {
-    win.webContents.on('before-mouse-event', (_e, m) => { if (m && m.type === 'mouseDown' && m.button === 'left') lastBrowserPressAt = Date.now(); });
+    win.webContents.on('before-mouse-event', (_e, m) => {
+      if (!m || m.button !== 'left') return;
+      if (m.type === 'mouseDown') { leftHeld = true; lastBrowserPressAt = Date.now(); }
+      else if (m.type === 'mouseUp') {
+        if (!leftHeld && Date.now() - lastRevive > 1000) {
+          lastRevive = Date.now();
+          clickTraceLog('a release arrived without its press: presses are being lost; making the window take them again');
+          reviveMouseInput(win);
+        }
+        leftHeld = false;
+      }
+    });
   } catch {}
+  win.on('restore', () => setTimeout(() => reviveMouseInput(win), 0));
   win.on('unresponsive', () => clickTraceLog('PAGE FROZEN: the main page stopped responding (unresponsive)'));
-  win.on('responsive', () => clickTraceLog('the main page responds again'));
+  win.on('responsive', () => { clickTraceLog('the main page responds again'); afterFreeze(); });
+  startFreezeWatch();
   win.webContents.on('render-process-gone', (_e, d) => clickTraceLog(`PAGE CRASHED: render process gone (${(d && d.reason) || '?'}, exit ${d && d.exitCode})`));
   if (!app.listenerCount('child-process-gone')) {
     app.on('child-process-gone', (_e, d) => clickTraceLog(`child process gone: ${(d && d.type) || '?'} (${(d && d.reason) || '?'}, exit ${d && d.exitCode})`));
@@ -745,6 +769,7 @@ function showMain() {
     showWindow(win);
     if (hiddenBounds) { try { win.setBounds(hiddenBounds); } catch {} }
   }
+  reviveMouseInput(win);
   if (!noActivate()) { try { win.focus(); } catch {} }
 }
 function toggleVisible() {
@@ -789,10 +814,26 @@ let supporterUiActive = false;
 function noActivate() {
   return NO_ACTIVATE_SUPPORTED && state.keepOtherAppFocused !== false && !supporterUiActive;
 }
+// Windows: hiding a window and showing it again leaves Chromium's input child
+// window (Chrome_RenderWidgetHostHWND, the one that takes the mouse buttons)
+// hidden. On some setups every press on Ace is then lost while the release
+// still arrives: the window can't be clicked or moved, only the hotkeys work.
+// A real change of size shows the child again, so: one pixel wider and back.
+function reviveMouseInput(w) {
+  if (process.platform !== 'win32' || !w || w.isDestroyed() || !w.isVisible() || w.isMinimized()) return;
+  try {
+    const b = w.getBounds();
+    w.setBounds({ ...b, width: b.width + 1 });
+    w.setBounds(b);
+    const got = w.getBounds();
+    if (got.x !== b.x || got.y !== b.y || got.width !== b.width || got.height !== b.height) w.setBounds(b);
+  } catch {}
+}
 // show() would activate a focusable window; showInactive() never does.
 function showWindow(w) {
   if (!w || w.isDestroyed()) return;
   if (noActivate()) w.showInactive(); else w.show();
+  reviveMouseInput(w);
 }
 
 const TT_PRINTABLE = [
@@ -1010,6 +1051,38 @@ ipcMain.handle('type-through-clipboard', () => {
   } catch {}
   return { text, image };
 });
+// After a freeze. When Ace stops answering for about 5 s, Windows swaps its
+// windows for a "Not responding" copy and back again; afterwards the main
+// window could take focus away from the meeting app (Windows dropped the
+// no-activate style) and its mouse presses could be lost. Put both right.
+let freezeWatchTimer = null;
+function afterFreeze() {
+  if (process.platform !== 'win32') return;
+  if (noActivate()) {
+    for (const w of [win, stickyWin, infoWin, ...liveNotes()]) {
+      if (!w || w.isDestroyed()) continue;
+      // set it again even if Electron thinks it is still set: Windows dropped it
+      try { w.setFocusable(true); w.setFocusable(false); w.setSkipTaskbar(true); } catch {}
+    }
+  }
+  for (const w of [win, stickyWin, infoWin, ...liveNotes()]) reviveMouseInput(w);
+}
+// The main process's own freezes (a long lookup or file write on its thread):
+// a 500 ms timer that came late by seconds was blocked that long. Written to
+// click-trace.log so the next "Not responding" names how long it lasted.
+function startFreezeWatch() {
+  if (freezeWatchTimer) return;
+  let last = Date.now();
+  freezeWatchTimer = setInterval(() => {
+    const now = Date.now();
+    const late = now - last - 500;
+    last = now;
+    if (late < 1500) return;
+    if (late > 120000) return; // the computer slept; not a freeze
+    clickTraceLog(`APP FROZEN: Ace's main process was blocked for ${(late / 1000).toFixed(1)} s`);
+    if (late >= 4000) afterFreeze();
+  }, 500);
+}
 // Recording a new hotkey in Settings needs the real key events, so for that
 // moment the window is allowed to take focus.
 ipcMain.handle('type-through-real-focus', (e, on) => {
@@ -2408,6 +2481,14 @@ setInterval(() => {
   clickTraceLog(`PAGE STALLED: no heartbeat from the main page for ${Math.round(quiet / 1000)} s (frozen or very busy). domNodes=${pageBeat.nodes}; ${traceFlags()}`);
 }, 3000);
 // Opens the folder with click-trace.log selected (Settings / support).
+ipcMain.handle('click-trace-get', () => ({ supported: process.platform === 'win32', enabled: state.clickTrace === true }));
+ipcMain.handle('click-trace-set', (_e, on) => {
+  state.clickTrace = !!on;
+  saveState();
+  if (process.platform === 'win32') { if (state.clickTrace) clickTrace.start(); else clickTrace.stop(); }
+  clickTraceLog(`click trace helper turned ${state.clickTrace ? 'on' : 'off'}`);
+  return state.clickTrace;
+});
 ipcMain.handle('click-trace-reveal', async () => {
   await clickTraceQueue;
   try { require('electron').shell.showItemInFolder(CLICK_TRACE_FILE); } catch {}
@@ -2837,13 +2918,16 @@ function connectSignalingClient() {
       if (seq !== supporterJoinSeq || supporterOnline !== target) return;
       if (!r.ok) {
         appendLogLine('[online] join refused: ' + r.error);
-        // the administrator changed the password: ask for it again
-        if (r.error === 'bad-password' || r.error === 'no-password') { aceOnline.forgetSupportPassword(); supportUnlocked = false; }
-        supporterRefused = r.error;
+        // the administrator changed the password: forget it, ask for it again
+        if (PASSWORD_GONE.has(r.error)) aceOnline.forgetSupportPassword();
+        const reason = passwordRefusal(r.error, target.typed);
+        supporterRefused = reason;
         supporterAdmitted = false;
-        if (win) win.webContents.send('join-rejected', { reason: r.error });
+        if (win) win.webContents.send('join-rejected', { reason });
         return;
       }
+      // ace2me.com took the typed password: keep it, not asked again
+      if (target.typed) { aceOnline.saveSupportPassword(target.password); target.typed = false; }
       openSignalingClient(aceOnline.relayUrl(r.relayUrl, 'join', r.ticket));
     });
     return;
@@ -3403,15 +3487,43 @@ function wdReadPid(f) { try { return parseInt(fs.readFileSync(f, 'utf8').trim(),
 // A byte copy of this Electron binary under a different name, so a by-name kill
 // of the app exe does not also kill the guardian. Falls back to the app exe if
 // the copy cannot be made.
-function ensureGuardianExe() {
+// The copy also needs the runtime files Electron loads from beside its exe
+// (ICU data and the V8 snapshots): without them it crashed on every start, and
+// Ace started it again every 5 s. The copy is made off the window's thread
+// (the exe is over 200 MB), and made again when Ace's own exe changes.
+const GUARDIAN_RUNTIME_FILES = ['icudtl.dat', 'snapshot_blob.bin', 'v8_context_snapshot.bin'];
+let guardianPrep = null;
+async function prepareGuardianExe() {
+  const fsp = fs.promises;
   const dest = wdFile('DevGuardian.exe');
-  try {
-    const src = fs.statSync(process.execPath);
-    let need = true;
-    try { need = fs.statSync(dest).size !== src.size; } catch {}
-    if (need) fs.copyFileSync(process.execPath, dest);
-    return dest;
-  } catch { return process.execPath; }
+  const st = await fsp.stat(process.execPath);
+  const stamp = `${st.size}:${Math.round(st.mtimeMs)}`;
+  let have = '';
+  try { have = (await fsp.readFile(wdFile('DevGuardian.ver'), 'utf8')).trim(); } catch {}
+  if (have !== stamp || !fs.existsSync(dest)) {
+    await fsp.copyFile(process.execPath, dest + '.tmp');
+    try { await fsp.unlink(dest); } catch {}
+    await fsp.rename(dest + '.tmp', dest);
+  }
+  const srcDir = path.dirname(process.execPath);
+  for (const name of GUARDIAN_RUNTIME_FILES) {
+    const from = path.join(srcDir, name), to = wdFile(name);
+    let fromSize = -1, toSize = -2;
+    try { fromSize = (await fsp.stat(from)).size; } catch { continue; }
+    try { toSize = (await fsp.stat(to)).size; } catch {}
+    if (have !== stamp || fromSize !== toSize) await fsp.copyFile(from, to);
+  }
+  await fsp.writeFile(wdFile('DevGuardian.ver'), stamp);
+  return dest;
+}
+function ensureGuardianExe() {
+  if (!guardianPrep) {
+    guardianPrep = prepareGuardianExe().catch((e) => {
+      appendLogLine('[watchdog] guardian copy failed (' + e.message + '); it runs as a second copy of Ace instead');
+      return process.execPath;
+    });
+  }
+  return guardianPrep;
 }
 // watchdog.js lives inside the asar; the guardian exe (a copy in userData) has
 // no asar next to it, so write the script to a plain file it can run directly.
@@ -3422,16 +3534,29 @@ function ensureGuardianScript() {
 }
 function guardianRunning() { return wdAlive(wdReadPid(wdFile('guardian.pid'))); }
 
-function spawnGuardian() {
-  if (guardianRunning()) return;
-  const exe = ensureGuardianExe();
-  const js = ensureGuardianScript();
+// Starts that never came up, in a row. After 3 the guardian is left off for
+// this run instead of being started again every 5 s.
+let guardianFailedStarts = 0;
+let guardianStarting = false;
+async function spawnGuardian() {
+  if (guardianStarting) return;
+  if (guardianRunning()) { guardianFailedStarts = 0; return; }
+  if (guardianFailedStarts >= 3) return;
+  guardianStarting = true;
   try {
-    spawn(exe, [js, app.getPath('userData'), process.execPath], {
-      detached: true, stdio: 'ignore',
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-    }).unref();
-  } catch (e) { appendLogLine('[watchdog] guardian spawn failed: ' + e.message); }
+    const exe = await ensureGuardianExe();
+    if (appQuitting || guardianRunning()) return;
+    const js = ensureGuardianScript();
+    if (++guardianFailedStarts === 3) appendLogLine('[watchdog] the guardian did not come up after 3 starts; it stays off until Ace restarts');
+    try {
+      const child = spawn(exe, [js, app.getPath('userData'), process.execPath], {
+        detached: true, stdio: 'ignore',
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      });
+      child.on('error', (e) => appendLogLine('[watchdog] guardian spawn failed: ' + e.message));
+      child.unref();
+    } catch (e) { appendLogLine('[watchdog] guardian spawn failed: ' + e.message); }
+  } finally { guardianStarting = false; }
 }
 
 function startWatchdog() {
@@ -3446,7 +3571,8 @@ function startWatchdog() {
   wdMonitorTimer = setInterval(() => {
     if (appQuitting || state.antiClose === false) return;
     try { fs.writeFileSync(wdFile('app.pid'), String(process.pid)); } catch {}
-    if (!guardianRunning()) spawnGuardian();
+    if (guardianRunning()) guardianFailedStarts = 0;
+    else spawnGuardian();
   }, 5000);
 }
 
@@ -3927,17 +4053,48 @@ ipcMain.handle('list-displays', () => recordableDisplays());
 // A small picture of each display, so a display can be recognised by eye:
 // [{ id: display id, src: JPEG data URL }]. Ace's own windows are not in it
 // while stealth is on (content protection).
+// Each supporter watching a speaker with several displays asks for these every
+// few seconds; a lookup holds the window's thread (see screenSources), so the
+// pictures are taken at most once every 3 s and shared by everyone asking.
+const thumbsCache = new Map(); // width -> { at, list } or { pending }
 ipcMain.handle('display-thumbnails', async (_e, opts) => {
   const width = Math.max(64, Math.min(480, parseInt(opts && opts.width, 10) || 320));
-  try {
-    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width, height: Math.round(width * 0.625) } });
-    return sources
+  const hit = thumbsCache.get(width);
+  if (hit && hit.pending) return hit.pending;
+  if (hit && Date.now() - hit.at < 3000) return hit.list;
+  const pending = desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width, height: Math.round(width * 0.625) }, fetchWindowIcons: false })
+    .then((sources) => sources
       .filter((s) => s.display_id && s.thumbnail && !s.thumbnail.isEmpty())
-      .map((s) => ({ id: String(s.display_id), src: 'data:image/jpeg;base64,' + s.thumbnail.toJPEG(68).toString('base64') }));
-  } catch {
-    return [];
-  }
+      .map((s) => ({ id: String(s.display_id), src: 'data:image/jpeg;base64,' + s.thumbnail.toJPEG(68).toString('base64') })))
+    .catch(() => []);
+  thumbsCache.set(width, { pending });
+  const list = await pending;
+  thumbsCache.set(width, { at: Date.now(), list });
+  return list;
 });
+// The list of screens to capture (ids only, no pictures). On Windows a lookup
+// runs on the window's own thread: 0.2 s on a fast PC, seconds on a slow or
+// busy one, and a session start did several back to back, which froze Ace
+// ("Not responding"). The ids only change with the displays, so on Windows one
+// lookup is kept until a display is added, removed or changed, and calls that
+// arrive together share one lookup. (macOS: every call still asks, because
+// asking is what brings up the Screen Recording permission.)
+let screenSourcesCache = null; // { at, list }
+let screenSourcesPending = null;
+let screenSourcesGen = 0;
+const SCREEN_SOURCES_TTL_MS = 10 * 60 * 1000;
+function dropScreenSources() { screenSourcesCache = null; screenSourcesGen++; }
+function screenSources() {
+  const cacheable = process.platform === 'win32';
+  if (cacheable && screenSourcesCache && Date.now() - screenSourcesCache.at < SCREEN_SOURCES_TTL_MS) return Promise.resolve(screenSourcesCache.list);
+  if (!screenSourcesPending) {
+    const gen = screenSourcesGen;
+    screenSourcesPending = desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 }, fetchWindowIcons: false })
+      .then((list) => { if (cacheable && list.length && gen === screenSourcesGen) screenSourcesCache = { at: Date.now(), list }; return list; })
+      .finally(() => { screenSourcesPending = null; });
+  }
+  return screenSourcesPending;
+}
 let displayEventsBound = false;
 function bindDisplayEvents() {
   if (displayEventsBound) return;
@@ -3946,11 +4103,20 @@ function bindDisplayEvents() {
   for (const ev of ['display-added', 'display-removed']) {
     try { screen.on(ev, tell); } catch {}
   }
+  for (const ev of ['display-added', 'display-removed', 'display-metrics-changed']) {
+    try { screen.on(ev, dropScreenSources); } catch {}
+  }
 }
+// macOS Screen Recording permission for this copy of Ace ('granted' elsewhere).
+// Without it macOS still hands out a "screen", but it shows only the wallpaper.
+ipcMain.handle('get-screen-permission', () => {
+  if (process.platform !== 'darwin') return 'granted';
+  try { return require('electron').systemPreferences.getMediaAccessStatus('screen'); } catch { return 'unknown'; }
+});
 ipcMain.handle('get-desktop-source-id', async (_e, displayId) => {
   macScreenPermissionWarn();
   try {
-    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+    const sources = await screenSources();
     if (!sources[0]) macNoScreenSources();
     const src = sourceForDisplay(sources, displayId) || pickRecordSource(sources);
     return src ? src.id : null;
@@ -3997,14 +4163,16 @@ ipcMain.handle('capture-display-image', async (_e, displayId) => {
     });
     const src = sources.find((s) => String(s.display_id) === String(d.id)) || sources[0];
     if (!src || !src.thumbnail || src.thumbnail.isEmpty()) return null;
-    return src.thumbnail.toDataURL();
+    // JPEG: encoding a full-size PNG here held the window's thread for a
+    // noticeable moment, and the page turns it into a JPEG anyway.
+    return 'data:image/jpeg;base64,' + src.thumbnail.toJPEG(92).toString('base64');
   } catch (e) { appendLogLine('[screenshot] capture failed: ' + e.message); return null; }
 });
 
 // Returns all screen source IDs sorted by name (Screen 1, Screen 2 …).
 ipcMain.handle('get-all-screen-source-ids', async () => {
   try {
-    const sources = await desktopCapturer.getSources({ types: ['screen'] });
+    const sources = await screenSources();
     return sources
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
@@ -4013,7 +4181,7 @@ ipcMain.handle('get-all-screen-source-ids', async () => {
 });
 
 ipcMain.handle('get-cursor-screen-source-id', async () => {
-  const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] });
+  const sources = await desktopCapturer.getSources({ types: ['window', 'screen'], thumbnailSize: { width: 0, height: 0 }, fetchWindowIcons: false });
   // Return only serializable fields — skip NativeImage thumbnails.
   return sources.map((s) => ({ id: s.id, name: s.name, display_id: s.display_id }));
 });
@@ -4278,7 +4446,7 @@ function captionTick() {
 
 ipcMain.handle('speaker-watch-sources', async () => {
   // No thumbnails: only the ids are needed, the window opens the streams.
-  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+  const sources = await screenSources();
   return sources.map((x, i) => ({ id: x.id, displayId: x.display_id || String(i) }));
 });
 ipcMain.on('speaker-watch-observe', (e, obs) => {
@@ -4291,6 +4459,16 @@ ipcMain.on('speaker-watch-grabbed', (_e, r) => {
   const done = r && grabs.get(r.id);
   if (done) { grabs.delete(r.id); done(r.jpeg ? Buffer.from(r.jpeg) : null); }
 });
+
+// The screen watcher reads twice a second only while the meeting is talking
+// (slowly otherwise): tell it when words arrive, at most once a second.
+let watchSpeechSentAt = 0;
+function tellWatchSpeech() {
+  const now = Date.now();
+  if (!watchWin || watchWin.isDestroyed() || now - watchSpeechSentAt < 1000) return;
+  watchSpeechSentAt = now;
+  try { watchWin.webContents.send('speaker-watch-speech', now); } catch {}
+}
 
 function startSpeakerWatch() {
   if (!speakerNamesOn()) return; // hiring call: no names
@@ -4351,6 +4529,7 @@ function parseTranscriptAlternative(alt, window, isFinal) {
   const text = transcript || words.map((w) => w.punctuated_word || w.word || '').join(' ').replace(/\s+/g, ' ').trim();
   if (!text) return { text: '', labeled: '', speaker: 0, turns: [] };
   lastSpeechAt = Date.now();
+  tellWatchSpeech();
   if (!speakerNamesOn()) return { text, labeled: 'Interviewer: ' + text, speaker: 0, turns: [{ speaker: 0, who: 'Interviewer', text }] };
   const runs = voiceRuns(words);
   if (!runs.length) {
@@ -5481,13 +5660,20 @@ ipcMain.handle('session-resume', (_e, { id, profile, salary } = {}) => {
   schedulePromptCacheWarm();
   return { id: s.id, name: s.name, turns: s.turns || [], profile: s.profile };
 });
-ipcMain.handle('session-delete', (_e, id) => {
-  try { const s = sessions.find((x) => x.id === id); if (s && s.folder && fs.existsSync(s.folder)) fs.rmSync(s.folder, { recursive: true, force: true }); } catch {}
-  sessions = sessions.filter(s => s.id !== id);
-  if (currentSessionId === id) { currentSessionId = null; convoHistory = []; }
+// Delete saved sessions and their folders (one, or the history's Remove all).
+function deleteSessions(ids) {
+  const gone = new Set((ids || []).map(String));
+  for (const s of sessions) {
+    if (!gone.has(String(s.id))) continue;
+    try { if (s.folder && fs.existsSync(s.folder)) fs.rmSync(s.folder, { recursive: true, force: true }); } catch {}
+  }
+  sessions = sessions.filter((s) => !gone.has(String(s.id)));
+  if (currentSessionId && gone.has(String(currentSessionId))) { currentSessionId = null; convoHistory = []; }
   saveSessions();
-  return true;
-});
+  return gone.size;
+}
+ipcMain.handle('session-delete', (_e, id) => { deleteSessions([id]); return true; });
+ipcMain.handle('session-delete-many', (_e, ids) => deleteSessions(Array.isArray(ids) ? ids : []));
 
 // ── Per-session knowledge editing (continue page upload zones) ────────────────
 ipcMain.handle('session-kb-get', (_e, id) => {
@@ -7092,10 +7278,30 @@ function normalizeSpeakerAddress(addr) {
   if (!m || m.slice(1).some((n) => parseInt(n, 10) > 255)) return null;
   return `${ip}:${SUPPORTER_PORT}`;
 }
-ipcMain.handle('join-as-supporter', (_e, { address } = {}) => {
-  if (!supportUnlocked) return { ok: false, reason: 'locked' };
+ipcMain.handle('join-as-supporter', async (_e, { address, password: typedPw } = {}) => {
   const addr = normalizeSpeakerAddress(address);
   if (!addr) return { ok: false, error: 'Enter their IP address, for example 192.168.1.20.' };
+  const pw = joinPassword(typedPw);
+  if (!pw) return { ok: false, reason: 'locked' };
+  if (pw.typed) {
+    // A new password is checked before connecting (and then kept).
+    const r = await checkSupportPassword(pw.password);
+    if (!r.ok) return r.offline ? { ok: false, error: 'Cannot reach ace2me.com to check the password. Try again.' } : { ok: false, reason: r.reason };
+    aceOnline.saveSupportPassword(pw.password);
+  } else {
+    // A saved one: connect now, check alongside. Changed by the administrator,
+    // the connection is dropped and the password asked for again. Without an
+    // answer from ace2me.com the saved one stands.
+    const seq = supporterJoinSeq + 1; // the connect below takes this number
+    checkSupportPassword(pw.password).then((r) => {
+      if (r.ok || r.offline || !PASSWORD_GONE.has(r.reason)) return;
+      aceOnline.forgetSupportPassword();
+      appendLogLine('[lan] support password no longer valid: ' + r.reason);
+      // Still this connection: drop it. Either way the page asks for the password.
+      if (supporterJoinSeq === seq && !supporterOnline && state.network.role === 'supporter') disconnectSignalingClient();
+      if (win) win.webContents.send('join-rejected', { reason: passwordRefusal(r.reason, false) });
+    });
+  }
   supporterOnline = null;
   stopSignalingServer();
   state.network = { ...state.network, role: 'supporter', supporterAddress: addr, address: addr };
@@ -7212,11 +7418,14 @@ ipcMain.handle('online-sessions', async () => {
   const r = await aceOnline.sessionList();
   return r.ok ? { ok: true, sessions: r.sessions || [] } : { ok: false, error: r.error };
 });
-// The support password: asked once, kept encrypted (ace-support.bin) and
-// checked with ace2me.com each time the join screen opens. Changed there by
-// the administrator, it is asked for again ("This password was reset").
-// Without a connection the saved one still opens LAN joining.
-let supportUnlocked = false;
+// The support password: typed with the first join, kept encrypted
+// (ace-support.bin) once ace2me.com accepted it, and sent with every later
+// join without asking. Opening the join screen asks ace2me.com nothing, so it
+// is instant. When the administrator changes the password, the next join is
+// refused: the saved one is forgotten and asked for again ("This password was
+// reset"). Online, the join call itself checks the password (one round trip);
+// on the same network a typed password is checked first, a saved one in the
+// background while connecting.
 const PASSWORD_GONE = new Set(['bad-password', 'no-password']);
 async function checkSupportPassword(password) {
   const r = await aceOnline.supportCheck(password);
@@ -7224,33 +7433,27 @@ async function checkSupportPassword(password) {
   if (r.status) return { ok: false, reason: r.error };   // ace2me.com said no
   return { ok: false, offline: true, reason: r.error };  // no answer
 }
-ipcMain.handle('support-status', async () => {
-  const pw = aceOnline.savedSupportPassword();
-  supportUnlocked = false;
-  if (!pw) return { ok: false };
-  const r = await checkSupportPassword(pw);
-  if (r.ok || r.offline) { supportUnlocked = true; return { ok: true, offline: !!r.offline }; }
-  if (PASSWORD_GONE.has(r.reason)) {
-    aceOnline.forgetSupportPassword();
-    return { ok: false, reason: r.reason === 'bad-password' ? 'reset' : r.reason };
-  }
-  return { ok: false, reason: r.reason };
-});
-ipcMain.handle('support-login', async (_e, password) => {
-  const pw = typeof password === 'string' ? password : '';
-  if (!pw) return { ok: false, reason: 'bad-password' };
-  const r = await checkSupportPassword(pw);
-  if (!r.ok) return { ok: false, reason: r.reason };
-  aceOnline.saveSupportPassword(pw);
-  supportUnlocked = true;
-  return { ok: true };
-});
-ipcMain.handle('join-online', (_e, { sessionId, label } = {}) => {
+// The reason shown for a refused password: a saved one was changed by the
+// administrator; a typed one is simply wrong.
+function passwordRefusal(reason, typed) {
+  if (reason === 'bad-password' && !typed) return 'reset';
+  return reason;
+}
+// Is a password kept? (No network: the join screen opens at once.)
+ipcMain.handle('support-status', () => ({ saved: !!aceOnline.savedSupportPassword() }));
+// The password to join with: the one typed now, else the saved one.
+function joinPassword(typed) {
+  const pw = typeof typed === 'string' ? typed : '';
+  if (pw) return { password: pw, typed: true };
+  const saved = aceOnline.savedSupportPassword();
+  return saved ? { password: saved, typed: false } : null;
+}
+ipcMain.handle('join-online', (_e, { sessionId, label, password: typedPw } = {}) => {
   if (!sessionId) return { ok: false, error: 'Pick a session first.' };
-  const password = aceOnline.savedSupportPassword();
-  if (!supportUnlocked || !password) return { ok: false, reason: 'locked' };
+  const pw = joinPassword(typedPw);
+  if (!pw) return { ok: false, reason: 'locked' };
   stopSignalingServer();
-  supporterOnline = { sessionId: String(sessionId), password: String(password), label: String(label || 'the speaker') };
+  supporterOnline = { sessionId: String(sessionId), password: pw.password, typed: pw.typed, label: String(label || 'the speaker') };
   state.network = { ...state.network, role: 'supporter' };
   saveState();
   registerHotkeys();

@@ -5,7 +5,23 @@
 // small picture of the name label go to the main process.
 (function () {
   const { detectActiveTile, labelSignature } = self.SpeakerDetect;
-  const TICK_MS = 500;
+  const TICK_MS = 500;           // while the meeting is talking
+  const QUIET_TICK_MS = 2000;    // nobody has spoken for a while: a full-screen read costs CPU
+  const QUIET_AFTER_MS = 6000;
+  let lastSpeech = Date.now();
+  if (window.watch.onSpeech) window.watch.onSpeech(() => {
+    const wasQuiet = Date.now() - lastSpeech > QUIET_AFTER_MS;
+    lastSpeech = Date.now();
+    if (wasQuiet) schedule(0); // speech again: read now, not up to 2 s later
+  });
+  let tickTimer = null;
+  function schedule(ms) {
+    clearTimeout(tickTimer);
+    tickTimer = setTimeout(async () => {
+      await tick();
+      schedule(Date.now() - lastSpeech > QUIET_AFTER_MS ? QUIET_TICK_MS : TICK_MS);
+    }, ms);
+  }
   const LABEL_EVERY_MS = 2500;   // resend a tile's label picture this often
   const LABEL_SCALE = 3;         // small print reads better enlarged
   const screens = [];            // { id, displayId, track, grabber, video, canvas, ctx }
@@ -116,7 +132,6 @@
       try { await open(src); } catch (e) { window.watch.log(`display ${src.displayId} cannot be read: ` + ((e && e.message) || e)); }
     }
     if (!screens.length) { window.watch.log('no display could be opened; speaker names are off'); return; }
-    setInterval(tick, TICK_MS);
-    tick();
+    schedule(0);
   })();
 })();

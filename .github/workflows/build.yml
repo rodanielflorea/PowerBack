@@ -23,8 +23,10 @@ jobs:
             args: --win
           - os: ubuntu-latest
             args: --linux
-          - os: macos-latest
-            args: --mac
+          # No macOS here: the Mac app is built on the Mac laptop
+          # (`npm run build:mac`, signed with "Ace Local Signing" so updates
+          # keep one identity) and its files are uploaded to the same release.
+          # The macOS steps below stay for the day it is built here again.
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
