@@ -457,12 +457,21 @@ function showSetup() {
   if (typeof refreshProfiles === "function") refreshProfiles();
 }
 
-// ── Named profiles: picker + save/update/delete on the New-session form ───────
+// ── Named profiles on the profile step ────────────────────────────────────────
+// One picker: the saved profiles plus "New profile". A saved profile fills the
+// fields; editing it brings up a bar with Save (keep the change in the
+// profile) and Undo. "New profile" starts empty and is saved under the
+// person's name with Save, or by itself on Next, so it is there next time.
+// Edits not saved still apply to this call.
 const profileSelect = document.getElementById("profileSelect");
-const profileSaveNewBtn = document.getElementById("profileSaveNewBtn");
-const profileUpdateBtn = document.getElementById("profileUpdateBtn");
 const profileDeleteBtn = document.getElementById("profileDeleteBtn");
+const profileSaveBar = document.getElementById("profileSaveBar");
+const profileSaveText = document.getElementById("profileSaveText");
+const profileSaveBtn = document.getElementById("profileSaveBtn");
+const profileRevertBtn = document.getElementById("profileRevertBtn");
+const NEW_PROFILE = "__new";
 let _profiles = [];
+let _profileSaved = null; // the selected profile's fields as saved (null = new profile)
 
 function readProfileFields() {
   const v = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ""; };
@@ -513,12 +522,14 @@ function timezoneForCity(country, city) {
     populateCitySelect(countrySel.value, "");
     const z = timezoneForCity(countrySel.value, "");
     if (tz && z) { tz.value = z; if (tz._cselRefresh) tz._cselRefresh(); }
+    syncProfileSaveBar();
   });
   if (citySel) citySel.addEventListener("change", () => {
     if (custom) custom.hidden = citySel.value !== "__other";
-    if (citySel.value === "__other") { if (custom) custom.focus(); return; }
+    if (citySel.value === "__other") { if (custom) custom.focus(); syncProfileSaveBar(); return; }
     const z = timezoneForCity(countrySel ? countrySel.value : "", citySel.value);
     if (tz && z) { tz.value = z; if (tz._cselRefresh) tz._cselRefresh(); }
+    syncProfileSaveBar();
   });
 })();
 function fillProfileFields(p) {
@@ -531,80 +542,128 @@ function fillProfileFields(p) {
   if (tz) { tz.value = p.timezone || ""; if (tz._cselRefresh) tz._cselRefresh(); }
 }
 
+const profileFieldsOf = (p) => ({ name: (p && p.name) || "", city: (p && p.city) || "", country: (p && p.country) || "", timezone: (p && p.timezone) || "" });
+const sameProfileFields = (a, b) => ["name", "city", "country", "timezone"].every((k) => (a[k] || "") === (b[k] || ""));
+const selectedProfile = () => _profiles.find((p) => profileSelect && p.id === profileSelect.value) || null;
+
+// The bar under the fields: a new profile can be saved once it has a name; a
+// saved one shows the bar only when the fields differ from what is saved.
+function syncProfileSaveBar() {
+  if (!profileSaveBar) return;
+  const now = readProfileFields();
+  const cur = selectedProfile();
+  if (profileDeleteBtn) profileDeleteBtn.hidden = !cur;
+  if (!cur) {
+    profileSaveBar.hidden = !now.name;
+    if (profileSaveText) profileSaveText.textContent = "New profile, not saved yet.";
+    if (profileSaveBtn) profileSaveBtn.textContent = "Save profile";
+    if (profileRevertBtn) profileRevertBtn.hidden = true;
+    return;
+  }
+  const changed = !!_profileSaved && !sameProfileFields(now, _profileSaved);
+  profileSaveBar.hidden = !changed;
+  if (profileSaveText) profileSaveText.textContent = `You changed “${cur.label || "this profile"}”.`;
+  if (profileSaveBtn) profileSaveBtn.textContent = "Save changes";
+  if (profileRevertBtn) profileRevertBtn.hidden = false;
+}
+["profileName", "profileCityCustom", "profileTimezone"].forEach((id) => {
+  const el = document.getElementById(id);
+  if (el) { el.addEventListener("input", syncProfileSaveBar); el.addEventListener("change", syncProfileSaveBar); }
+});
+
+function showProfileChoice(id) {
+  const p = _profiles.find((x) => x.id === id);
+  if (profileSelect) { profileSelect.value = p ? p.id : NEW_PROFILE; if (profileSelect._cselRefresh) profileSelect._cselRefresh(); }
+  hideProfileDeleteConfirm();
+  if (p) { fillProfileFields(p); _profileSaved = profileFieldsOf(p); }
+  else { fillProfileFields({}); _profileSaved = null; }
+  syncProfileSaveBar();
+}
+
 async function refreshProfiles(selectId) {
-  if (typeof closeSaveRow === "function") closeSaveRow();
   if (!profileSelect || !window.api.profilesList) return;
   const data = await window.api.profilesList().catch(() => null);
   _profiles = (data && data.profiles) || [];
   const wantId = selectId || (data && data.activeProfileId) || (_profiles[0] && _profiles[0].id) || "";
   profileSelect.innerHTML = "";
-  const blank = document.createElement("option");
-  blank.value = "";
-  blank.textContent = _profiles.length ? "— Select profile —" : "— No saved profiles —";
-  profileSelect.appendChild(blank);
   _profiles.forEach((p) => {
     const o = document.createElement("option");
-    o.value = p.id; o.textContent = p.label || "(unnamed)";
+    o.value = p.id; o.textContent = p.label || p.name || "(unnamed)";
     profileSelect.appendChild(o);
   });
-  profileSelect.value = _profiles.some((p) => p.id === wantId) ? wantId : "";
-  if (profileSelect._cselRefresh) profileSelect._cselRefresh();
-  const active = _profiles.find((p) => p.id === profileSelect.value);
-  if (active) fillProfileFields(active);
+  const add = document.createElement("option");
+  add.value = NEW_PROFILE; add.textContent = "＋ New profile";
+  profileSelect.appendChild(add);
+  showProfileChoice(_profiles.some((p) => p.id === wantId) ? wantId : NEW_PROFILE);
 }
 
 if (profileSelect) {
   profileSelect.addEventListener("change", () => {
-    const p = _profiles.find((x) => x.id === profileSelect.value);
-    if (p) { fillProfileFields(p); if (window.api.profileSetActive) window.api.profileSetActive(p.id); }
+    const p = selectedProfile();
+    showProfileChoice(p ? p.id : NEW_PROFILE);
+    if (p && window.api.profileSetActive) window.api.profileSetActive(p.id);
+    if (!p) { const n = document.getElementById("profileName"); if (n) n.focus(); }
   });
 }
-// Inline "save as new" row (Electron has no window.prompt).
-const profileSaveRow = document.getElementById("profileSaveRow");
-const profileLabelInput = document.getElementById("profileLabelInput");
-const profileSaveConfirm = document.getElementById("profileSaveConfirm");
-const profileSaveCancel = document.getElementById("profileSaveCancel");
 
-function openSaveRow() {
-  if (!profileSaveRow) return;
-  if (profileLabelInput) profileLabelInput.value = readProfileFields().name || "";
-  profileSaveRow.hidden = false;
-  if (profileLabelInput) { profileLabelInput.focus(); profileLabelInput.select(); }
+// A name for a new profile: the person's name, made unique ("Jane Doe 2").
+function newProfileLabel(name) {
+  const base = (name || "").trim() || "Profile";
+  const taken = new Set(_profiles.map((p) => (p.label || "").toLowerCase()));
+  if (!taken.has(base.toLowerCase())) return base;
+  for (let i = 2; ; i++) if (!taken.has(`${base} ${i}`.toLowerCase())) return `${base} ${i}`;
 }
-function closeSaveRow() { if (profileSaveRow) profileSaveRow.hidden = true; }
-async function confirmSaveRow() {
-  const label = (profileLabelInput ? profileLabelInput.value : "").trim();
-  if (!label) { if (profileLabelInput) profileLabelInput.focus(); return; }
-  if (!window.api.profileSaveNew) { window.alert("Profiles need the latest app version — fully close and reopen the app."); return; }
+
+// Save what is in the fields: into the selected profile, or as a new one.
+// Returns true when saved.
+async function saveProfileFields({ quiet } = {}) {
+  const now = readProfileFields();
+  if (!now.name) { const n = document.getElementById("profileName"); if (n) n.focus(); return false; }
+  const cur = selectedProfile();
   try {
-    const id = await window.api.profileSaveNew(label, readProfileFields());
-    closeSaveRow();
-    await refreshProfiles(id);
-    if (!id) window.alert("Could not save the profile.");
+    if (cur) {
+      // The list shows the label; when it was the person's name, it follows a renamed person.
+      const label = !cur.label || cur.label === cur.name ? now.name : cur.label;
+      await window.api.profileUpdate(cur.id, label, now);
+      await refreshProfiles(cur.id);
+      if (!quiet) toast(`Saved “${label}”.`, "ok");
+    } else {
+      const label = newProfileLabel(now.name);
+      const id = await window.api.profileSaveNew(label, now);
+      if (!id) throw new Error("not saved");
+      await refreshProfiles(id);
+      if (!quiet) toast(`Saved the new profile “${label}”.`, "ok");
+    }
+    return true;
   } catch (e) {
-    window.alert("Could not save the profile — please fully close and reopen the app to load the update.\n\n" + (e && e.message ? e.message : e));
+    toast("Could not save the profile: " + (e && e.message ? e.message : e), "err");
+    return false;
   }
 }
-if (profileSaveNewBtn) profileSaveNewBtn.addEventListener("click", openSaveRow);
-if (profileSaveConfirm) profileSaveConfirm.addEventListener("click", confirmSaveRow);
-if (profileSaveCancel) profileSaveCancel.addEventListener("click", closeSaveRow);
-if (profileLabelInput) profileLabelInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") { e.preventDefault(); confirmSaveRow(); }
-  else if (e.key === "Escape") { e.preventDefault(); closeSaveRow(); }
+if (profileSaveBtn) profileSaveBtn.addEventListener("click", () => saveProfileFields());
+if (profileRevertBtn) profileRevertBtn.addEventListener("click", () => {
+  const cur = selectedProfile();
+  if (cur) showProfileChoice(cur.id);
 });
-if (profileUpdateBtn) profileUpdateBtn.addEventListener("click", async () => {
-  const id = profileSelect ? profileSelect.value : "";
-  if (!id) { window.alert("Select a profile to update, or press ＋ to save a new one."); return; }
-  const cur = _profiles.find((p) => p.id === id);
-  await window.api.profileUpdate(id, cur ? cur.label : null, readProfileFields());
-  await refreshProfiles(id);
+
+// Delete asks in place (no system dialog over the meeting).
+const profileDeleteConfirm = document.getElementById("profileDeleteConfirm");
+const profileDeleteText = document.getElementById("profileDeleteText");
+function hideProfileDeleteConfirm() { if (profileDeleteConfirm) profileDeleteConfirm.hidden = true; }
+if (profileDeleteBtn) profileDeleteBtn.addEventListener("click", () => {
+  const cur = selectedProfile();
+  if (!cur || !profileDeleteConfirm) return;
+  if (profileDeleteText) profileDeleteText.textContent = `Delete “${cur.label || cur.name || "this profile"}”?`;
+  profileDeleteConfirm.hidden = false;
 });
-if (profileDeleteBtn) profileDeleteBtn.addEventListener("click", async () => {
-  const id = profileSelect ? profileSelect.value : "";
-  if (!id) return;
-  const cur = _profiles.find((p) => p.id === id);
-  if (!window.confirm(`Delete profile "${cur ? cur.label : ""}"?`)) return;
-  await window.api.profileDelete(id);
+const profileDeleteNo = document.getElementById("profileDeleteNo");
+const profileDeleteYes = document.getElementById("profileDeleteYes");
+if (profileDeleteNo) profileDeleteNo.addEventListener("click", hideProfileDeleteConfirm);
+if (profileDeleteYes) profileDeleteYes.addEventListener("click", async () => {
+  const cur = selectedProfile();
+  hideProfileDeleteConfirm();
+  if (!cur) return;
+  await window.api.profileDelete(cur.id);
   await refreshProfiles();
 });
 
@@ -656,9 +715,12 @@ if (stageNextBtn) stageNextBtn.addEventListener("click", async () => {
   showProfile();
 });
 if (profileBackBtn) profileBackBtn.addEventListener("click", () => showStage());
-if (profileNextBtn) profileNextBtn.addEventListener("click", () => {
+if (profileNextBtn) profileNextBtn.addEventListener("click", async () => {
   const nameEl = document.getElementById("profileName");
   if (nameEl && !nameEl.value.trim()) { nameEl.focus(); nameEl.classList.add("input-error"); setTimeout(() => nameEl.classList.remove("input-error"), 1200); return; }
+  // A new profile is kept for next time without an extra click. (Changes to a
+  // saved profile are used for this call; Save keeps them.)
+  if (!selectedProfile()) await saveProfileFields({ quiet: true });
   showSetup();
 });
 // Next / Start buttons: a ripple spreads from where the button was pressed.
@@ -2064,6 +2126,24 @@ if (themeSegEl) themeSegEl.addEventListener("click", (e) => {
 });
 window.addEventListener("ace-theme", syncThemeSeg);
 syncThemeSeg();
+
+// Title-bar button: one click between light and dark (the theme on screen
+// now decides which; "System" stays available in Settings → Appearance).
+const themeBtnEl = document.getElementById("themeBtn");
+function syncThemeBtn() {
+  if (!themeBtnEl) return;
+  const dark = document.documentElement.dataset.theme !== "light";
+  themeBtnEl.classList.toggle("is-dark", dark);
+  const t = dark ? "Switch to light theme" : "Switch to dark theme";
+  themeBtnEl.title = t;
+  themeBtnEl.setAttribute("aria-label", t);
+}
+if (themeBtnEl) themeBtnEl.addEventListener("click", () => {
+  if (!window.aceTheme) return;
+  window.aceTheme.set(document.documentElement.dataset.theme === "light" ? "dark" : "light");
+});
+window.addEventListener("ace-theme", syncThemeBtn);
+syncThemeBtn();
 
 // ── Display cards: a small picture of each display ─────────────────────────
 // Used wherever a display is picked (the recording's screen, the screen a

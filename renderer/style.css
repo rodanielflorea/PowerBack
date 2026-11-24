@@ -1905,8 +1905,18 @@ textarea.meet-editbox {
 /* ── Profile inputs on the new-session page ───────────────────── */
 .setup-profile-row { margin: 4px 0 12px; }
 .profile-picker { display: flex; gap: 6px; align-items: stretch; margin: 8px 0; }
-.profile-saverow { display: flex; gap: 6px; align-items: stretch; margin: -2px 0 8px; }
-.profile-saverow .profile-input { flex: 1; min-width: 0; }
+/* Save bar under the profile fields, and the in-place delete question. */
+.profile-savebar, .profile-delete-confirm {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 10px; padding: 8px 10px;
+  border: 1px solid var(--accent); border-radius: var(--radius);
+  background: var(--accent-dim);
+}
+.profile-delete-confirm { margin: -2px 0 8px; border-color: var(--rec-on); background: var(--danger-bg); }
+.profile-savebar[hidden], .profile-delete-confirm[hidden], .profile-savebar [hidden] { display: none !important; }
+.profile-savebar-text, #profileDeleteText { flex: 1 1 140px; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--text); }
+.profile-savebar .modal-btn-primary, .profile-savebar .modal-btn-secondary,
+.profile-delete-confirm .modal-btn-danger, .profile-delete-confirm .modal-btn-secondary { height: 28px; padding: 0 12px; }
 .profile-picker .csel { flex: 1; min-width: 0; }
 .profile-mini-btn {
   -webkit-app-region: no-drag;
@@ -1922,6 +1932,7 @@ textarea.meet-editbox {
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 .profile-mini-btn:hover { background: var(--accent-dim); border-color: var(--accent); }
+.profile-mini-btn[hidden] { display: none; }
 .profile-mini-btn--danger:hover { background: var(--danger, #ef4444); border-color: var(--danger, #ef4444); color: #fff; }
 .profile-inputs { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 8px; margin-top: 8px; }
 .profile-inputs--vertical { display: flex; flex-direction: column; gap: 8px; }
@@ -3208,6 +3219,12 @@ body.side-pane-open .chat-empty { margin: auto; text-align: center; color: var(-
 body.role-supporter .capture-btns { display: none; }
 /* See-through: a button in the title bar, the slider in its panel. */
 .opacity-btn { color: var(--muted); }
+/* Theme button: the sun in the dark theme (go light), the moon in the light one. */
+.theme-btn { color: var(--muted); }
+.theme-btn .ico { font-size: 15px; }
+.theme-btn .th-to-light { display: none; }
+.theme-btn.is-dark .th-to-light { display: inline-block; }
+.theme-btn.is-dark .th-to-dark { display: none; }
 .opacity-btn .ico { font-size: 15px; }
 .opacity-btn.open { background: var(--surface-2); color: var(--text); }
 .opacity-pop { width: 230px; padding: 10px 14px 12px; }
