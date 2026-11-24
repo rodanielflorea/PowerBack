@@ -15,8 +15,15 @@
   let levelTimer = null;
   const log = (m, k) => { try { window.__recLog ? window.__recLog(m, k) : console.log("[rec]", m); } catch {} };
 
+  // What the recording costs. Encoding the screen is the heaviest thing Ace
+  // does in a call, so it is kept light enough for low-end laptops: 15 fps
+  // (a meeting needs no more), at most 1920x1080 (a 4K screen is scaled down,
+  // not encoded at four times the work), and VP8, which encodes at a fraction
+  // of VP9's CPU. window.__recTune overrides these (measurements only).
+  const TUNE = () => ({ fps: 15, maxW: 1920, maxH: 1080, bps: 3000000, codecs: ["vp8,opus", "vp8", "vp9,opus"], ...(window.__recTune || {}) });
+
   function pickMime() {
-    const c = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm;codecs=vp8", "video/webm"];
+    const c = [...TUNE().codecs.map((x) => "video/webm;codecs=" + x), "video/webm"];
     for (const m of c) { try { if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m; } catch {} }
     return "video/webm";
   }
@@ -29,7 +36,11 @@
     // capturer of its own (measured: 29 fps beside the watcher's 4).
     if (!IS_MAC && navigator.mediaDevices.getDisplayMedia) {
       try {
-        const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 } }, audio: false });
+        const T = TUNE();
+        const s = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: { ideal: T.fps, max: T.fps }, width: { max: T.maxW }, height: { max: T.maxH } },
+          audio: false,
+        });
         s.getAudioTracks().forEach((t) => t.stop());
         const vt = s.getVideoTracks()[0];
         if (vt) {
@@ -44,7 +55,7 @@
     if (!id) throw new Error("no screen source");
     const s = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: id, maxFrameRate: 30 } },
+      video: { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: id, maxFrameRate: TUNE().fps, maxWidth: TUNE().maxW, maxHeight: TUNE().maxH } },
     });
     tracks.push(s);
     return s.getVideoTracks()[0];
@@ -189,12 +200,11 @@
       recId = begun.id;
       const id = recId;
       writes = Promise.resolve();
-      // Chromium's default is about 2.5 Mbps, which blurs small on-screen text.
-      // 30 fps for smooth motion; 6 Mbps keeps each frame as sharp as the
-      // earlier 4 Mbps at 15 fps did (still screens cost little), up to
-      // about 2.7 GB an hour.
+      // Chromium's default is about 2.5 Mbps, which blurs small on-screen text;
+      // 3 Mbps at 15 fps keeps each frame as sharp (still screens cost little),
+      // up to about 1.4 GB an hour.
       const recOpts = videoTrack
-        ? { mimeType: pickMime(), videoBitsPerSecond: 6000000, audioBitsPerSecond: 128000 }
+        ? { mimeType: pickMime(), videoBitsPerSecond: TUNE().bps, audioBitsPerSecond: 128000 }
         : { mimeType: "audio/webm", audioBitsPerSecond: 128000 };
       rec = new MediaRecorder(new MediaStream(streamTracks), recOpts);
       rec.ondataavailable = (e) => {
@@ -204,7 +214,8 @@
       };
       rec.start(2000);
       try { if (window.__recIndicator) window.__recIndicator(true); } catch {}
-      log("recording started");
+      const vs = videoTrack && videoTrack.getSettings ? videoTrack.getSettings() : {};
+      log(`recording started (${rec.mimeType || recOpts.mimeType}${videoTrack ? `, ${vs.width || "?"}x${vs.height || "?"} at ${Math.round(vs.frameRate || 0) || "?"} fps` : ", audio only"})`);
     } catch (e) {
       active = false;
       log("recording could not start: " + e.message, "err");

@@ -226,8 +226,8 @@
           <h3>Materials</h3>
           <p class="hint">Add, change or remove the files answers are built from. Changes take effect from the next answer, during a live meeting too. Many files show as a count, with a drop-down to delete them one by one or clear all.</p>
           <div class="upload-grid">
-            <div class="upload-zone" id="sDropCv" data-kind="cv"><div class="upload-zone-title">Resume / CV</div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="sFilesCv"></div><input type="file" id="sFileCv" hidden /></div>
-            <div class="upload-zone" id="sDropJd" data-kind="jd"><div class="upload-zone-title">Job Description</div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="sFilesJd"></div><input type="file" id="sFileJd" hidden /></div>
+            <div class="upload-zone hiring-block" id="sDropCv" data-kind="cv"><div class="upload-zone-title">Resume / CV</div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="sFilesCv"></div><input type="file" id="sFileCv" hidden /></div>
+            <div class="upload-zone hiring-block" id="sDropJd" data-kind="jd"><div class="upload-zone-title">Job Description</div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="sFilesJd"></div><input type="file" id="sFileJd" hidden /></div>
             <div class="upload-zone" id="sDropSupport" data-kind="support"><div class="upload-zone-title">Support material</div><div class="upload-zone-hint">Click or drag &amp; drop · multiple</div><div class="upload-files" id="sFilesSupport"></div><input type="file" id="sFileSupport" hidden multiple /></div>
           </div>
         </section>
@@ -348,6 +348,13 @@
           <p class="hint" id="diagRestartHint" hidden>macOS applies Accessibility and Screen &amp; System Audio Recording changes only after the app is restarted. After enabling them in System Settings: <button class="link-btn" id="diagRelaunchBtn">Quit &amp; reopen now</button></p>
           <div class="diag-list" id="diagList"></div>
         </section>
+        <section class="settings-section" id="clickTraceSection" hidden>
+          <h3>Click trace</h3>
+          <div class="field-row">
+            <label class="checkbox"><input type="checkbox" id="clickTraceEnabled" /> Trace lost mouse clicks</label>
+          </div>
+          <p class="hint">Only for a problem where Ace stops taking clicks: it notes why each lost click went missing in <code>click-trace.log</code>. It runs a small helper that uses about 100 MB of memory, so it is off unless needed. <button class="link-btn" id="clickTraceShowBtn">Show click trace</button></p>
+        </section>
       </div>
       <div class="settings-tab" data-tab="vscode" hidden>
         <section class="settings-section">
@@ -391,7 +398,7 @@
           <ol class="help-steps">
             <li><b>Meeting type</b> — pick what kind of meeting it is. <i>Hiring interviews</i>: Recruiter / HR screen, Technical interview, Live coding / system design, CTO / CEO / founder round, AI interview (a bot asks and scores). <i>Team meetings</i>: Standup / status update, Sprint review &amp; planning, 1:1 / technical discussion. Each type has its own answer logic (for example a standup update goes ticket by ticket and ends with "That's all for me."). For team meetings, put your current tickets, PRs, numbers and blockers in <i>Support material</i>.</li>
             <li><b>Your profile</b> — your name, country, city and timezone. Pick a city and the timezone fills in by itself. Choose <b>＋ New profile</b> in the list for a new person: it is saved when you press Next, so next time you just pick it. Change a saved profile and a <b>Save changes</b> bar appears (<b>Undo</b> puts it back).</li>
-            <li><b>Materials</b> — drag in your <b>CV</b> and the <b>job description</b> (PDF, Word or text). Add any extra notes as <i>Support material</i>, and enter your <b>salary expectation</b> (amount, currency, per month / year / hour). For a hiring call the CV, the job description and the salary are required; for a team meeting they are optional. Several files in one box show as a count with a drop-down, where you delete them one by one or clear all. During the meeting, <b>Settings → Materials</b> adds or replaces files; answers use them from the next one on.</li>
+            <li><b>Materials</b> — drag in your <b>CV</b> and the <b>job description</b> (PDF, Word or text). Add any extra notes as <i>Support material</i>, and enter your <b>salary expectation</b> (amount, currency, per month / year / hour). For a hiring call the CV, the job description and the salary are required; a team meeting has no CV, job description or salary, only Support material (your tickets, PRs, notes). Several files in one box show as a count with a drop-down, where you delete them one by one or clear all. During the meeting, <b>Settings → Materials</b> adds or replaces files; answers use them from the next one on.</li>
           </ol>
           <p>Click <b>Start interview</b>. Listening starts automatically.</p>
         </section>
@@ -565,15 +572,10 @@
         <h2 class="setup-title">Join as supporter</h2>
         <button class="setup-gear-btn" id="joinSettingsBtn" title="Settings &amp; user guide"><i data-icon="settings"></i></button>
       </div>
-      <!-- Step 1: the support password (asked once; again only after the
-           administrator changes it on ace2me.com) -->
-      <div class="join-step" id="joinStepPassword" hidden>
-        <p class="setup-intro">Enter the support password your administrator gave you.</p>
-        <label class="field-label" for="joinPassword">Support password</label>
-        <input type="password" id="joinPassword" class="profile-input" placeholder="Support password" autocomplete="off" spellcheck="false" required />
-      </div>
-      <!-- Step 2: over the internet, or on the same network -->
-      <div class="join-step" id="joinStepMode" hidden>
+      <!-- Over the internet, or on the same network. The support password is
+           asked with the first join (and again only after the administrator
+           changes it on ace2me.com). -->
+      <div class="join-step" id="joinStepMode">
         <div class="theme-seg join-mode-seg" id="joinModeSeg" role="radiogroup" aria-label="How to connect">
           <button type="button" data-join-mode="internet" role="radio">Internet</button>
           <button type="button" data-join-mode="lan" role="radio">LAN</button>
@@ -589,6 +591,11 @@
           <label class="field-label" for="joinAddress">Their IP address</label>
           <input type="text" id="joinAddress" class="profile-input" placeholder="192.168.1.20" inputmode="decimal" maxlength="15" spellcheck="false" autocomplete="off" />
           <p class="hint">Same network only. In their Ace, the headset button at the top shows their IP address.</p>
+        </div>
+        <div class="join-password" id="joinPasswordBlock" hidden>
+          <label class="field-label" for="joinPassword">Support password</label>
+          <input type="password" id="joinPassword" class="profile-input" placeholder="The password your administrator gave you" autocomplete="off" spellcheck="false" required />
+          <p class="hint">Asked once. Ace remembers it until the administrator changes it.</p>
         </div>
       </div>
       <p class="join-status" id="joinStatus" role="status"></p>
@@ -718,15 +725,15 @@
         <h2 class="setup-title">Materials</h2>
         <button class="setup-gear-btn" id="setupSettingsBtn" title="Settings &amp; user guide"><i data-icon="settings"></i></button>
       </div>
-      <p class="setup-intro">Answers are built from these files. <span class="hiring-only">For a hiring call the resume, the job description and your salary expectation are required.</span><span class="team-only">For a team meeting, put your tickets, PRs and numbers in Support material; everything here is optional.</span></p>
+      <p class="setup-intro">Answers are built from these files. <span class="hiring-only">For a hiring call the resume, the job description and your salary expectation are required.</span><span class="team-only">For a team meeting, add your tickets, PRs, notes and numbers as Support material (optional).</span></p>
 
       <div class="upload-grid">
-        <div class="upload-zone" id="dropCv" data-kind="cv"><div class="upload-zone-title">Resume / CV<span class="req-mark" title="Required for a hiring call"> *</span></div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="filesCv"></div><input type="file" id="fileCv" hidden /></div>
-        <div class="upload-zone" id="dropJd" data-kind="jd"><div class="upload-zone-title">Job Description<span class="req-mark" title="Required for a hiring call"> *</span></div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="filesJd"></div><input type="file" id="fileJd" hidden /></div>
+        <div class="upload-zone hiring-block" id="dropCv" data-kind="cv"><div class="upload-zone-title">Resume / CV<span class="req-mark" title="Required for a hiring call"> *</span></div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="filesCv"></div><input type="file" id="fileCv" hidden /></div>
+        <div class="upload-zone hiring-block" id="dropJd" data-kind="jd"><div class="upload-zone-title">Job Description<span class="req-mark" title="Required for a hiring call"> *</span></div><div class="upload-zone-hint">Click or drag &amp; drop a file</div><div class="upload-files" id="filesJd"></div><input type="file" id="fileJd" hidden /></div>
         <div class="upload-zone" id="dropSupport" data-kind="support"><div class="upload-zone-title">Support material</div><div class="upload-zone-hint">Click or drag &amp; drop · multiple</div><div class="upload-files" id="filesSupport"></div><input type="file" id="fileSupport" hidden multiple /></div>
       </div>
 
-      <div class="salary-block">
+      <div class="salary-block hiring-block">
         <p class="setup-roles-label">Salary expectation<span class="req-mark" title="Required for a hiring call"> *</span> <span class="hint-inline"><span class="hiring-only">(used when they ask)</span><span class="team-only">(optional)</span></span></p>
         <div class="salary-row">
           <input type="number" id="salaryAmount" class="profile-input salary-amount" placeholder="e.g. 8000" min="0" step="100" />
@@ -998,7 +1005,6 @@
   <script src="type-through.js"></script>
   <script src="lib/simplepeer.min.js"></script>
   <script src="lib/marked.min.js"></script>
-  <script src="lib/mermaid.min.js"></script>
   <script src="diagram-shared.js"></script>
   <script src="tooltip.js"></script>
   <!-- Session history: pick a saved interview to resume -->
@@ -1009,7 +1015,15 @@
       <button class="icon-btn" id="historyCloseBtn" title="Close"><i data-icon="x"></i></button>
     </div>
     <div class="settings-body history-body">
-      <input type="search" id="historySearch" class="profile-input history-search" placeholder="Search company, position, name, timezone…" spellcheck="false" />
+      <div class="history-tools">
+        <input type="search" id="historySearch" class="profile-input history-search" placeholder="Search company, position, name, timezone…" spellcheck="false" />
+        <button type="button" class="modal-btn-secondary history-clear-btn" id="historyClearBtn" hidden>Remove all</button>
+      </div>
+      <div class="profile-delete-confirm" id="historyClearConfirm" hidden>
+        <span id="historyClearText"></span>
+        <button type="button" class="modal-btn-secondary" id="historyClearNo">Cancel</button>
+        <button type="button" class="modal-btn-danger" id="historyClearYes">Delete</button>
+      </div>
       <div class="history-list" id="historyList"></div>
       <p class="hint history-empty" id="historyEmpty" hidden>No saved interviews yet. A session is saved when you end an interview.</p>
     </div>

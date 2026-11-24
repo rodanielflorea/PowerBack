@@ -330,8 +330,21 @@ window.api.onClickThroughChanged((v) => {
   if (v) { try { toast("Click-through is ON: the mouse passes through Ace. Press Alt+Q (or the cursor button at the top) to turn it off.", "info"); } catch {} }
 });
 (() => {
-  const b = document.getElementById("clickTraceBtn");
-  if (b && window.api.revealClickTrace) b.addEventListener("click", () => window.api.revealClickTrace().catch(() => {}));
+  const reveal = () => window.api.revealClickTrace && window.api.revealClickTrace().catch(() => {});
+  for (const id of ["clickTraceBtn", "clickTraceShowBtn"]) {
+    const b = document.getElementById(id);
+    if (b) b.addEventListener("click", reveal);
+  }
+  // Settings → Check: the lost-click helper, off unless switched on (Windows).
+  const box = document.getElementById("clickTraceEnabled");
+  const section = document.getElementById("clickTraceSection");
+  if (box && window.api.getClickTrace) {
+    window.api.getClickTrace().then((r) => {
+      if (section) section.hidden = !(r && r.supported);
+      box.checked = !!(r && r.enabled);
+    }).catch(() => {});
+    box.addEventListener("change", () => { window.api.setClickTrace(box.checked).then((v) => { box.checked = !!v; }).catch(() => {}); });
+  }
 })();
 // Keep the header bar usable while click-through is on (so it can be switched
 // off again and the window moved): re-enable mouse events over the header only.
@@ -710,9 +723,23 @@ const stageNextBtn = document.getElementById("stageNextBtn");
 const profileBackBtn = document.getElementById("profileBackBtn");
 const profileNextBtn = document.getElementById("profileNextBtn");
 if (stageBackBtn) stageBackBtn.addEventListener("click", () => showModeSelect());
-if (stageNextBtn) stageNextBtn.addEventListener("click", async () => {
-  await saveWizardMeetingType();
-  showProfile();
+let stageAdvancing = false;
+async function stageNext() {
+  if (stageAdvancing) return;
+  stageAdvancing = true;
+  try { await saveWizardMeetingType(); showProfile(); } finally { stageAdvancing = false; }
+}
+if (stageNextBtn) stageNextBtn.addEventListener("click", stageNext);
+// Picking a meeting (also the one already picked) goes on to the next step by
+// itself; the short pause lets the choice show first. (A click on the label
+// reaches its radio as a click too, so this covers both.)
+let stageAutoTimer = null;
+document.querySelectorAll('input[name="setupMeetingType"]').forEach((el) => {
+  el.addEventListener("click", () => {
+    if (stageOverlay && stageOverlay.hidden) return;
+    clearTimeout(stageAutoTimer);
+    stageAutoTimer = setTimeout(() => { if (stageOverlay && !stageOverlay.hidden) stageNext(); }, 220);
+  });
 });
 if (profileBackBtn) profileBackBtn.addEventListener("click", () => showStage());
 if (profileNextBtn) profileNextBtn.addEventListener("click", async () => {
@@ -803,7 +830,41 @@ function renderHistory() {
     row.appendChild(del);
     historyList.appendChild(row);
   });
+  // Remove all: every session in the list (only the matching ones while searching).
+  _historyShown = items;
+  if (historyClearBtn) {
+    historyClearBtn.hidden = !items.length;
+    historyClearBtn.textContent = q ? `Remove these (${items.length})` : "Remove all";
+  }
+  hideHistoryClearConfirm();
 }
+
+const historyClearBtn = document.getElementById("historyClearBtn");
+const historyClearConfirm = document.getElementById("historyClearConfirm");
+const historyClearText = document.getElementById("historyClearText");
+let _historyShown = [];
+function hideHistoryClearConfirm() { if (historyClearConfirm) historyClearConfirm.hidden = true; }
+if (historyClearBtn) historyClearBtn.addEventListener("click", () => {
+  if (!_historyShown.length || !historyClearConfirm) return;
+  const n = _historyShown.length;
+  if (historyClearText) historyClearText.textContent = `Delete ${n === 1 ? "this session" : `all ${n} sessions`} and ${n === 1 ? "its" : "their"} saved folders? This can't be undone.`;
+  historyClearConfirm.hidden = false;
+});
+const historyClearNo = document.getElementById("historyClearNo");
+const historyClearYes = document.getElementById("historyClearYes");
+if (historyClearNo) historyClearNo.addEventListener("click", hideHistoryClearConfirm);
+if (historyClearYes) historyClearYes.addEventListener("click", async () => {
+  const ids = _historyShown.map((s) => s.id);
+  hideHistoryClearConfirm();
+  if (!ids.length) return;
+  if (window.api.sessionDeleteMany) await window.api.sessionDeleteMany(ids);
+  else for (const id of ids) await window.api.sessionDelete(id);
+  const gone = new Set(ids);
+  _historyItems = _historyItems.filter((x) => !gone.has(x.id));
+  if (historySearch) historySearch.value = "";
+  renderHistory();
+  toast(`Deleted ${ids.length} session${ids.length === 1 ? "" : "s"}.`, "ok");
+});
 
 async function openHistory() {
   if (!historyOverlay || !window.api.sessionList) return;
@@ -935,7 +996,11 @@ if (setupStartBtnV) setupStartBtnV.addEventListener("click", async () => {
     clearAnswerPanel();
     const val = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ""; };
     const profile = readProfileFields();
-    const amount = Number(val("salaryAmount"));
+    // A team meeting has no resume, job description or salary (those boxes are
+    // hidden): a CV/JD left from switching the type is not used either.
+    const team = !document.body.classList.contains("meeting-hiring");
+    if (team && !resumeSessionId) { await clearKb("cv"); await clearKb("jd"); }
+    const amount = team ? 0 : Number(val("salaryAmount"));
     const salary = amount > 0 ? { amount, currency: val("salaryCurrency") || "USD", period: val("salaryPeriod") || "month" } : null;
     if (resumeSessionId && window.api.sessionResume) {
       const data = await window.api.sessionResume(resumeSessionId, { profile, salary });
@@ -7219,12 +7284,11 @@ const joinStatusEl = document.getElementById("joinStatus");
 const joinConnectBtn = document.getElementById("joinConnectBtn");
 const joinSessionListEl = document.getElementById("joinSessionList");
 const joinPasswordEl = document.getElementById("joinPassword");
-const joinStepPasswordEl = document.getElementById("joinStepPassword");
-const joinStepModeEl = document.getElementById("joinStepMode");
+const joinPasswordBlockEl = document.getElementById("joinPasswordBlock");
 const joinModeSegEl = document.getElementById("joinModeSeg");
 const joinPaneInternetEl = document.getElementById("joinPaneInternet");
 const joinPaneLanEl = document.getElementById("joinPaneLan");
-let joinStep = "";              // "password" | "mode" ("" while checking)
+let joinNeedsPassword = false;  // no saved support password: the box is shown
 let joinMode = "internet";      // "internet" | "lan"
 let joinSessions = [];          // live sessions on ace2me.com
 let joinSelected = "";          // the one picked
@@ -7347,25 +7411,20 @@ function setJoinStatus(text, kind) {
   joinStatusEl.className = "join-status" + (kind ? " " + kind : "");
 }
 
-// Step 1, the password: asked once. Ace keeps it (encrypted) and checks it
-// with ace2me.com each time; when the administrator changes it, step 1 comes
-// back with "This password was reset. Contact admin."
-function showJoinStep(step, message) {
-  joinStep = step;
-  if (joinStepPasswordEl) joinStepPasswordEl.hidden = step !== "password";
-  if (joinStepModeEl) joinStepModeEl.hidden = step !== "mode";
-  const label = joinConnectBtn && joinConnectBtn.querySelector("span");
-  if (label) label.textContent = step === "password" ? "Continue" : "Connect";
-  if (joinConnectBtn) joinConnectBtn.disabled = !step;
-  setJoinStatus(message || "", message ? "err" : "");
-  watchJoinSessions(step === "mode" && joinMode === "internet");
-  if (step === "password" && joinPasswordEl) {
+// The support password box: shown only while no password is saved — the
+// first join, or after the administrator changed it ("This password was
+// reset. Contact admin."). It goes with Connect; once a join takes it, Ace
+// keeps it and later joins don't ask.
+function showJoinPassword(on, message) {
+  joinNeedsPassword = !!on;
+  if (joinPasswordBlockEl) joinPasswordBlockEl.hidden = !on;
+  if (on && joinPasswordEl) {
     joinPasswordEl.value = "";
-    setTimeout(() => { try { joinPasswordEl.focus(); } catch {} }, 50);
+    if (message) setTimeout(() => { try { joinPasswordEl.focus(); } catch {} }, 50);
   }
-  if (step === "mode") setJoinMode(joinMode);
+  if (message) setJoinStatus(message, "err");
 }
-// Step 2: over the internet (sessions on ace2me.com) or on the same network.
+// Over the internet (sessions on ace2me.com) or on the same network.
 function setJoinMode(mode) {
   joinMode = mode === "lan" ? "lan" : "internet";
   if (joinModeSegEl) joinModeSegEl.querySelectorAll("button[data-join-mode]").forEach((b) => {
@@ -7375,7 +7434,7 @@ function setJoinMode(mode) {
   });
   if (joinPaneInternetEl) joinPaneInternetEl.hidden = joinMode !== "internet";
   if (joinPaneLanEl) joinPaneLanEl.hidden = joinMode !== "lan";
-  if (joinStep === "mode") watchJoinSessions(joinMode === "internet");
+  if (joinOverlayEl && !joinOverlayEl.hidden) watchJoinSessions(joinMode === "internet");
   if (joinMode === "lan") setTimeout(() => { try { joinAddressEl && joinAddressEl.focus(); } catch {} }, 50);
 }
 
@@ -7386,25 +7445,28 @@ async function showJoin(message) {
     const saved = ipOnly(netCfg && netCfg.supporterAddress);
     if (saved && saved !== "172.16.98.11") joinAddressEl.value = saved;
   }
-  showJoinStep("");
-  setJoinStatus("Checking your support password…", "busy");
-  const r = await (window.api.supportStatus ? window.api.supportStatus() : Promise.resolve({ ok: false })).catch(() => ({ ok: false }));
+  if (joinConnectBtn) joinConnectBtn.disabled = false;
+  setJoinStatus(message || "", message ? "err" : "");
+  setJoinMode(joinMode);
+  // Only "is a password saved?" — local, no network, so nothing to wait for.
+  const r = await (window.api.supportStatus ? window.api.supportStatus() : Promise.resolve({ saved: false })).catch(() => ({ saved: false }));
   if (!joinOverlayEl || joinOverlayEl.hidden) return;
-  if (r && r.ok) { showJoinStep("mode", message); return; }
-  showJoinStep("password", (r && r.reason) ? joinReasonText(r.reason) : (message || ""));
+  showJoinPassword(!(r && r.saved));
 }
 
-async function submitJoinPassword() {
+// The password typed for this join ('' = use the saved one). Missing when the
+// box is shown: say so and return null.
+function joinPasswordForConnect() {
+  if (!joinNeedsPassword) return "";
   const password = joinPasswordEl ? joinPasswordEl.value : "";
-  if (!password) { setJoinStatus("Enter the support password.", "err"); joinPasswordEl && joinPasswordEl.focus(); return; }
-  if (joinConnectBtn) joinConnectBtn.disabled = true;
-  setJoinStatus("Checking…", "busy");
-  const r = await window.api.supportLogin(password).catch((e) => ({ ok: false, reason: e.message }));
-  if (joinConnectBtn) joinConnectBtn.disabled = false;
-  if (r && r.ok) { showJoinStep("mode"); return; }
-  setJoinStatus(joinReasonText((r && r.reason) || "bad-password"), "err");
-  if (joinPasswordEl) { joinPasswordEl.select(); joinPasswordEl.focus(); }
+  if (!password) { setJoinStatus("Enter the support password.", "err"); joinPasswordEl && joinPasswordEl.focus(); return null; }
+  return password;
 }
+// A join refused over the password: the box (again), with why.
+function joinPasswordRefused(reason) {
+  showJoinPassword(true, joinReasonText(reason));
+}
+const JOIN_PASSWORD_REASONS = new Set(["reset", "bad-password", "no-password", "locked", "too-many-tries"]);
 
 function clearJoinPending() {
   if (joinPending && joinPending.timer) clearTimeout(joinPending.timer);
@@ -7412,23 +7474,30 @@ function clearJoinPending() {
   if (joinConnectBtn) joinConnectBtn.disabled = false;
 }
 
-// The one button: Continue (password) or Connect (internet / LAN).
+// Connect (internet / LAN), with the password when none is saved yet.
+let joinStarting = false;
 async function startJoin() {
-  if (joinPending) return;
-  if (joinStep === "password") return submitJoinPassword();
-  if (joinStep !== "mode") return;
+  if (joinPending || joinStarting) return;
   if (joinMode === "internet") return startJoinOnline();
   const address = ipOnly(joinAddressEl && joinAddressEl.value);
   if (!address) { setJoinStatus("Enter their IP address.", "err"); joinAddressEl && joinAddressEl.focus(); return; }
   if (!isIpv4(address)) { setJoinStatus("Enter their IP address, for example 192.168.1.20.", "err"); joinAddressEl && joinAddressEl.focus(); return; }
+  const password = joinPasswordForConnect();
+  if (password === null) return;
   netCfg = { ...(netCfg || {}), role: "supporter" };
   teardownPeers();
-  const r = await window.api.joinAsSupporter({ address }).catch((e) => ({ ok: false, error: e.message }));
+  joinStarting = true;
+  if (joinConnectBtn) joinConnectBtn.disabled = true;
+  if (password) setJoinStatus("Checking the password…", "busy");
+  const r = await window.api.joinAsSupporter({ address, password }).catch((e) => ({ ok: false, error: e.message }));
+  joinStarting = false;
+  if (joinConnectBtn) joinConnectBtn.disabled = false;
   if (!r || !r.ok) {
-    if (r && r.reason) { showJoinStep("password", joinReasonText(r.reason)); return; }
-    setJoinStatus((r && r.error) || "Could not connect.", "err");
+    if (r && JOIN_PASSWORD_REASONS.has(r.reason)) { joinPasswordRefused(r.reason); return; }
+    setJoinStatus((r && (r.error || (r.reason && joinReasonText(r.reason)))) || "Could not connect.", "err");
     return;
   }
+  if (password) showJoinPassword(false);
   supporterAddress = address;
   if (joinConnectBtn) joinConnectBtn.disabled = true;
   setJoinStatus(`Connecting to ${address}…`, "busy");
@@ -7447,11 +7516,14 @@ async function startJoin() {
 async function startJoinOnline() {
   const session = joinSessions.find((x) => x.id === joinSelected);
   if (!session) { setJoinStatus(joinSessions.length ? "Pick a session first." : "There is no live session to join yet.", "err"); return; }
+  const password = joinPasswordForConnect();
+  if (password === null) return;
   netCfg = { ...(netCfg || {}), role: "supporter" };
   teardownPeers();
-  const r = await window.api.joinOnline({ sessionId: session.id, label: session.label }).catch((e) => ({ ok: false, error: e.message }));
+  // The join itself checks the password on ace2me.com: one call, no extra wait.
+  const r = await window.api.joinOnline({ sessionId: session.id, label: session.label, password }).catch((e) => ({ ok: false, error: e.message }));
   if (!r || !r.ok) {
-    if (r && r.reason) { showJoinStep("password", joinReasonText(r.reason)); return; }
+    if (r && JOIN_PASSWORD_REASONS.has(r.reason)) { joinPasswordRefused(r.reason); return; }
     setJoinStatus((r && r.error) || "Could not connect.", "err");
     return;
   }
@@ -7554,11 +7626,14 @@ if (window.api.onJoinRejected)
       const addr = joinPending.address;
       clearJoinPending();
       window.api.leaveSupporter().catch(() => {});
-      if (reason === "reset" || reason === "bad-password" || reason === "no-password") {
-        showJoinStep("password", joinReasonText(reason === "bad-password" ? "reset" : reason));
-        return;
-      }
+      if (JOIN_PASSWORD_REASONS.has(reason)) { joinPasswordRefused(reason); return; }
       setJoinStatus(joinReasonText(reason, addr), "err");
+      return;
+    }
+    // A saved password found changed after the attempt already ended (e.g.
+    // "can't reach" came first): on the join screen, ask for it now.
+    if (JOIN_PASSWORD_REASONS.has(reason) && joinOverlayEl && !joinOverlayEl.hidden && !document.body.classList.contains("role-supporter")) {
+      joinPasswordRefused(reason);
       return;
     }
     supporterLostConnection(joinReasonText(reason, supporterAddress));

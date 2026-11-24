@@ -6,4 +6,5 @@ contextBridge.exposeInMainWorld('watch', {
   log: (line) => ipcRenderer.send('speaker-watch-log', String(line)),
   onGrab: (cb) => ipcRenderer.on('speaker-watch-grab', (_e, req) => cb(req)),
   grabbed: (id, jpeg) => ipcRenderer.send('speaker-watch-grabbed', { id, jpeg }),
+  onSpeech: (cb) => ipcRenderer.on('speaker-watch-speech', () => cb()),
 });

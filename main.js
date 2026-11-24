@@ -640,7 +640,10 @@ function createWindow() {
   // A file dropped outside the drop zones must not replace the app with it.
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   clickTraceLog(`--- Ace ${app.getVersion()} started; ${traceFlags()}`);
-  clickTrace.start();
+  // The press-watching helper (a PowerShell process, ~100 MB, compiled at
+  // every start) only when switched on in Settings → Check; the page-side
+  // reports (freezes, slow frames, errors) cost nothing and always run.
+  if (state.clickTrace === true) clickTrace.start();
   // A frozen or crashed page (or a lost GPU process: the window goes black or
   // keeps a stale picture) also looks like "the mouse does nothing while the
   // hotkeys still work", because the hotkeys live in this process.
@@ -2410,6 +2413,14 @@ setInterval(() => {
   clickTraceLog(`PAGE STALLED: no heartbeat from the main page for ${Math.round(quiet / 1000)} s (frozen or very busy). domNodes=${pageBeat.nodes}; ${traceFlags()}`);
 }, 3000);
 // Opens the folder with click-trace.log selected (Settings / support).
+ipcMain.handle('click-trace-get', () => ({ supported: process.platform === 'win32', enabled: state.clickTrace === true }));
+ipcMain.handle('click-trace-set', (_e, on) => {
+  state.clickTrace = !!on;
+  saveState();
+  if (process.platform === 'win32') { if (state.clickTrace) clickTrace.start(); else clickTrace.stop(); }
+  clickTraceLog(`click trace helper turned ${state.clickTrace ? 'on' : 'off'}`);
+  return state.clickTrace;
+});
 ipcMain.handle('click-trace-reveal', async () => {
   await clickTraceQueue;
   try { require('electron').shell.showItemInFolder(CLICK_TRACE_FILE); } catch {}
@@ -2839,13 +2850,16 @@ function connectSignalingClient() {
       if (seq !== supporterJoinSeq || supporterOnline !== target) return;
       if (!r.ok) {
         appendLogLine('[online] join refused: ' + r.error);
-        // the administrator changed the password: ask for it again
-        if (r.error === 'bad-password' || r.error === 'no-password') { aceOnline.forgetSupportPassword(); supportUnlocked = false; }
-        supporterRefused = r.error;
+        // the administrator changed the password: forget it, ask for it again
+        if (PASSWORD_GONE.has(r.error)) aceOnline.forgetSupportPassword();
+        const reason = passwordRefusal(r.error, target.typed);
+        supporterRefused = reason;
         supporterAdmitted = false;
-        if (win) win.webContents.send('join-rejected', { reason: r.error });
+        if (win) win.webContents.send('join-rejected', { reason });
         return;
       }
+      // ace2me.com took the typed password: keep it, not asked again
+      if (target.typed) { aceOnline.saveSupportPassword(target.password); target.typed = false; }
       openSignalingClient(aceOnline.relayUrl(r.relayUrl, 'join', r.ticket));
     });
     return;
@@ -4300,6 +4314,16 @@ ipcMain.on('speaker-watch-grabbed', (_e, r) => {
   if (done) { grabs.delete(r.id); done(r.jpeg ? Buffer.from(r.jpeg) : null); }
 });
 
+// The screen watcher reads twice a second only while the meeting is talking
+// (slowly otherwise): tell it when words arrive, at most once a second.
+let watchSpeechSentAt = 0;
+function tellWatchSpeech() {
+  const now = Date.now();
+  if (!watchWin || watchWin.isDestroyed() || now - watchSpeechSentAt < 1000) return;
+  watchSpeechSentAt = now;
+  try { watchWin.webContents.send('speaker-watch-speech', now); } catch {}
+}
+
 function startSpeakerWatch() {
   if (!speakerNamesOn()) return; // hiring call: no names
   if (watchWin && !watchWin.isDestroyed()) return;
@@ -4359,6 +4383,7 @@ function parseTranscriptAlternative(alt, window, isFinal) {
   const text = transcript || words.map((w) => w.punctuated_word || w.word || '').join(' ').replace(/\s+/g, ' ').trim();
   if (!text) return { text: '', labeled: '', speaker: 0, turns: [] };
   lastSpeechAt = Date.now();
+  tellWatchSpeech();
   if (!speakerNamesOn()) return { text, labeled: 'Interviewer: ' + text, speaker: 0, turns: [{ speaker: 0, who: 'Interviewer', text }] };
   const runs = voiceRuns(words);
   if (!runs.length) {
@@ -5489,13 +5514,20 @@ ipcMain.handle('session-resume', (_e, { id, profile, salary } = {}) => {
   schedulePromptCacheWarm();
   return { id: s.id, name: s.name, turns: s.turns || [], profile: s.profile };
 });
-ipcMain.handle('session-delete', (_e, id) => {
-  try { const s = sessions.find((x) => x.id === id); if (s && s.folder && fs.existsSync(s.folder)) fs.rmSync(s.folder, { recursive: true, force: true }); } catch {}
-  sessions = sessions.filter(s => s.id !== id);
-  if (currentSessionId === id) { currentSessionId = null; convoHistory = []; }
+// Delete saved sessions and their folders (one, or the history's Remove all).
+function deleteSessions(ids) {
+  const gone = new Set((ids || []).map(String));
+  for (const s of sessions) {
+    if (!gone.has(String(s.id))) continue;
+    try { if (s.folder && fs.existsSync(s.folder)) fs.rmSync(s.folder, { recursive: true, force: true }); } catch {}
+  }
+  sessions = sessions.filter((s) => !gone.has(String(s.id)));
+  if (currentSessionId && gone.has(String(currentSessionId))) { currentSessionId = null; convoHistory = []; }
   saveSessions();
-  return true;
-});
+  return gone.size;
+}
+ipcMain.handle('session-delete', (_e, id) => { deleteSessions([id]); return true; });
+ipcMain.handle('session-delete-many', (_e, ids) => deleteSessions(Array.isArray(ids) ? ids : []));
 
 // ── Per-session knowledge editing (continue page upload zones) ────────────────
 ipcMain.handle('session-kb-get', (_e, id) => {
@@ -7100,10 +7132,30 @@ function normalizeSpeakerAddress(addr) {
   if (!m || m.slice(1).some((n) => parseInt(n, 10) > 255)) return null;
   return `${ip}:${SUPPORTER_PORT}`;
 }
-ipcMain.handle('join-as-supporter', (_e, { address } = {}) => {
-  if (!supportUnlocked) return { ok: false, reason: 'locked' };
+ipcMain.handle('join-as-supporter', async (_e, { address, password: typedPw } = {}) => {
   const addr = normalizeSpeakerAddress(address);
   if (!addr) return { ok: false, error: 'Enter their IP address, for example 192.168.1.20.' };
+  const pw = joinPassword(typedPw);
+  if (!pw) return { ok: false, reason: 'locked' };
+  if (pw.typed) {
+    // A new password is checked before connecting (and then kept).
+    const r = await checkSupportPassword(pw.password);
+    if (!r.ok) return r.offline ? { ok: false, error: 'Cannot reach ace2me.com to check the password. Try again.' } : { ok: false, reason: r.reason };
+    aceOnline.saveSupportPassword(pw.password);
+  } else {
+    // A saved one: connect now, check alongside. Changed by the administrator,
+    // the connection is dropped and the password asked for again. Without an
+    // answer from ace2me.com the saved one stands.
+    const seq = supporterJoinSeq + 1; // the connect below takes this number
+    checkSupportPassword(pw.password).then((r) => {
+      if (r.ok || r.offline || !PASSWORD_GONE.has(r.reason)) return;
+      aceOnline.forgetSupportPassword();
+      appendLogLine('[lan] support password no longer valid: ' + r.reason);
+      // Still this connection: drop it. Either way the page asks for the password.
+      if (supporterJoinSeq === seq && !supporterOnline && state.network.role === 'supporter') disconnectSignalingClient();
+      if (win) win.webContents.send('join-rejected', { reason: passwordRefusal(r.reason, false) });
+    });
+  }
   supporterOnline = null;
   stopSignalingServer();
   state.network = { ...state.network, role: 'supporter', supporterAddress: addr, address: addr };
@@ -7220,11 +7272,14 @@ ipcMain.handle('online-sessions', async () => {
   const r = await aceOnline.sessionList();
   return r.ok ? { ok: true, sessions: r.sessions || [] } : { ok: false, error: r.error };
 });
-// The support password: asked once, kept encrypted (ace-support.bin) and
-// checked with ace2me.com each time the join screen opens. Changed there by
-// the administrator, it is asked for again ("This password was reset").
-// Without a connection the saved one still opens LAN joining.
-let supportUnlocked = false;
+// The support password: typed with the first join, kept encrypted
+// (ace-support.bin) once ace2me.com accepted it, and sent with every later
+// join without asking. Opening the join screen asks ace2me.com nothing, so it
+// is instant. When the administrator changes the password, the next join is
+// refused: the saved one is forgotten and asked for again ("This password was
+// reset"). Online, the join call itself checks the password (one round trip);
+// on the same network a typed password is checked first, a saved one in the
+// background while connecting.
 const PASSWORD_GONE = new Set(['bad-password', 'no-password']);
 async function checkSupportPassword(password) {
   const r = await aceOnline.supportCheck(password);
@@ -7232,33 +7287,27 @@ async function checkSupportPassword(password) {
   if (r.status) return { ok: false, reason: r.error };   // ace2me.com said no
   return { ok: false, offline: true, reason: r.error };  // no answer
 }
-ipcMain.handle('support-status', async () => {
-  const pw = aceOnline.savedSupportPassword();
-  supportUnlocked = false;
-  if (!pw) return { ok: false };
-  const r = await checkSupportPassword(pw);
-  if (r.ok || r.offline) { supportUnlocked = true; return { ok: true, offline: !!r.offline }; }
-  if (PASSWORD_GONE.has(r.reason)) {
-    aceOnline.forgetSupportPassword();
-    return { ok: false, reason: r.reason === 'bad-password' ? 'reset' : r.reason };
-  }
-  return { ok: false, reason: r.reason };
-});
-ipcMain.handle('support-login', async (_e, password) => {
-  const pw = typeof password === 'string' ? password : '';
-  if (!pw) return { ok: false, reason: 'bad-password' };
-  const r = await checkSupportPassword(pw);
-  if (!r.ok) return { ok: false, reason: r.reason };
-  aceOnline.saveSupportPassword(pw);
-  supportUnlocked = true;
-  return { ok: true };
-});
-ipcMain.handle('join-online', (_e, { sessionId, label } = {}) => {
+// The reason shown for a refused password: a saved one was changed by the
+// administrator; a typed one is simply wrong.
+function passwordRefusal(reason, typed) {
+  if (reason === 'bad-password' && !typed) return 'reset';
+  return reason;
+}
+// Is a password kept? (No network: the join screen opens at once.)
+ipcMain.handle('support-status', () => ({ saved: !!aceOnline.savedSupportPassword() }));
+// The password to join with: the one typed now, else the saved one.
+function joinPassword(typed) {
+  const pw = typeof typed === 'string' ? typed : '';
+  if (pw) return { password: pw, typed: true };
+  const saved = aceOnline.savedSupportPassword();
+  return saved ? { password: saved, typed: false } : null;
+}
+ipcMain.handle('join-online', (_e, { sessionId, label, password: typedPw } = {}) => {
   if (!sessionId) return { ok: false, error: 'Pick a session first.' };
-  const password = aceOnline.savedSupportPassword();
-  if (!supportUnlocked || !password) return { ok: false, reason: 'locked' };
+  const pw = joinPassword(typedPw);
+  if (!pw) return { ok: false, reason: 'locked' };
   stopSignalingServer();
-  supporterOnline = { sessionId: String(sessionId), password: String(password), label: String(label || 'the speaker') };
+  supporterOnline = { sessionId: String(sessionId), password: pw.password, typed: pw.typed, label: String(label || 'the speaker') };
   state.network = { ...state.network, role: 'supporter' };
   saveState();
   registerHotkeys();

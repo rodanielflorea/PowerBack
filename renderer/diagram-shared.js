@@ -5,7 +5,23 @@
 // ── Init ──────────────────────────────────────────────────────────────────────
 // Only use themeVariables keys that exist in v11 'base'; invalid keys silently
 // corrupt the config and make render() throw.
-if (typeof mermaid !== 'undefined') {
+// Mermaid (3.3 MB) is loaded the first time an answer has a diagram, not at
+// every start: most sessions never draw one, and parsing it costs every
+// window memory and start-up time.
+var __mermaidReady = null;
+function ensureMermaid() {
+  if (__mermaidReady) return __mermaidReady;
+  __mermaidReady = new Promise(function (resolve, reject) {
+    if (typeof mermaid !== 'undefined') return resolve();
+    var sc = document.createElement('script');
+    sc.src = 'lib/mermaid.min.js';
+    sc.onload = function () { resolve(); };
+    sc.onerror = function () { __mermaidReady = null; reject(new Error('the diagram library could not be loaded')); };
+    document.head.appendChild(sc);
+  }).then(initMermaid);
+  return __mermaidReady;
+}
+function initMermaid() {
   mermaid.initialize({
     startOnLoad: false,
     theme: 'base',
@@ -177,9 +193,9 @@ function renderDiagramsMarkdown(el, onDiagram) {
   });
   el.innerHTML = html;
 
-  if (typeof mermaid !== 'undefined' && diagrams.length > 0) {
+  if (diagrams.length > 0) {
     el.classList.add('has-diagram');
-    diagrams.forEach((code, i) => {
+    ensureMermaid().then(() => diagrams.forEach((code, i) => {
       const ph = document.getElementById('mermaid-ph-' + baseId + '-' + i);
       if (!ph) return;
       const cleanCode = sanitizeMermaid(code);
@@ -206,6 +222,12 @@ function renderDiagramsMarkdown(el, onDiagram) {
             escapeHtml(String(err && err.message || err)) + '</div>' +
             '<pre class="mermaid-raw">' + escapeHtml(cleanCode) + '</pre>';
         });
+    })).catch(function (err) {
+      diagrams.forEach(function (code, i) {
+        var ph = document.getElementById('mermaid-ph-' + baseId + '-' + i);
+        if (ph) ph.innerHTML = '<div class="mermaid-error"><b>Diagram error:</b> ' + escapeHtml(String(err && err.message || err)) +
+          '</div><pre class="mermaid-raw">' + escapeHtml(code) + '</pre>';
+      });
     });
   }
 }

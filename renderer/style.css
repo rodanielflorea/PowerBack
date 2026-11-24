@@ -361,6 +361,13 @@ body:not(.in-interview) .right-rail { display: none !important; }
   justify-content: center;
   padding: 12px;
 }
+/* Electron builds the window-drag area from every element's app-region in page
+   order, whatever is drawn on top. The start screens come after Settings in
+   the page, so their drag areas (the logo, the step title bars) beat the tabs'
+   no-drag: a press on a tab over them was taken as a window drag and never
+   reached the page. While Settings is open, the screens under it take no part. */
+body:has(#settingsOverlay:not([hidden])) :is(.setup-overlay, .welcome-overlay),
+body:has(#settingsOverlay:not([hidden])) :is(.setup-overlay, .welcome-overlay) * { -webkit-app-region: initial !important; }
 /* Full height, so switching tabs never moves the tab row: centred, a short
    tab shrank the box and the tabs jumped away from the pointer (the next
    click landed on the backdrop and closed Settings). */
@@ -1914,7 +1921,7 @@ textarea.meet-editbox {
 }
 .profile-delete-confirm { margin: -2px 0 8px; border-color: var(--rec-on); background: var(--danger-bg); }
 .profile-savebar[hidden], .profile-delete-confirm[hidden], .profile-savebar [hidden] { display: none !important; }
-.profile-savebar-text, #profileDeleteText { flex: 1 1 140px; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--text); }
+.profile-savebar-text, #profileDeleteText, #historyClearText { flex: 1 1 140px; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--text); }
 .profile-savebar .modal-btn-primary, .profile-savebar .modal-btn-secondary,
 .profile-delete-confirm .modal-btn-danger, .profile-delete-confirm .modal-btn-secondary { height: 28px; padding: 0 12px; }
 .profile-picker .csel { flex: 1; min-width: 0; }
@@ -2938,6 +2945,10 @@ body.role-supporter .rec-btn { display: none !important; }
 .history-icon path { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .history-body { display: flex; flex-direction: column; gap: 10px; }
 .history-search { width: 100%; }
+.history-tools { display: flex; gap: 8px; align-items: stretch; }
+.history-tools .history-search { flex: 1; min-width: 0; }
+.history-clear-btn { height: auto; flex-shrink: 0; white-space: nowrap; }
+.history-clear-btn:hover { color: var(--rec-on); border-color: var(--rec-on); }
 .history-list { display: flex; flex-direction: column; gap: 8px; }
 .history-item {
   -webkit-app-region: no-drag;
@@ -3024,6 +3035,9 @@ body.role-supporter .rec-btn { display: none !important; }
 .join-step[hidden] { display: none; }
 .join-mode-seg { display: flex; margin-bottom: 10px; }
 .join-mode-seg button { flex: 1 1 0; }
+.join-password { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--border); }
+.join-password[hidden] { display: none; }
+.join-password .hint { margin: 0; }
 
 /* Speaker: invite button and panel */
 .supporter-invite-btn { position: relative; }
@@ -3327,6 +3341,8 @@ body.meeting-hiring .req-mark { display: inline; }
 body.meeting-hiring .hiring-only { display: inline; }
 body.meeting-hiring .team-only { display: none; }
 .upload-zone.required-missing { border-color: var(--danger); }
+/* A team meeting has no resume, job description or salary: only Support material. */
+body:not(.meeting-hiring) .hiring-block { display: none !important; }
 .salary-row.required-missing .salary-amount { border-color: var(--danger); }
 .setup-required { margin: 10px 0 0; font-size: 12px; font-weight: 600; color: var(--danger); }
 
