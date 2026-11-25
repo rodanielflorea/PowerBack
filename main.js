@@ -5019,6 +5019,7 @@ function sessionBaseName(company, role) {
 // arrives, so stopping is instant however long the meeting was and a crash
 // leaves the video so far. Recordings wait in a staging folder until End moves
 // them into the session's folder, next to the transcript and the documents.
+const { finalizeWebm } = require('./webm-finalize');
 const recStreams = new Map();      // id -> { file, stream }
 let pendingRecordings = [];        // finished files waiting for End
 let recSeq = 0;
@@ -5050,9 +5051,17 @@ function finishRecording(id) {
       try { size = fs.statSync(r.file).size; } catch {}
       if (!size) { try { fs.unlinkSync(r.file); } catch {} return resolve(null); }
       pendingRecordings.push(r.file);
-      resolve(r.file);
+      // Duration and seek index, so a player can jump to any point.
+      makeSeekable(r.file).then(() => resolve(r.file));
     });
   });
+}
+async function makeSeekable(file) {
+  const t0 = Date.now();
+  const r = await finalizeWebm(file);
+  appendLogLine(r.ok
+    ? `[recording] made seekable: ${r.duration} s, ${r.cues} seek points (${Date.now() - t0} ms)`
+    : '[recording] could not make it seekable (the file is kept as it was): ' + r.error);
 }
 ipcMain.handle('rec-end', async (_e, id) => {
   const file = await finishRecording(id);
@@ -5086,7 +5095,10 @@ async function recoverRecordings() {
     const left = (await fs.promises.readdir(dir)).filter((f) => f.endsWith('.webm'));
     if (left.length) {
       const folder = uniqueDir(path.join(sessionsRootDir(), sessionStamp() + '-Unsaved recording'));
-      for (const f of left) await moveFile(path.join(dir, f), path.join(folder, f));
+      for (const f of left) {
+        await makeSeekable(path.join(dir, f));
+        await moveFile(path.join(dir, f), path.join(folder, f));
+      }
       appendLogLine('[recording] recovered ' + left.length + ' recording(s) into ' + folder);
       // Ace was closed without End (killed, crashed, power off): upload what was
       // recovered too, and show its link like any other session's.

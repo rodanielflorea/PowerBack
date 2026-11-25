@@ -1,6 +1,6 @@
 {
   "name": "ace",
-  "version": "2.7.31",
+  "version": "2.7.32",
   "description": "Answer Coaching Engine",
   "main": "main.js",
   "scripts": {
@@ -41,7 +41,8 @@
       "license.js",
       "ace-online.js",
       "license-public.key",
-      "watchdog.js"
+      "watchdog.js",
+      "webm-finalize.js"
     ],
     "directories": {
       "output": "dist"
@@ -187,7 +188,7 @@
     "ws": "^8.20.0"
   },
   "devDependencies": {
-    "electron": "^41.4.0",
+    "electron": "41.4.0",
     "electron-builder": "^25.0.0",
     "png-to-ico": "^3.0.1",
     "sharp": "^0.34.5"

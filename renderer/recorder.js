@@ -202,9 +202,12 @@
       writes = Promise.resolve();
       // Chromium's default is about 2.5 Mbps, which blurs small on-screen text;
       // 3 Mbps at 15 fps keeps each frame as sharp (still screens cost little),
-      // up to about 1.4 GB an hour.
+      // up to about 1.4 GB an hour. A keyframe every 2 s: without it the
+      // encoder (in software on a Mac) can go minutes without one, and a player
+      // can then neither start at a clicked point nor show more than a frozen
+      // picture after it.
       const recOpts = videoTrack
-        ? { mimeType: pickMime(), videoBitsPerSecond: TUNE().bps, audioBitsPerSecond: 128000 }
+        ? { mimeType: pickMime(), videoBitsPerSecond: TUNE().bps, audioBitsPerSecond: 128000, videoKeyFrameIntervalDuration: 2000 }
         : { mimeType: "audio/webm", audioBitsPerSecond: 128000 };
       rec = new MediaRecorder(new MediaStream(streamTracks), recOpts);
       rec.ondataavailable = (e) => {
