@@ -3047,7 +3047,8 @@ function openSignalingClient(url) {
 // still sees a banner while it is on, with Stop; the stopRemoteControl hotkey,
 // the supporter leaving and the screen no longer being shared end it too.
 // Input lands on the display being shared, and keys or buttons still held when
-// it ends are let go. Windows only (remote-input.js).
+// it ends are let go. Windows and macOS (remote-input.js; on a Mac it needs the
+// Accessibility permission).
 const remoteInput = createRemoteInput((m) => appendLogLine('[control] ' + m), controlBlockedEvent);
 const control = { connId: null, state: 'off', keys: new Set(), buttons: new Set(), blocked: '', releaseAt: 0, passing: false, passTimer: null, lastInputAt: 0, pending: null };
 
@@ -3062,6 +3063,12 @@ const VM_NAMES = [{ re: /vmware|vmplayer|vmrc/i, name: 'VMware', release: 'Ctrl+
   { re: /virtualbox/i, name: 'VirtualBox', release: 'the host key (usually right Ctrl)' }];
 function controlBlockedEvent(kind, program) {
   if (control.state !== 'on') return;
+  if (kind === 'noperm') {
+    // macOS drops every event from a helper without Accessibility.
+    appendLogLine('[control] macOS has not given Ace the Accessibility permission, so the supporter\'s input cannot be delivered');
+    controlStop(MAC_CONTROL_NO_PERMISSION);
+    return;
+  }
   if (kind === 'unblocked') {
     if (!control.blocked) return;
     appendLogLine('[control] the pointer obeys again');
@@ -3110,8 +3117,17 @@ function controlStop(reason) {
 // The supporter takes control. No prompt: it begins at once (the supporter was
 // already admitted to the session). Still needs the speaker on Windows and the
 // screen shared, and the speaker can stop it any time.
+const MAC_CONTROL_NO_PERMISSION = "The speaker's Mac has not allowed Ace to control the mouse and keyboard. On their Mac: System Settings → Privacy & Security → Accessibility → turn Ace on, then try again";
 function controlRequest(connId) {
-  if (process.platform !== 'win32') { controlSendTo(connId, { state: 'unsupported', reason: 'Remote control works when the speaker is on Windows.' }); return; }
+  if (process.platform !== 'win32' && process.platform !== 'darwin') { controlSendTo(connId, { state: 'unsupported', reason: 'Remote control works when the speaker is on Windows or macOS.' }); return; }
+  // macOS: without Accessibility every injected event is dropped. Asking shows
+  // the system prompt on the speaker's Mac, which adds Ace to the list.
+  if (process.platform === 'darwin' && !macAccessibilityOk(true)) {
+    appendLogLine('[control] the supporter asked for control, but macOS has not given Ace the Accessibility permission');
+    controlSendTo(connId, { state: 'unsupported', reason: MAC_CONTROL_NO_PERMISSION + '.' });
+    if (win && !win.isDestroyed()) win.webContents.send('control-state', { state: 'off', needPermission: true });
+    return;
+  }
   if (!sharedDisplayId) {
     // Join-time race: the request can arrive before the speaker's own 'screen'
     // message has set sharedDisplayId. Remember it and resume the moment sharing
@@ -3140,8 +3156,9 @@ function controlPoint(nx, ny) {
   const fx = Math.min(1, Math.max(0, Number(nx) || 0));
   const fy = Math.min(1, Math.max(0, Number(ny) || 0));
   const dip = { x: b.x + fx * (b.width - 1), y: b.y + fy * (b.height - 1) };
+  // Windows wants physical pixels; macOS events use these same points.
   let p = dip;
-  try { if (screen.dipToScreenPoint) p = screen.dipToScreenPoint(dip); } catch {}
+  if (process.platform === 'win32') { try { if (screen.dipToScreenPoint) p = screen.dipToScreenPoint(dip); } catch {} }
   return { x: Math.round(p.x), y: Math.round(p.y) };
 }
 // A batch of the supporter's input: ['m', x, y] move, ['b', button, down, x, y],
@@ -3173,7 +3190,7 @@ function controlInput(connId, events) {
       if (dx || dy) remoteInput.send(`W ${dx} ${dy}`);
     } else if (kind === 'k') {
       const vk = vkFor(String(ev[1] || ''));
-      if (!vk) continue;
+      if (vk == null) continue;
       const down = ev[2] ? 1 : 0;
       if (down) control.keys.add(vk); else control.keys.delete(vk);
       remoteInput.send(`K ${vk} ${down}`);

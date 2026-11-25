@@ -3880,17 +3880,27 @@ function addAnswerTurn(question, imgs, mode, ts) {
   // (the question, or the transcript) above for context. Measured from the
   // answer's TOP: on Submit a drafted answer is pasted in whole before this
   // runs, and measuring a bottom edge would open the bubble at its end.
+  landOnNewAnswer(turn);
+  return a;
+}
+
+// Where a new answer opens: its start, with a strip of what came before it
+// (its question, or the transcript) above for context. The supporter's mirror
+// of the panel lands the same way (applyMirror).
+function landOnNewAnswer(turn) {
   showAnswerJump(false); // the new answer is what is read now
   requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (!turn.isConnected) return;
+    const a = turn.querySelector(":scope > .answer-a") || turn;
+    const q = turn.querySelector(":scope > .answer-q");
     const cRect = answerHistory.getBoundingClientRect();
     const aTopInScroll = answerHistory.scrollTop + (a.getBoundingClientRect().top - cRect.top);
-    const prev = showQ ? q : turn.previousElementSibling;
+    const prev = q || turn.previousElementSibling;
     const context = prev ? Math.min(72, prev.getBoundingClientRect().height) : 0;
     setAnswerScroll(Math.max(0, aTopInScroll - context));
     // Following goes on only if the whole answer fits on screen.
     followTranscript = lastTurnEndVisible();
   }));
-  return a;
 }
 
 // Reflect a mode in the segmented control + manualMode state.
@@ -7377,6 +7387,9 @@ window.addEventListener("beforeunload", closeScreenViewer);
 const controlBanner = document.getElementById("controlBanner");
 let speakerControlState = "off";
 function showControlBanner(v) {
+  if (v && v.needPermission) {
+    toast("Your supporter wants to control your screen, but macOS blocks it: System Settings → Privacy & Security → Accessibility → turn Ace on.", "err");
+  }
   if (!controlBanner) return;
   const st = (v && v.state) || "off";
   const prev = speakerControlState;
@@ -8004,6 +8017,9 @@ function applyMirror(msg) {
   ensureSpacer();
   if (msg.mode && ["ANSWER", "CODE", "DIAGRAM", "PROJECT"].includes(msg.mode) && msg.mode !== manualMode) setManualMode(msg.mode);
   if (msg.reset) clearMirroredTurns();
+  // Each change replaces a whole bubble; the panel stays where the reader has
+  // it (on their screen the text only grows in place, nothing moves).
+  const keepTop = answerHistory.scrollTop;
   let newAnswer = null, meetTouched = null;
   for (const op of msg.ops || []) {
     if (op.op === "remove") {
@@ -8037,13 +8053,11 @@ function applyMirror(msg) {
     if (last) try { last.scrollIntoView({ block: "end" }); } catch {}
     return;
   }
+  if (Math.abs(answerHistory.scrollTop - keepTop) >= 1) setAnswerScroll(keepTop);
   // The same scrolling as on their screen: a new answer opens at its start,
   // the live transcript keeps its newest words in view.
   if (newAnswer) {
-    const cRect = answerHistory.getBoundingClientRect();
-    const a = newAnswer.querySelector(".answer-a") || newAnswer;
-    const top = answerHistory.scrollTop + (a.getBoundingClientRect().top - cRect.top);
-    answerHistory.scrollTop = Math.max(0, top - 72);
+    landOnNewAnswer(newAnswer);
   } else if (meetTouched && meetTouched === lastTurnEl()) {
     revealMeetBubble(meetTouched);
   }

@@ -32,17 +32,22 @@
     let done = false;
     let timer = null;
 
-    // Timestamps must only go up: a repeat is stamped with the time since the
-    // last write, and a captured frame that would go back is restamped.
+    // Every frame that goes out, captured or repeated, is stamped from one
+    // clock (this page's), at least MIN_GAP_US after the one before. Mixing the
+    // capturer's timestamps with repeats stamped "now" put a captured frame
+    // 1 µs after a repeat whenever the screen changed after a still spell: two
+    // different pictures with the same RTP timestamp (90 kHz), which the
+    // supporter's decoder could not put together, and their picture went black
+    // a few seconds into the call.
+    const MIN_GAP_US = 5000;
     function emit(frame) {
       if (done || pending > 2) { frame.close(); return; } // the consumer is behind: skip
-      let f = frame;
-      if (f.timestamp <= lastTs) {
-        try { f = new VideoFrame(frame, { timestamp: lastTs + 1 }); } catch { f = null; }
-        frame.close();
-        if (!f) return;
-      }
-      lastTs = f.timestamp;
+      const ts = Math.max(lastTs + MIN_GAP_US, Math.round(performance.now() * 1000));
+      let f;
+      try { f = new VideoFrame(frame, { timestamp: ts }); } catch { f = null; }
+      frame.close();
+      if (!f) return;
+      lastTs = ts;
       lastWriteAt = performance.now();
       pending++;
       writer.write(f).catch(() => { try { f.close(); } catch {} }).finally(() => { pending--; });
@@ -50,9 +55,8 @@
 
     function repeat() {
       if (done || !last || performance.now() - lastWriteAt < idleMs) return;
-      const ts = lastTs + Math.max(1, Math.round((performance.now() - lastWriteAt) * 1000));
       let copy;
-      try { copy = new VideoFrame(last, { timestamp: ts }); } catch { return; }
+      try { copy = last.clone(); } catch { return; }
       emit(copy);
     }
 

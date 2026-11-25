@@ -32,9 +32,11 @@ module.exports = async function afterSign(context) {
   console.log(identity === '-'
     ? `  • ad-hoc signing ${appName} (no certificate configured)`
     : `  • signing ${appName} with "${LOCAL_IDENTITY}" (permissions survive rebuilds)`);
-  // --deep does not reach executables under Resources: sign the helper first.
-  const helper = path.join(appPath, 'Contents', 'Resources', 'mac-audio', 'system-audio');
-  if (fs.existsSync(helper)) execSync(`codesign --force --sign "${identity}" --timestamp=none "${helper}"`, { stdio: 'inherit' });
+  // --deep does not reach executables under Resources: sign the helpers first.
+  for (const name of ['system-audio', 'remote-input']) {
+    const helper = path.join(appPath, 'Contents', 'Resources', 'mac-audio', name);
+    if (fs.existsSync(helper)) execSync(`codesign --force --sign "${identity}" --timestamp=none "${helper}"`, { stdio: 'inherit' });
+  }
   execSync(`codesign --force --deep --sign "${identity}"${ent} --timestamp=none "${appPath}"`, { stdio: 'inherit' });
   execSync(`codesign --verify --deep --strict "${appPath}"`, { stdio: 'inherit' });
 };
