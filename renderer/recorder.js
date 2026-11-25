@@ -29,12 +29,13 @@
   }
 
   async function getScreenVideoTrack() {
-    // Windows: take the video through getDisplayMedia (main answers it with the
-    // same screen). A chromeMediaSource "desktop" capture of a screen is shared
-    // with every other one of that screen, and the speaker-name watcher holds
-    // one at 4 fps, which held recordings to 4 fps too. getDisplayMedia gets a
-    // capturer of its own (measured: 29 fps beside the watcher's 4).
-    if (!IS_MAC && navigator.mediaDevices.getDisplayMedia) {
+    // Take the video through getDisplayMedia (main answers it with the same
+    // screen). A chromeMediaSource "desktop" capture of a screen is shared with
+    // every other one of that screen, and the speaker-name watcher holds one at
+    // 4 fps, which held recordings to 4 fps too. getDisplayMedia gets a
+    // capturer of its own (measured: 29 fps beside the watcher's 4 on Windows;
+    // 15 against 4 on macOS, where the recording was close to a still picture).
+    if (navigator.mediaDevices.getDisplayMedia) {
       try {
         const T = TUNE();
         const s = await navigator.mediaDevices.getDisplayMedia({
@@ -46,7 +47,7 @@
         if (vt) {
           tracks.push(s);
           log("recording video: display capture");
-          return vt;
+          return steady(vt);
         }
         s.getTracks().forEach((t) => t.stop());
       } catch (e) { log("recording video: display capture unavailable (" + e.message + "), using desktop capture"); }
@@ -58,7 +59,17 @@
       video: { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: id, maxFrameRate: TUNE().fps, maxWidth: TUNE().maxW, maxHeight: TUNE().maxH } },
     });
     tracks.push(s);
-    return s.getVideoTracks()[0];
+    return steady(s.getVideoTracks()[0]);
+  }
+
+  // macOS sends a frame only when the screen changes: a still screen gave the
+  // recording no frames, and so no keyframes, for minutes (no seeking there).
+  // The last picture is repeated at least once a second.
+  function steady(vt) {
+    if (!IS_MAC || !vt || !window.steadyVideoTrack) return vt;
+    const st = window.steadyVideoTrack(vt, { idleMs: 1000 });
+    if (st !== vt) tracks.push(new MediaStream([st]));
+    return st;
   }
 
   let mixDest = null;
@@ -89,7 +100,9 @@
       // The transcription pipeline already runs the helper; tap its PCM feed.
       try {
         await ctx.audioWorklet.addModule("pcm-feed-worklet.js");
-        const feed = new AudioWorkletNode(ctx, "pcm-feed", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
+        // The helper's PCM is 16 kHz; this context runs at the device rate (the
+        // worklet resamples, or the call would play three times too fast).
+        const feed = new AudioWorkletNode(ctx, "pcm-feed", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1], processorOptions: { inRate: 16000 } });
         feed.connect(mixDest);
         sysTap = tap(feed);
         window.__macRecSub = (buf) => { try { feed.port.postMessage(buf); } catch {} };

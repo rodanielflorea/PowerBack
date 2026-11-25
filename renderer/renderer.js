@@ -3034,15 +3034,48 @@ window.api.onUtteranceEnd(() => {
 // macOS system audio: PCM chunks from the helper are pushed into the feed node.
 const IS_MAC = /Mac/i.test(navigator.platform || "");
 let macSysFeed = null;
+// One helper process serves everyone who needs the Mac's sound (transcription,
+// and the supporter's stream in interview mode): starting it again would kill
+// the running one, so it is started for the first user and stopped after the
+// last. Others take its PCM through subscribe().
+const macSysAudio = (() => {
+  const subs = new Set();
+  let users = 0, running = false, starting = null;
+  return {
+    subscribe(fn) { subs.add(fn); return () => subs.delete(fn); },
+    feed(buf) { subs.forEach((fn) => { try { fn(buf); } catch {} }); },
+    ended() { running = false; },
+    async acquire() {
+      users++;
+      if (running) return { ok: true };
+      if (!starting) {
+        starting = window.api.macSystemAudioStart()
+          .catch((e) => ({ ok: false, error: e.message }))
+          .then((r) => { starting = null; running = !!(r && r.ok); return r || { ok: false, error: "unknown" }; });
+      }
+      const r = await starting;
+      if (!r.ok) users = Math.max(0, users - 1);
+      return r;
+    },
+    release() {
+      if (users > 0) users--;
+      if (!users && running) { running = false; window.api.macSystemAudioStop(); }
+    },
+  };
+})();
 if (window.api.onMacSystemAudioChunk) {
   window.api.onMacSystemAudioChunk((buf) => {
     if (macSysFeed) { try { macSysFeed.port.postMessage(buf); } catch {} }
     // The session recorder (recorder.js) takes the same PCM for the video's audio.
     if (window.__macRecSub) { try { window.__macRecSub(buf); } catch {} }
+    macSysAudio.feed(buf);
   });
 }
 if (window.api.onMacSystemAudioEnded) {
-  window.api.onMacSystemAudioEnded((code) => { if (macSysFeed && recState) { macSysFeed = null; toast("System audio capture stopped (helper exited " + code + ").", "err"); } });
+  window.api.onMacSystemAudioEnded((code) => {
+    macSysAudio.ended();
+    if (macSysFeed && recState) { macSysFeed = null; toast("System audio capture stopped (helper exited " + code + ").", "err"); }
+  });
 }
 
 if (window.api.onTranscriptMic) {
@@ -4600,14 +4633,17 @@ async function startVoice() {
       // macOS: system audio comes from the ScreenCaptureKit helper (main
       // process) and is mixed in through the pcm-feed worklet.
       if (IS_MAC && window.api.macSystemAudioStart) {
+        let held = false;
         try {
-          const r = await window.api.macSystemAudioStart();
+          const r = await macSysAudio.acquire();
+          held = !!(r && r.ok);
           if (r && r.ok) {
             await ctx.audioWorklet.addModule("pcm-feed-worklet.js");
             const feed = new AudioWorkletNode(ctx, "pcm-feed", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
             feed.connect(dest);
             macSysFeed = feed;
-            streams.push({ getTracks: () => [{ stop: () => { if (macSysFeed === feed) macSysFeed = null; window.api.macSystemAudioStop(); } }] });
+            held = false; // released by the stop below from now on
+            streams.push({ getTracks: () => [{ stop: () => { if (macSysFeed === feed) macSysFeed = null; macSysAudio.release(); } }] });
             sysOk = true;
             log("System audio: macOS ScreenCaptureKit", "info");
           } else {
@@ -4616,6 +4652,7 @@ async function startVoice() {
           }
         } catch (e) {
           log("macOS system audio error: " + e.message, "err");
+          if (held) macSysAudio.release();
         }
         // Without the helper (macOS 12 and older, or no permission) the call
         // audio can still come from a loopback device the user routes it to.
@@ -5188,11 +5225,69 @@ function toggleMicMute() {
 window.api.onTogglePtt(() => toggleMicMute());
 
 let speakerMicOnlyStream = null;
+let speakerSysCleanup = null; // stops the Mac system-audio feed made for the supporter
+
+// macOS: the sound the Mac plays (the meeting, the OS), for the supporter.
+// Chromium has no system-audio capture on macOS: getDisplayMedia with audio is
+// refused there outright ("Invalid capture constraints"), which left the
+// supporter without the meeting's sound. It comes from the ScreenCaptureKit
+// helper instead (shared with transcription), as a 48 kHz track; that helper
+// leaves out Ace's own sound, so the supporter never hears themselves back.
+// macOS 12 and older: a loopback device such as BlackHole, if there is one.
+async function captureMacSystemAudioForSupporter() {
+  if (window.api.macSystemAudioStart) {
+    const r = await macSysAudio.acquire();
+    if (r && r.ok) {
+      let ctx = null, unsub = null;
+      try {
+        ctx = new AudioContext({ latencyHint: "interactive" });
+        await ctx.audioWorklet.addModule("pcm-feed-worklet.js");
+        const feed = new AudioWorkletNode(ctx, "pcm-feed", {
+          numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1],
+          processorOptions: { inRate: 16000 },
+        });
+        const dest = ctx.createMediaStreamDestination();
+        feed.connect(dest);
+        unsub = macSysAudio.subscribe((buf) => { try { feed.port.postMessage(buf); } catch {} });
+        try { await ctx.resume(); } catch {}
+        speakerSysCleanup = () => { unsub(); try { ctx.close(); } catch {} macSysAudio.release(); };
+        log("Speaker: system audio from the macOS helper", "info");
+        return dest.stream.getAudioTracks();
+      } catch (e) {
+        if (unsub) unsub();
+        if (ctx) { try { ctx.close(); } catch {} }
+        macSysAudio.release();
+        log("Speaker: macOS system audio failed: " + e.message, "err");
+      }
+    } else {
+      log("Speaker: macOS system audio unavailable: " + ((r && r.error) || "unknown"), "err");
+    }
+  }
+  const loop = await openMacLoopbackDevice();
+  if (loop) {
+    speakerSysCleanup = () => loop.stream.getTracks().forEach((t) => t.stop());
+    log(`Speaker: system audio from the loopback device "${loop.label}"`, "info");
+    return loop.stream.getAudioTracks();
+  }
+  return null;
+}
+
 async function captureSpeakerStream() {
   if (speakerLocalStream) return speakerLocalStream;
   const tracks = [];
   let micOk = false,
     sysOk = false;
+  // macOS asks for the microphone once; without the answer the capture fails.
+  if (IS_MAC && window.api.getMicPermission) {
+    try {
+      const perm = await window.api.getMicPermission();
+      if (perm === "not-determined" && window.api.requestMicPermission) await window.api.requestMicPermission();
+      else if (perm === "denied" || perm === "restricted") {
+        log(`Speaker: macOS microphone permission is "${perm}"; the supporter will not hear you`, "err");
+        toast("The supporter can't hear your microphone: allow Ace under System Settings → Privacy & Security → Microphone.", "err");
+      }
+    } catch {}
+  }
   try {
     const mic = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -5207,7 +5302,19 @@ async function captureSpeakerStream() {
   } catch (e) {
     log("Speaker mic capture failed: " + e.message, "err");
   }
-  try {
+  if (IS_MAC) {
+    try {
+      const sys = await captureMacSystemAudioForSupporter();
+      if (sys && sys.length) {
+        sys.forEach((t) => tracks.push(t));
+        sysOk = true;
+      } else {
+        log("Speaker: the Mac's sound is not captured, so the supporter hears only the microphone", "err");
+      }
+    } catch (e) {
+      log("Speaker system capture failed: " + e.message, "err");
+    }
+  } else try {
     const sys = await navigator.mediaDevices.getDisplayMedia({
       video: true,
       audio: true,
@@ -5258,6 +5365,10 @@ function teardownPeers() {
   if (speakerLocalStream) {
     speakerLocalStream.getTracks().forEach((t) => t.stop());
     speakerLocalStream = null;
+  }
+  if (speakerSysCleanup) {
+    try { speakerSysCleanup(); } catch {}
+    speakerSysCleanup = null;
   }
   stopScreenForSupporter();
   speakerMicOnlyStream = null;
@@ -6605,9 +6716,11 @@ async function shareDisplayInfo() {
 async function captureDisplayStream(displayId) {
   const video = { frameRate: { ideal: SCREEN_FPS, max: SCREEN_FPS }, width: { max: 1920 }, height: { max: 1080 } };
   let s = null;
-  // Windows: getDisplayMedia gets a capturer of its own (see recorder.js); the
-  // main process answers it with the chosen screen, no picker.
-  if (!IS_MAC && window.captureDisplayMedia) {
+  // getDisplayMedia gets a capturer of its own (see recorder.js); the main
+  // process answers it with the chosen screen, no picker. A "desktop" capture
+  // shares the speaker-name watcher's 4 fps one (measured on macOS too: 4 fps
+  // asked for 15, against 15 through getDisplayMedia).
+  if (window.captureDisplayMedia) {
     try { s = await window.captureDisplayMedia(displayId, { video, audio: false }); }
     catch (e) { log("Screen for supporter: display capture unavailable (" + e.message + "), using desktop capture", "info"); }
   }
@@ -6629,6 +6742,10 @@ async function captureDisplayStream(displayId) {
   if (!vt) { s.getTracks().forEach((t) => t.stop()); return null; }
   const st = vt.getSettings ? vt.getSettings() : {};
   log(`Screen for supporter: ${st.width || "?"}x${st.height || "?"} @ ${st.frameRate || SCREEN_FPS} fps${displayId ? " (display " + displayId + ")" : ""}`, "info");
+  // macOS sends a frame only when the screen changes: on a still screen the
+  // supporter, whose picture starts after the last change, saw black. The last
+  // picture is repeated while nothing changes.
+  if (IS_MAC && window.steadyVideoTrack) return new MediaStream([window.steadyVideoTrack(vt, { idleMs: 500 })]);
   return new MediaStream([vt]);
 }
 
