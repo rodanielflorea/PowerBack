@@ -134,7 +134,8 @@
           "from": "mac-audio/build/",
           "to": "mac-audio/",
           "filter": [
-            "system-audio"
+            "system-audio",
+            "remote-input"
           ]
         }
       ],

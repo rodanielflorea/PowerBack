@@ -1,4 +1,5 @@
-// Remote control, the speaker's side (Windows): the supporter's mouse moves,
+// Remote control, the speaker's side (Windows; macOS through the native helper
+// in mac-audio/RemoteInput.swift, which reads the same lines): the supporter's mouse moves,
 // clicks, wheel and keys become real input on this computer through
 // SendInput, in a PowerShell process that stays open while control is on.
 // main.js decides when input is allowed; this file only delivers it.
@@ -173,8 +174,46 @@ for (let i = 0; i < 26; i++) VK['Key' + String.fromCharCode(65 + i)] = 0x41 + i;
 for (let i = 0; i < 10; i++) { VK['Digit' + i] = 0x30 + i; VK['Numpad' + i] = 0x60 + i; }
 for (let i = 1; i <= 24; i++) VK['F' + i] = 0x6F + i;
 
+// KeyboardEvent.code -> macOS virtual key code (Carbon kVK_*), for a speaker on
+// a Mac. Command and Control swap places: the supporter's page sends a Mac's
+// Command as Control (what it means on Windows), and a Windows supporter's
+// Ctrl+C should copy here, so Control means Command on this side and the
+// Windows/Meta key gives Control.
+const MAC_KC = {
+  KeyA: 0, KeyS: 1, KeyD: 2, KeyF: 3, KeyH: 4, KeyG: 5, KeyZ: 6, KeyX: 7, KeyC: 8, KeyV: 9,
+  IntlBackslash: 10, KeyB: 11, KeyQ: 12, KeyW: 13, KeyE: 14, KeyR: 15, KeyY: 16, KeyT: 17,
+  Digit1: 18, Digit2: 19, Digit3: 20, Digit4: 21, Digit6: 22, Digit5: 23, Equal: 24, Digit9: 25,
+  Digit7: 26, Minus: 27, Digit8: 28, Digit0: 29, BracketRight: 30, KeyO: 31, KeyU: 32, BracketLeft: 33,
+  KeyI: 34, KeyP: 35, Enter: 36, KeyL: 37, KeyJ: 38, Quote: 39, KeyK: 40, Semicolon: 41,
+  Backslash: 42, Comma: 43, Slash: 44, KeyN: 45, KeyM: 46, Period: 47, Tab: 48, Space: 49,
+  Backquote: 50, Backspace: 51, Escape: 53,
+  ControlLeft: 55, ControlRight: 54, MetaLeft: 59, MetaRight: 62,
+  ShiftLeft: 56, ShiftRight: 60, AltLeft: 58, AltRight: 61, CapsLock: 57,
+  NumpadDecimal: 65, NumpadMultiply: 67, NumpadAdd: 69, NumLock: 71, NumpadDivide: 75,
+  NumpadEnter: 76, NumpadSubtract: 78, NumpadEqual: 81,
+  Numpad0: 82, Numpad1: 83, Numpad2: 84, Numpad3: 85, Numpad4: 86, Numpad5: 87, Numpad6: 88,
+  Numpad7: 89, Numpad8: 91, Numpad9: 92,
+  F1: 122, F2: 120, F3: 99, F4: 118, F5: 96, F6: 97, F7: 98, F8: 100, F9: 101, F10: 109,
+  F11: 103, F12: 111, F13: 105, F14: 107, F15: 113, F16: 106, F17: 64, F18: 79, F19: 80, F20: 90,
+  Insert: 114, Home: 115, PageUp: 116, Delete: 117, End: 119, PageDown: 121,
+  ArrowLeft: 123, ArrowRight: 124, ArrowDown: 125, ArrowUp: 126, ContextMenu: 110,
+};
+
+// The key code this computer's input helper takes for a KeyboardEvent.code,
+// or null when the key is unknown (0 is a real key on a Mac: A).
 function vkFor(code) {
-  return Object.prototype.hasOwnProperty.call(VK, code) ? VK[code] : 0;
+  const table = process.platform === 'darwin' ? MAC_KC : VK;
+  return Object.prototype.hasOwnProperty.call(table, code) ? table[code] : null;
+}
+
+// The macOS helper (mac-audio/RemoteInput.swift), built next to the
+// system-audio one and packaged in Resources/mac-audio.
+function macHelperPath() {
+  const path = require('path');
+  let app = null;
+  try { app = require('electron').app; } catch {}
+  if (app && app.isPackaged) return path.join(process.resourcesPath, 'mac-audio', 'remote-input');
+  return path.join(__dirname, 'mac-audio', 'build', 'remote-input');
 }
 
 // onEvent('blocked', program) / onEvent('unblocked'): see the top of this file.
@@ -182,12 +221,20 @@ function createRemoteInput(log, onEvent) {
   let proc = null;
   let ready = null;
   let onLine = null;
+  let noPermission = false;
   function start() {
-    if (process.platform !== 'win32') return Promise.resolve(false);
+    if (process.platform !== 'win32' && process.platform !== 'darwin') return Promise.resolve(false);
     if (proc) return ready;
-    const enc = Buffer.from(PS, 'utf16le').toString('base64');
-    proc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', enc],
-      { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    noPermission = false;
+    if (process.platform === 'darwin') {
+      const bin = macHelperPath();
+      if (!require('fs').existsSync(bin)) { if (log) log('input helper is missing from this build: ' + bin); return Promise.resolve(false); }
+      proc = spawn(bin, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+    } else {
+      const enc = Buffer.from(PS, 'utf16le').toString('base64');
+      proc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', enc],
+        { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    }
     const me = proc;
     ready = new Promise((resolve) => {
       let buf = '';
@@ -199,6 +246,7 @@ function createRemoteInput(log, onEvent) {
           const line = buf.slice(0, i).trim();
           buf = buf.slice(i + 1);
           if (line === 'ACE_READY') { clearTimeout(t); resolve(true); }
+          else if (line === 'NOPERM') { noPermission = true; clearTimeout(t); resolve(false); if (onEvent) onEvent('noperm', ''); }
           else if (/^BLOCKED\b/.test(line)) { if (onEvent) onEvent('blocked', line.slice(8).trim()); }
           else if (line === 'UNBLOCKED') { if (onEvent) onEvent('unblocked', ''); }
           else if (line && onLine) onLine(line);
@@ -235,7 +283,7 @@ function createRemoteInput(log, onEvent) {
     proc = null; ready = null;
     if (p) { try { p.stdin.end(); } catch {} setTimeout(() => { try { p.kill(); } catch {} }, 500); }
   }
-  return { start, send, where, stop, running: () => !!proc };
+  return { start, send, where, stop, running: () => !!proc, noPermission: () => noPermission };
 }
 
 module.exports = { createRemoteInput, vkFor };
