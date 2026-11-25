@@ -5729,6 +5729,8 @@ window.api.onSignaling((msg) => {
     if (netCfg && netCfg.role === "supporter") onScreenShareState(!!msg.on, msg);
   } else if (type === "screen-select") {
     if (netCfg && netCfg.role === "speaker") switchShareDisplay(String(msg.display || ""));
+  } else if (type === "screen-refresh") {
+    if (netCfg && netCfg.role === "speaker") refreshShareScreen("the supporter has no picture" + (msg.why ? ": " + String(msg.why).slice(0, 120) : ""));
   } else if (type === "screen-thumbs-request") {
     if (netCfg && netCfg.role === "speaker") sendDisplayThumbs(msg.connId);
   } else if (type === "screen-thumbs") {
@@ -6726,11 +6728,13 @@ async function shareDisplayInfo() {
 async function captureDisplayStream(displayId) {
   const video = { frameRate: { ideal: SCREEN_FPS, max: SCREEN_FPS }, width: { max: 1920 }, height: { max: 1080 } };
   let s = null;
-  // getDisplayMedia gets a capturer of its own (see recorder.js); the main
-  // process answers it with the chosen screen, no picker. A "desktop" capture
-  // shares the speaker-name watcher's 4 fps one (measured on macOS too: 4 fps
-  // asked for 15, against 15 through getDisplayMedia).
-  if (window.captureDisplayMedia) {
+  // Windows: getDisplayMedia gets a capturer of its own (see recorder.js); the
+  // main process answers it with the chosen screen, no picker.
+  // macOS: the "desktop" capture, as before 2.7.32. The getDisplayMedia
+  // capture there, sent through the frame-repeating wrapper (steady-video.js),
+  // reached a supporter on Windows as a black picture. A still screen is
+  // covered by the supporter asking for a fresh picture (screen-refresh).
+  if (!IS_MAC && window.captureDisplayMedia) {
     try { s = await window.captureDisplayMedia(displayId, { video, audio: false }); }
     catch (e) { log("Screen for supporter: display capture unavailable (" + e.message + "), using desktop capture", "info"); }
   }
@@ -6752,10 +6756,7 @@ async function captureDisplayStream(displayId) {
   if (!vt) { s.getTracks().forEach((t) => t.stop()); return null; }
   const st = vt.getSettings ? vt.getSettings() : {};
   log(`Screen for supporter: ${st.width || "?"}x${st.height || "?"} @ ${st.frameRate || SCREEN_FPS} fps${displayId ? " (display " + displayId + ")" : ""}`, "info");
-  // macOS sends a frame only when the screen changes: on a still screen the
-  // supporter, whose picture starts after the last change, saw black. The last
-  // picture is repeated while nothing changes.
-  if (IS_MAC && window.steadyVideoTrack) return new MediaStream([window.steadyVideoTrack(vt, { idleMs: 500 })]);
+  try { vt.contentHint = "detail"; } catch {}
   return new MediaStream([vt]);
 }
 
@@ -6846,6 +6847,54 @@ async function switchShareDisplay(displayId) {
     switchingShareDisplay = false;
   }
 }
+// The supporter has no picture (it joined after the last change of a still
+// screen, or the picture broke): a new capture of the same display, swapped
+// in with replaceTrack, starts with a full picture.
+let refreshingShare = false, lastShareRefresh = 0;
+async function refreshShareScreen(why) {
+  const live = speakerScreenStream && speakerScreenStream.getVideoTracks().some((t) => t.readyState === "live");
+  if (!live || speakerPeers.size === 0 || refreshingShare || switchingShareDisplay) return;
+  if (Date.now() - lastShareRefresh < 4000) return;
+  lastShareRefresh = Date.now();
+  refreshingShare = true;
+  try {
+    log(`Screen for supporter: fresh capture (${why || "asked"})`, "info");
+    const display = speakerScreenDisplay;
+    const fresh = await captureDisplayStream(shareDisplayId && display === shareDisplayId ? shareDisplayId : "");
+    if (!fresh || !speakerScreenStream) { if (fresh) fresh.getTracks().forEach((t) => t.stop()); return; }
+    const oldVt = speakerScreenStream.getVideoTracks()[0];
+    const newVt = fresh.getVideoTracks()[0];
+    speakerPeers.forEach((entry, connId) => {
+      try { entry.peer.replaceTrack(oldVt, newVt, entry.stream); }
+      catch (e) { log(`Speaker[${connId}]: fresh screen failed: ${e.message}`, "err"); }
+    });
+    oldVt.onended = null;
+    oldVt.stop();
+    adoptScreenStream(fresh, display);
+  } finally {
+    refreshingShare = false;
+  }
+}
+
+// What the screen's video sender is doing, in the log every 15 s while a
+// supporter watches (for "the supporter sees black" reports).
+setInterval(async () => {
+  if (!speakerScreenStream || speakerPeers.size === 0) return;
+  for (const [connId, entry] of speakerPeers) {
+    const pc = entry.peer && entry.peer._pc;
+    if (!pc) continue;
+    try {
+      const st = await pc.getStats();
+      const codecs = new Map();
+      st.forEach((r) => { if (r.type === "codec") codecs.set(r.id, r.mimeType); });
+      st.forEach((r) => {
+        if (r.type !== "outbound-rtp" || r.kind !== "video") return;
+        log(`Speaker[${connId}] screen video: ${codecs.get(r.codecId) || "?"} ${r.frameWidth || 0}x${r.frameHeight || 0}, encoded ${r.framesEncoded || 0} (key ${r.keyFramesEncoded || 0}), sent ${r.framesSent || 0}, encoder ${r.encoderImplementation || "?"}, limited by ${r.qualityLimitationReason || "none"}, PLI ${r.pliCount || 0}, FIR ${r.firCount || 0}`, "info");
+      });
+    } catch {}
+  }
+}, 15000);
+
 if (window.api.onDisplaysChanged)
   window.api.onDisplaysChanged(() => { if (speakerPeers.size) notifyScreenState(!!speakerScreenStream); });
 
@@ -6968,6 +7017,55 @@ function attachScreenTrack(track) {
   screenShareOn = true;
   describeScreen();
   log("Supporter: receiving the speaker's screen", "info");
+  startScreenWatch();
+}
+
+// The supporter's side: is a picture arriving? No frame decoded, or a black
+// picture with nothing new for a while, asks the speaker for a fresh capture
+// (screen-refresh), and the numbers go to the log either way.
+let screenWatchTimer = null;
+function startScreenWatch() {
+  if (screenWatchTimer) return;
+  let lastDecoded = -1, sameSince = Date.now(), askedAt = 0, attachedAt = Date.now(), loggedAt = 0;
+  const sample = () => {
+    const v = screenVideoEl;
+    if (!v || !v.videoWidth) return -1;
+    try {
+      const c = document.createElement("canvas"); c.width = 32; c.height = 18;
+      const g = c.getContext("2d", { willReadFrequently: true });
+      g.drawImage(v, 0, 0, 32, 18);
+      const d = g.getImageData(0, 0, 32, 18).data;
+      let sum = 0; for (let i = 0; i < d.length; i += 4) sum += d[i] + d[i + 1] + d[i + 2];
+      return sum / (d.length / 4 * 3);
+    } catch { return -1; }
+  };
+  screenWatchTimer = setInterval(async () => {
+    const pc = supporterPeer && supporterPeer._pc;
+    if (!pc || !screenVideoEl || !screenVideoEl.srcObject || screenShareOn === false) {
+      clearInterval(screenWatchTimer); screenWatchTimer = null; return;
+    }
+    let r = null, codec = "";
+    try {
+      const st = await pc.getStats();
+      const codecs = new Map();
+      st.forEach((x) => { if (x.type === "codec") codecs.set(x.id, x.mimeType); });
+      st.forEach((x) => { if (x.type === "inbound-rtp" && x.kind === "video") { r = x; codec = codecs.get(x.codecId) || "?"; } });
+    } catch {}
+    if (!r) return;
+    const decoded = r.framesDecoded || 0;
+    const now = Date.now();
+    if (decoded !== lastDecoded) { lastDecoded = decoded; sameSince = now; }
+    const lum = sample();
+    const desc = `${codec} ${r.frameWidth || 0}x${r.frameHeight || 0}, received ${r.framesReceived || 0}, decoded ${decoded} (key ${r.keyFramesDecoded || 0}), dropped ${r.framesDropped || 0}, decoder ${r.decoderImplementation || "?"}, picture ${lum < 0 ? "none" : "brightness " + Math.round(lum)}`;
+    if (now - loggedAt > 15000) { loggedAt = now; log("Supporter: screen video: " + desc, "info"); }
+    const noFrames = decoded === 0 && now - attachedAt > 2500;
+    const blackAndStill = lum >= 0 && lum < 6 && now - sameSince > 2500;
+    if ((noFrames || blackAndStill) && now - askedAt > 6000) {
+      askedAt = now;
+      log("Supporter: no picture from the speaker, asking for a fresh one (" + desc + ")", "info");
+      try { window.api.sendSignaling({ type: "screen-refresh", why: noFrames ? "no frames" : "black picture" }); } catch {}
+    }
+  }, 1000);
 }
 
 function clearScreenView(text) {
