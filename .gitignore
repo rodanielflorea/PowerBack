@@ -62,3 +62,6 @@ vscode-extension/node_modules/
 
 # Personal AI-tool-usage interview notes, bundled in the build but not committed
 defaults/ai-usage.md
+
+# License signing key: written by scripts/license-keygen.js, kept local only.
+license-admin/private-key.js
