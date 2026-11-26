@@ -5431,14 +5431,38 @@ async function speakerHandleOpened(connId) {
   const tracks = stream.getTracks();
   log(`Speaker[${connId}]: streaming ${tracks.length} track(s)`, "info");
 
+  createSpeakerPeer(connId, stream, true, 1);
+}
+
+// The direct connection to a supporter. The speaker makes the first offer
+// (gen 1). Some pairs of networks only connect when the other side offers
+// (seen: a Mac supporter and a Windows speaker never got past "checking",
+// while the same two connected at once the other way round), so when the
+// first try has not connected after a few seconds, and the supporter's Ace
+// can do it, both sides start again with the supporter offering (gen 2).
+const RTC_SWAP_AFTER_MS = 9000;
+function createSpeakerPeer(connId, stream, initiator, gen) {
+  const old = speakerPeers.get(connId);
   const peer = new SimplePeerLib({
-    initiator: true,
+    initiator,
     stream,
     trickle: true,
     config: RTC_CONFIG,
   });
-  speakerPeers.set(connId, { peer, stream });
+  const entry = { peer, stream, gen, connected: false, canSwap: !!(old && old.canSwap), swapTimer: null };
+  speakerPeers.set(connId, entry);
   attachPcDiagnostics(peer, `Speaker[${connId}]`);
+  if (gen === 1) {
+    entry.swapTimer = setTimeout(() => {
+      const cur = speakerPeers.get(connId);
+      if (!cur || cur.peer !== peer || cur.connected || peer.destroyed) return;
+      if (!cur.canSwap) { log(`Speaker[${connId}]: not connected yet; the supporter's Ace cannot retry the other way round`, "info"); return; }
+      log(`Speaker[${connId}]: not connected after ${RTC_SWAP_AFTER_MS / 1000} s, retrying with the supporter making the offer`, "info");
+      try { window.api.sendSignaling({ connId, type: "rtc-swap", gen: 2 }); } catch {}
+      try { peer.destroy(); } catch {}
+      createSpeakerPeer(connId, stream, false, 2);
+    }, RTC_SWAP_AFTER_MS);
+  }
 
   peer.on("signal", (sig) => {
     if (sig && sig.candidate && sig.candidate.candidate) {
@@ -5447,10 +5471,14 @@ async function speakerHandleOpened(connId) {
         "info",
       );
     }
-    window.api.sendSignaling({ connId, type: "signal", payload: sig });
+    if (speakerPeers.get(connId) !== entry) return; // a replaced try
+    window.api.sendSignaling({ connId, type: "signal", payload: sig, gen });
   });
   peer.on("connect", async () => {
-    log(`Speaker[${connId}]: P2P connected`, "info");
+    entry.connected = true;
+    if (entry.swapTimer) { clearTimeout(entry.swapTimer); entry.swapTimer = null; }
+    log(`Speaker[${connId}]: P2P connected${gen > 1 ? " (the supporter made the offer)" : ""}`, "info");
+    logSelectedPair(peer, `Speaker[${connId}]`);
     // The screen capturer only produces a frame when something on the screen
     // changes, so the track is added now, connected: its first frame reaches
     // the supporter instead of being made before anyone could receive it.
@@ -5502,13 +5530,32 @@ async function speakerHandleOpened(connId) {
   );
   peer.on("close", () => {
     log(`Speaker[${connId}]: peer closed`, "info");
-    speakerPeers.delete(connId);
+    if (entry.swapTimer) { clearTimeout(entry.swapTimer); entry.swapTimer = null; }
+    if (speakerPeers.get(connId) === entry) speakerPeers.delete(connId);
   });
 }
 
-function speakerHandleSignal(connId, payload) {
+// Which route the connection took (local network, VPN, through the NATs, a
+// TURN relay): in the log, for connection reports.
+async function logSelectedPair(peer, label) {
+  const pc = peer && peer._pc;
+  if (!pc) return;
+  try {
+    const st = await pc.getStats();
+    let pair = null;
+    st.forEach((r) => { if (r.type === "transport" && r.selectedCandidatePairId) pair = st.get(r.selectedCandidatePairId); });
+    if (!pair) st.forEach((r) => { if (r.type === "candidate-pair" && r.nominated && r.state === "succeeded") pair = r; });
+    if (!pair) return;
+    const l = st.get(pair.localCandidateId) || {}, rm = st.get(pair.remoteCandidateId) || {};
+    log(`${label}: route ${l.candidateType || "?"} ${l.protocol || ""} ${l.address || ""} ↔ ${rm.candidateType || "?"} ${rm.address || ""}`, "info");
+  } catch {}
+}
+
+function speakerHandleSignal(connId, payload, gen, caps) {
   const entry = speakerPeers.get(connId);
   if (!entry) return;
+  if (Array.isArray(caps) && caps.includes("rtc-swap")) entry.canSwap = true;
+  if ((Number(gen) || 1) !== entry.gen) return; // from a replaced try
   try {
     entry.peer.signal(payload);
   } catch (e) {
@@ -5519,6 +5566,7 @@ function speakerHandleSignal(connId, payload) {
 function speakerHandleClosed(connId) {
   const entry = speakerPeers.get(connId);
   if (entry) {
+    if (entry.swapTimer) { clearTimeout(entry.swapTimer); entry.swapTimer = null; }
     try {
       entry.peer.destroy();
     } catch {}
@@ -5555,6 +5603,8 @@ async function ensureSupporterMic() {
 }
 
 let supporterPeerPromise = null;
+let supporterGen = 1;            // which try of the connection (see createSpeakerPeer)
+let supporterInitiator = false;  // gen 2 and up: this side makes the offer
 async function ensureSupporterPeer() {
   if (supporterPeer) return supporterPeer;
   if (supporterPeerPromise) return supporterPeerPromise;
@@ -5565,20 +5615,22 @@ async function ensureSupporterPeer() {
   supporterPeerPromise = (async () => {
     const micTrack = await ensureSupporterMic();
     const localStream = micTrack ? supporterMicStream : undefined;
-    return _createSupporterPeer(localStream);
+    return _createSupporterPeer(localStream, supporterInitiator);
   })().finally(() => {
     supporterPeerPromise = null;
   });
   return supporterPeerPromise;
 }
 
-function _createSupporterPeer(localStream) {
-  supporterPeer = new SimplePeerLib({
-    initiator: false,
+function _createSupporterPeer(localStream, initiator) {
+  const gen = supporterGen;
+  const me = new SimplePeerLib({
+    initiator: !!initiator,
     trickle: true,
     stream: localStream,
     config: RTC_CONFIG,
   });
+  supporterPeer = me;
 
   attachPcDiagnostics(supporterPeer, "Supporter");
   supporterPeer.on("signal", (sig) => {
@@ -5588,9 +5640,14 @@ function _createSupporterPeer(localStream) {
         "info",
       );
     }
-    window.api.sendSignaling({ type: "signal", payload: sig });
+    if (supporterPeer !== me) return; // a replaced try
+    // caps: this Ace can start again with the roles swapped (rtc-swap).
+    window.api.sendSignaling({ type: "signal", payload: sig, gen, caps: ["rtc-swap"] });
   });
-  supporterPeer.on("connect", () => log("Supporter: P2P connected", "info"));
+  supporterPeer.on("connect", () => {
+    log(`Supporter: P2P connected${initiator ? " (this side made the offer)" : ""}`, "info");
+    logSelectedPair(me, "Supporter");
+  });
   const supSeenStreams = new Set();
   const attachRemote = (remote, src) => {
     if (supSeenStreams.has(remote.id)) return;
@@ -5626,6 +5683,7 @@ function _createSupporterPeer(localStream) {
   );
   supporterPeer.on("close", () => {
     log("Supporter: peer closed", "info");
+    if (supporterPeer !== me) return; // replaced by a new try: keep its state
     supporterPeer = null;
     stopLevelMeter();
     clearScreenView("The speaker left.");
@@ -5643,7 +5701,8 @@ function _createSupporterPeer(localStream) {
   return supporterPeer;
 }
 
-function supporterHandleSignal(payload) {
+function supporterHandleSignal(payload, gen) {
+  if ((Number(gen) || 1) < supporterGen) return; // from a replaced try
   ensureSupporterPeer().then((peer) => {
     if (!peer) return;
     try {
@@ -5684,11 +5743,13 @@ window.api.onSignaling((msg) => {
       }, 1500);
     }
     else if (netCfg && netCfg.role === "supporter") {
+      supporterGen = 1; supporterInitiator = false;
       if (supporterPeer) {
-        try {
-          supporterPeer.destroy();
-        } catch {}
+        const old = supporterPeer;
         supporterPeer = null;
+        try {
+          old.destroy();
+        } catch {}
       }
       if (remoteAudioEl) {
         try {
@@ -5729,19 +5790,34 @@ window.api.onSignaling((msg) => {
     if (netCfg && netCfg.role === "supporter") onScreenShareState(!!msg.on, msg);
   } else if (type === "screen-select") {
     if (netCfg && netCfg.role === "speaker") switchShareDisplay(String(msg.display || ""));
+  } else if (type === "rtc-swap") {
+    if (netCfg && netCfg.role === "supporter") {
+      const gen = Number(msg.gen) || 2;
+      if (gen <= supporterGen) return;
+      log("Supporter: no connection yet, starting again with this side making the offer", "info");
+      supporterGen = gen;
+      supporterInitiator = true;
+      const old = supporterPeer;
+      supporterPeer = null;
+      if (old) { try { old.destroy(); } catch {} }
+      ensureSupporterPeer();
+    }
+  } else if (type === "screen-refresh") {
+    if (netCfg && netCfg.role === "speaker") refreshShareScreen("the supporter has no picture" + (msg.why ? ": " + String(msg.why).slice(0, 120) : ""));
   } else if (type === "screen-thumbs-request") {
     if (netCfg && netCfg.role === "speaker") sendDisplayThumbs(msg.connId);
   } else if (type === "screen-thumbs") {
     if (netCfg && netCfg.role === "supporter") onRemoteThumbs(msg.thumbs);
   } else if (type === "signal") {
     if (netCfg && netCfg.role === "speaker")
-      speakerHandleSignal(msg.connId, msg.payload);
+      speakerHandleSignal(msg.connId, msg.payload, msg.gen, msg.caps);
     else if (netCfg && netCfg.role === "supporter")
-      supporterHandleSignal(msg.payload);
+      supporterHandleSignal(msg.payload, msg.gen);
   } else if (type === "reject") {
     log("Network: rejected (" + (msg.reason || "unknown") + ")", "err");
   } else if (type === "hello") {
     log("Network: connected as supporter (peer id " + msg.id + ")", "info");
+    supporterGen = 1; supporterInitiator = false; // a new session: the speaker offers first again
     supporterAdmittedUi();
   }
 });
@@ -6726,11 +6802,13 @@ async function shareDisplayInfo() {
 async function captureDisplayStream(displayId) {
   const video = { frameRate: { ideal: SCREEN_FPS, max: SCREEN_FPS }, width: { max: 1920 }, height: { max: 1080 } };
   let s = null;
-  // getDisplayMedia gets a capturer of its own (see recorder.js); the main
-  // process answers it with the chosen screen, no picker. A "desktop" capture
-  // shares the speaker-name watcher's 4 fps one (measured on macOS too: 4 fps
-  // asked for 15, against 15 through getDisplayMedia).
-  if (window.captureDisplayMedia) {
+  // Windows: getDisplayMedia gets a capturer of its own (see recorder.js); the
+  // main process answers it with the chosen screen, no picker.
+  // macOS: the "desktop" capture, as before 2.7.32. The getDisplayMedia
+  // capture there, sent through the frame-repeating wrapper (steady-video.js),
+  // reached a supporter on Windows as a black picture. A still screen is
+  // covered by the supporter asking for a fresh picture (screen-refresh).
+  if (!IS_MAC && window.captureDisplayMedia) {
     try { s = await window.captureDisplayMedia(displayId, { video, audio: false }); }
     catch (e) { log("Screen for supporter: display capture unavailable (" + e.message + "), using desktop capture", "info"); }
   }
@@ -6752,10 +6830,7 @@ async function captureDisplayStream(displayId) {
   if (!vt) { s.getTracks().forEach((t) => t.stop()); return null; }
   const st = vt.getSettings ? vt.getSettings() : {};
   log(`Screen for supporter: ${st.width || "?"}x${st.height || "?"} @ ${st.frameRate || SCREEN_FPS} fps${displayId ? " (display " + displayId + ")" : ""}`, "info");
-  // macOS sends a frame only when the screen changes: on a still screen the
-  // supporter, whose picture starts after the last change, saw black. The last
-  // picture is repeated while nothing changes.
-  if (IS_MAC && window.steadyVideoTrack) return new MediaStream([window.steadyVideoTrack(vt, { idleMs: 500 })]);
+  try { vt.contentHint = "detail"; } catch {}
   return new MediaStream([vt]);
 }
 
@@ -6846,6 +6921,54 @@ async function switchShareDisplay(displayId) {
     switchingShareDisplay = false;
   }
 }
+// The supporter has no picture (it joined after the last change of a still
+// screen, or the picture broke): a new capture of the same display, swapped
+// in with replaceTrack, starts with a full picture.
+let refreshingShare = false, lastShareRefresh = 0;
+async function refreshShareScreen(why) {
+  const live = speakerScreenStream && speakerScreenStream.getVideoTracks().some((t) => t.readyState === "live");
+  if (!live || speakerPeers.size === 0 || refreshingShare || switchingShareDisplay) return;
+  if (Date.now() - lastShareRefresh < 4000) return;
+  lastShareRefresh = Date.now();
+  refreshingShare = true;
+  try {
+    log(`Screen for supporter: fresh capture (${why || "asked"})`, "info");
+    const display = speakerScreenDisplay;
+    const fresh = await captureDisplayStream(shareDisplayId && display === shareDisplayId ? shareDisplayId : "");
+    if (!fresh || !speakerScreenStream) { if (fresh) fresh.getTracks().forEach((t) => t.stop()); return; }
+    const oldVt = speakerScreenStream.getVideoTracks()[0];
+    const newVt = fresh.getVideoTracks()[0];
+    speakerPeers.forEach((entry, connId) => {
+      try { entry.peer.replaceTrack(oldVt, newVt, entry.stream); }
+      catch (e) { log(`Speaker[${connId}]: fresh screen failed: ${e.message}`, "err"); }
+    });
+    oldVt.onended = null;
+    oldVt.stop();
+    adoptScreenStream(fresh, display);
+  } finally {
+    refreshingShare = false;
+  }
+}
+
+// What the screen's video sender is doing, in the log every 15 s while a
+// supporter watches (for "the supporter sees black" reports).
+setInterval(async () => {
+  if (!speakerScreenStream || speakerPeers.size === 0) return;
+  for (const [connId, entry] of speakerPeers) {
+    const pc = entry.peer && entry.peer._pc;
+    if (!pc) continue;
+    try {
+      const st = await pc.getStats();
+      const codecs = new Map();
+      st.forEach((r) => { if (r.type === "codec") codecs.set(r.id, r.mimeType); });
+      st.forEach((r) => {
+        if (r.type !== "outbound-rtp" || r.kind !== "video") return;
+        log(`Speaker[${connId}] screen video: ${codecs.get(r.codecId) || "?"} ${r.frameWidth || 0}x${r.frameHeight || 0}, encoded ${r.framesEncoded || 0} (key ${r.keyFramesEncoded || 0}), sent ${r.framesSent || 0}, encoder ${r.encoderImplementation || "?"}, limited by ${r.qualityLimitationReason || "none"}, PLI ${r.pliCount || 0}, FIR ${r.firCount || 0}`, "info");
+      });
+    } catch {}
+  }
+}, 15000);
+
 if (window.api.onDisplaysChanged)
   window.api.onDisplaysChanged(() => { if (speakerPeers.size) notifyScreenState(!!speakerScreenStream); });
 
@@ -6968,6 +7091,55 @@ function attachScreenTrack(track) {
   screenShareOn = true;
   describeScreen();
   log("Supporter: receiving the speaker's screen", "info");
+  startScreenWatch();
+}
+
+// The supporter's side: is a picture arriving? No frame decoded, or a black
+// picture with nothing new for a while, asks the speaker for a fresh capture
+// (screen-refresh), and the numbers go to the log either way.
+let screenWatchTimer = null;
+function startScreenWatch() {
+  if (screenWatchTimer) return;
+  let lastDecoded = -1, sameSince = Date.now(), askedAt = 0, attachedAt = Date.now(), loggedAt = 0;
+  const sample = () => {
+    const v = screenVideoEl;
+    if (!v || !v.videoWidth) return -1;
+    try {
+      const c = document.createElement("canvas"); c.width = 32; c.height = 18;
+      const g = c.getContext("2d", { willReadFrequently: true });
+      g.drawImage(v, 0, 0, 32, 18);
+      const d = g.getImageData(0, 0, 32, 18).data;
+      let sum = 0; for (let i = 0; i < d.length; i += 4) sum += d[i] + d[i + 1] + d[i + 2];
+      return sum / (d.length / 4 * 3);
+    } catch { return -1; }
+  };
+  screenWatchTimer = setInterval(async () => {
+    const pc = supporterPeer && supporterPeer._pc;
+    if (!pc || !screenVideoEl || !screenVideoEl.srcObject || screenShareOn === false) {
+      clearInterval(screenWatchTimer); screenWatchTimer = null; return;
+    }
+    let r = null, codec = "";
+    try {
+      const st = await pc.getStats();
+      const codecs = new Map();
+      st.forEach((x) => { if (x.type === "codec") codecs.set(x.id, x.mimeType); });
+      st.forEach((x) => { if (x.type === "inbound-rtp" && x.kind === "video") { r = x; codec = codecs.get(x.codecId) || "?"; } });
+    } catch {}
+    if (!r) return;
+    const decoded = r.framesDecoded || 0;
+    const now = Date.now();
+    if (decoded !== lastDecoded) { lastDecoded = decoded; sameSince = now; }
+    const lum = sample();
+    const desc = `${codec} ${r.frameWidth || 0}x${r.frameHeight || 0}, received ${r.framesReceived || 0}, decoded ${decoded} (key ${r.keyFramesDecoded || 0}), dropped ${r.framesDropped || 0}, decoder ${r.decoderImplementation || "?"}, picture ${lum < 0 ? "none" : "brightness " + Math.round(lum)}`;
+    if (now - loggedAt > 15000) { loggedAt = now; log("Supporter: screen video: " + desc, "info"); }
+    const noFrames = decoded === 0 && now - attachedAt > 2500;
+    const blackAndStill = lum >= 0 && lum < 6 && now - sameSince > 2500;
+    if ((noFrames || blackAndStill) && now - askedAt > 6000) {
+      askedAt = now;
+      log("Supporter: no picture from the speaker, asking for a fresh one (" + desc + ")", "info");
+      try { window.api.sendSignaling({ type: "screen-refresh", why: noFrames ? "no frames" : "black picture" }); } catch {}
+    }
+  }, 1000);
 }
 
 function clearScreenView(text) {
@@ -7388,7 +7560,7 @@ const controlBanner = document.getElementById("controlBanner");
 let speakerControlState = "off";
 function showControlBanner(v) {
   if (v && v.needPermission) {
-    toast("Your supporter wants to control your screen, but macOS blocks it: System Settings → Privacy & Security → Accessibility → turn Ace on.", "err");
+    toast("Your supporter wants to control your screen, but macOS blocks it: System Settings → Privacy & Security → Accessibility → turn Ace on. If Ace is already on there, remove it with −, add it again with +, then quit and reopen Ace (macOS keeps this switch for one exact version of Ace).", "err");
   }
   if (!controlBanner) return;
   const st = (v && v.state) || "off";
