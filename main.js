@@ -3117,7 +3117,10 @@ function controlStop(reason) {
 // The supporter takes control. No prompt: it begins at once (the supporter was
 // already admitted to the session). Still needs the speaker on Windows and the
 // screen shared, and the speaker can stop it any time.
-const MAC_CONTROL_NO_PERMISSION = "The speaker's Mac has not allowed Ace to control the mouse and keyboard. On their Mac: System Settings → Privacy & Security → Accessibility → turn Ace on, then try again";
+// macOS keeps this permission for the exact build that asked: a switch that is
+// already on, left from an earlier copy or version of Ace, does not count for
+// this one. Removing Ace from the list and adding it again does.
+const MAC_CONTROL_NO_PERMISSION = "The speaker's Mac has not allowed Ace to control the mouse and keyboard. On their Mac: System Settings → Privacy & Security → Accessibility → turn Ace on. If Ace is already on, select it, remove it with −, add Ace again with +, then quit and reopen Ace";
 function controlRequest(connId) {
   if (process.platform !== 'win32' && process.platform !== 'darwin') { controlSendTo(connId, { state: 'unsupported', reason: 'Remote control works when the speaker is on Windows or macOS.' }); return; }
   // macOS: without Accessibility every injected event is dropped. Asking shows

@@ -7486,7 +7486,7 @@ const controlBanner = document.getElementById("controlBanner");
 let speakerControlState = "off";
 function showControlBanner(v) {
   if (v && v.needPermission) {
-    toast("Your supporter wants to control your screen, but macOS blocks it: System Settings → Privacy & Security → Accessibility → turn Ace on.", "err");
+    toast("Your supporter wants to control your screen, but macOS blocks it: System Settings → Privacy & Security → Accessibility → turn Ace on. If Ace is already on there, remove it with −, add it again with +, then quit and reopen Ace (macOS keeps this switch for one exact version of Ace).", "err");
   }
   if (!controlBanner) return;
   const st = (v && v.state) || "off";
