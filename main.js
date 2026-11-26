@@ -66,10 +66,8 @@ if (TEST_INSTANCE) {
     w.on('focus', () => dropTop(w));
   });
 }
-// The guardian starts the app when the process named in app.pid is gone. The
-// file is claimed now, so it does not start a copy while this one is still
-// starting or is waiting at the licence window. app.path says which file this
-// copy runs from, for a second start of the portable exe (above).
+// app.pid and app.path say which process and file this copy runs as, for a
+// second start of the portable exe (above) and for the installer.
 function claimAppPid() {
   if (process.platform !== 'win32' || !app.isPackaged) return;
   try {
@@ -207,6 +205,8 @@ const HOTKEY_MIGRATIONS = {
 
 const DEFAULT_STATE = {
   x: null, y: null, width: 380, height: 800,
+  // The main window's size chosen in Settings → Appearance; null = 380 × 800.
+  windowSize: null,
   opacity: 1.0, stealth: true, clickThrough: false,
   // Size of the generated answers' text, 1 = 100% (14 px).
   textScale: 1.1,
@@ -225,7 +225,6 @@ const DEFAULT_STATE = {
     recordDisplay: '',   // display id the recording captures; '' = the main display
     uploadSession: true,  // after saving, upload the bundle to gofile.io and hand back the link
   },
-  antiClose: true, // Windows: relaunch the app if another program closes it
   // Windows: clicking or typing in Ace leaves focus in the app the user was in.
   keepOtherAppFocused: true,
   network: {
@@ -548,11 +547,64 @@ function onScreenBounds(b) {
   return { x, y, width: w, height: h };
 }
 
-// The fixed size of the main window, made to fit the display it is on.
+// ── Main window size ─────────────────────────────────────────────────────────
+// The user picks it in Settings → Appearance. It is not resized by dragging
+// (the window is frameless and has no border to drag).
+const WINDOW_MIN = { width: 320, height: 480 };
+const WINDOW_MAX = { width: 1200, height: 1600 };
+function chosenWindowSize() {
+  const s = state.windowSize || {};
+  const pick = (v, d, lo, hi) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n > 0 ? Math.min(hi, Math.max(lo, n)) : d; };
+  return {
+    width: pick(s.width, DEFAULT_STATE.width, WINDOW_MIN.width, WINDOW_MAX.width),
+    height: pick(s.height, DEFAULT_STATE.height, WINDOW_MIN.height, WINDOW_MAX.height),
+  };
+}
+function setWindowSize(width, height) {
+  const reset = width == null || height == null;
+  state.windowSize = reset ? null : { width: Number(width), height: Number(height) };
+  if (!reset) state.windowSize = chosenWindowSize();
+  saveState();
+  if (!win || win.isDestroyed()) return chosenWindowSize();
+  if (hiddenBounds) {
+    // hidden: showMain() puts these bounds back, so they get the new size
+    const base = baseWindowSize(hiddenBounds);
+    hiddenBounds = { ...hiddenBounds, width: base.width + sidePaneExtra, height: base.height };
+    return chosenWindowSize();
+  }
+  const b = win.getBounds();
+  const wa = screen.getDisplayMatching(b).workArea;
+  const base = baseWindowSize(b);
+  const width2 = Math.min(base.width + sidePaneExtra, wa.width);
+  // grows to the right and down, moved back inside the screen if it would leave it
+  const x = Math.min(Math.max(b.x, wa.x), wa.x + wa.width - width2);
+  const y = Math.min(Math.max(b.y, wa.y), wa.y + wa.height - base.height);
+  const want = { x, y, width: width2, height: base.height };
+  try {
+    win.setBounds(want);
+    const got = win.getBounds();
+    if (got.width !== want.width || got.height !== want.height || got.x !== want.x || got.y !== want.y) win.setBounds(want);
+  } catch {}
+  syncStickyPosition();
+  return chosenWindowSize();
+}
+ipcMain.handle('get-window-size', () => {
+  let wa = null;
+  try { wa = screen.getDisplayMatching(win && !win.isDestroyed() ? win.getBounds() : screen.getPrimaryDisplay().bounds).workArea; } catch {}
+  return {
+    ...chosenWindowSize(),
+    default: { width: DEFAULT_STATE.width, height: DEFAULT_STATE.height },
+    min: WINDOW_MIN,
+    max: wa ? { width: Math.min(WINDOW_MAX.width, wa.width), height: Math.min(WINDOW_MAX.height, wa.height) } : WINDOW_MAX,
+  };
+});
+ipcMain.handle('set-window-size', (_e, width, height) => setWindowSize(width, height));
+
+// The size of the main window, made to fit the display it is on.
 function baseWindowSize(b) {
   let wa = null;
   try { wa = screen.getDisplayMatching(b).workArea; } catch {}
-  const w = DEFAULT_STATE.width, h = DEFAULT_STATE.height;
+  const { width: w, height: h } = chosenWindowSize();
   return wa ? { width: Math.min(w, wa.width), height: Math.min(h, wa.height) } : { width: w, height: h };
 }
 
@@ -567,8 +619,8 @@ function createWindow() {
       saveState();
     }
   } catch {}
-  // Only the place is restored: the size is always the fixed one.
-  const startBounds = onScreenBounds({ x: state.x, y: state.y, width: DEFAULT_STATE.width, height: DEFAULT_STATE.height });
+  // The place is restored; the size is the one chosen in Settings.
+  const startBounds = onScreenBounds({ x: state.x, y: state.y, ...chosenWindowSize() });
 
   // Bypass OS proxy auto-detection (WPAD). On Windows "Automatically detect
   // settings" is on by default; with no WPAD server every request waits for that
@@ -3411,8 +3463,6 @@ function installDownloadedUpdate(silent) {
     started = process.platform === 'darwin' || autoUpdater.quitAndInstallCalled === true;
   } catch {}
   if (started) {
-    // A deliberate restart: the watchdog must not bring the old version back.
-    signalCleanQuit();
     return true;
   }
   updateReady = false;
@@ -3491,123 +3541,26 @@ ipcMain.handle('get-app-info', () => {
 
 let licenseWin = null;
 
-// ── Anti-close mutual watchdog (Windows) ──────────────────────────────────────
-// The app and a separately-named guardian process guard each other: the
-// guardian relaunches the app if it dies, and the app respawns the guardian if
-// IT dies. Killing one at a time (or by exe name) never stops the app. Only a
-// simultaneous kill of both, or admin/SYSTEM rights, can — unavoidable from
-// user space. Packaged Windows only; a clean quit stands the guardian down.
-const wdFile = (name) => path.join(app.getPath('userData'), name);
-let wdMonitorTimer = null;
-let appQuitting = false;
-
-function wdAlive(pid) { if (!pid) return false; try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
-function wdReadPid(f) { try { return parseInt(fs.readFileSync(f, 'utf8').trim(), 10) || 0; } catch { return 0; } }
-
-// A byte copy of this Electron binary under a different name, so a by-name kill
-// of the app exe does not also kill the guardian. Falls back to the app exe if
-// the copy cannot be made.
-// The copy also needs the runtime files Electron loads from beside its exe
-// (ICU data and the V8 snapshots): without them it crashed on every start, and
-// Ace started it again every 5 s. The copy is made off the window's thread
-// (the exe is over 200 MB), and made again when Ace's own exe changes.
-const GUARDIAN_RUNTIME_FILES = ['icudtl.dat', 'snapshot_blob.bin', 'v8_context_snapshot.bin'];
-let guardianPrep = null;
-async function prepareGuardianExe() {
-  const fsp = fs.promises;
-  const dest = wdFile('DevGuardian.exe');
-  const st = await fsp.stat(process.execPath);
-  const stamp = `${st.size}:${Math.round(st.mtimeMs)}`;
-  let have = '';
-  try { have = (await fsp.readFile(wdFile('DevGuardian.ver'), 'utf8')).trim(); } catch {}
-  if (have !== stamp || !fs.existsSync(dest)) {
-    await fsp.copyFile(process.execPath, dest + '.tmp');
-    try { await fsp.unlink(dest); } catch {}
-    await fsp.rename(dest + '.tmp', dest);
-  }
-  const srcDir = path.dirname(process.execPath);
-  for (const name of GUARDIAN_RUNTIME_FILES) {
-    const from = path.join(srcDir, name), to = wdFile(name);
-    let fromSize = -1, toSize = -2;
-    try { fromSize = (await fsp.stat(from)).size; } catch { continue; }
-    try { toSize = (await fsp.stat(to)).size; } catch {}
-    if (have !== stamp || fromSize !== toSize) await fsp.copyFile(from, to);
-  }
-  await fsp.writeFile(wdFile('DevGuardian.ver'), stamp);
-  return dest;
-}
-function ensureGuardianExe() {
-  if (!guardianPrep) {
-    guardianPrep = prepareGuardianExe().catch((e) => {
-      appendLogLine('[watchdog] guardian copy failed (' + e.message + '); it runs as a second copy of Ace instead');
-      return process.execPath;
-    });
-  }
-  return guardianPrep;
-}
-// watchdog.js lives inside the asar; the guardian exe (a copy in userData) has
-// no asar next to it, so write the script to a plain file it can run directly.
-function ensureGuardianScript() {
-  const dest = wdFile('guardian.js');
-  try { fs.writeFileSync(dest, fs.readFileSync(path.join(__dirname, 'watchdog.js'))); } catch {}
-  return dest;
-}
-function guardianRunning() { return wdAlive(wdReadPid(wdFile('guardian.pid'))); }
-
-// Starts that never came up, in a row. After 3 the guardian is left off for
-// this run instead of being started again every 5 s.
-let guardianFailedStarts = 0;
-let guardianStarting = false;
-async function spawnGuardian() {
-  if (guardianStarting) return;
-  if (guardianRunning()) { guardianFailedStarts = 0; return; }
-  if (guardianFailedStarts >= 3) return;
-  guardianStarting = true;
-  try {
-    const exe = await ensureGuardianExe();
-    if (appQuitting || guardianRunning()) return;
-    const js = ensureGuardianScript();
-    if (++guardianFailedStarts === 3) appendLogLine('[watchdog] the guardian did not come up after 3 starts; it stays off until Ace restarts');
-    try {
-      const child = spawn(exe, [js, app.getPath('userData'), process.execPath], {
-        detached: true, stdio: 'ignore',
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-      });
-      child.on('error', (e) => appendLogLine('[watchdog] guardian spawn failed: ' + e.message));
-      child.unref();
-    } catch (e) { appendLogLine('[watchdog] guardian spawn failed: ' + e.message); }
-  } finally { guardianStarting = false; }
-}
-
-function startWatchdog() {
+// ── The guardian is gone ─────────────────────────────────────────────────────
+// Up to 2.7.32 a second process (DevGuardian.exe) started Ace again whenever it
+// closed. Copies of it piled up, and the ones that missed the stop signal
+// brought Ace back after a normal quit. Ace no longer has one: this stops any
+// copies an earlier version left running and deletes their files.
+function retireGuardian() {
   if (process.platform !== 'win32' || !app.isPackaged) return;
-  if (state.antiClose === false) return;
-  appQuitting = false;
-  try { fs.unlinkSync(wdFile('watchdog-stop')); } catch {}
-  try { fs.writeFileSync(wdFile('app.pid'), String(process.pid)); } catch {}
-  spawnGuardian();
-  if (wdMonitorTimer) clearInterval(wdMonitorTimer);
-  // Respawn the guardian if it is ever killed while we are running.
-  wdMonitorTimer = setInterval(() => {
-    if (appQuitting || state.antiClose === false) return;
-    try { fs.writeFileSync(wdFile('app.pid'), String(process.pid)); } catch {}
-    if (guardianRunning()) guardianFailedStarts = 0;
-    else spawnGuardian();
-  }, 5000);
+  const dir = app.getPath('userData');
+  // a guardian that looks before it is stopped leaves on its own
+  try { fs.writeFileSync(path.join(dir, 'watchdog-stop'), String(Date.now())); } catch {}
+  require('child_process').execFile('taskkill', ['/F', '/IM', 'DevGuardian.exe'], { windowsHide: true }, (err) => {
+    if (!err) appendLogLine('[guardian] stopped the guardian an earlier version left running');
+    setTimeout(() => {
+      for (const name of ['DevGuardian.exe', 'DevGuardian.exe.tmp', 'DevGuardian.ver', 'guardian.js', 'guardian.pid',
+        'watchdog-stop', 'icudtl.dat', 'snapshot_blob.bin', 'v8_context_snapshot.bin']) {
+        fs.promises.unlink(path.join(dir, name)).catch(() => {});
+      }
+    }, 2000);
+  });
 }
-
-function stopWatchdog() {
-  if (wdMonitorTimer) { clearInterval(wdMonitorTimer); wdMonitorTimer = null; }
-  try { fs.writeFileSync(wdFile('watchdog-stop'), String(Date.now())); } catch {}
-}
-
-// A deliberate quit must not be undone by the guardian.
-function signalCleanQuit() {
-  if (process.platform !== 'win32') return;
-  appQuitting = true;
-  stopWatchdog();
-}
-app.on('before-quit', signalCleanQuit);
 
 let appIsQuitting = false;
 app.on('before-quit', () => {
@@ -3633,7 +3586,7 @@ process.on('unhandledRejection', (e) => {
 });
 
 function startApp() {
-  startWatchdog();
+  retireGuardian();
   recoverRecordings();
   startAceCheckins();
   // macOS: ask for the microphone up front so the system prompt appears once,
@@ -3719,7 +3672,7 @@ function openLicenseWindow(first) {
   ipcMain.handle('license-info', () => view(info));
   ipcMain.handle('license-check', async () => { if (poll) clearTimeout(poll); return view(await check()); });
   ipcMain.handle('license-copy-mac', () => clipboard.writeText(view(info).mac));
-  ipcMain.handle('license-quit', () => { signalCleanQuit(); app.quit(); });
+  ipcMain.handle('license-quit', () => app.quit());
 }
 
 // While the app runs it checks in every minute: new keys take effect at once,
@@ -3758,7 +3711,6 @@ function aceShutdown(why) {
   saveState();
   try { for (const w of BrowserWindow.getAllWindows()) w.hide(); } catch {}
   try { dialog.showMessageBoxSync({ type: 'warning', title: 'Ace', message: why, buttons: ['Close'] }); } catch {}
-  signalCleanQuit();
   appIsQuitting = true;
   app.exit(0);
 }
@@ -3785,7 +3737,7 @@ function showRunningApp() {
 }
 app.on('second-instance', (_e, _argv, _cwd, data) => {
   if (data && data.guardian) {
-    // The guardian took this app for gone, so app.pid is wrong: put it right,
+    // An earlier version's guardian (until it is stopped) took this app for gone, so app.pid is wrong: put it right,
     // or it tries again every few seconds. Nobody asked for the window, so a
     // window that was hidden on purpose stays hidden.
     claimAppPid();
@@ -3871,11 +3823,8 @@ const MAC_ACCESSIBILITY_HINT = 'macOS needs the Accessibility permission for thi
 // ── Diagnostics: one place that checks every requirement on this machine ──
 // macOS applies Accessibility / Screen Recording grants only after a relaunch.
 ipcMain.handle('relaunch-app', () => {
-  // A deliberate restart. exit() skips the quit handlers, so the guardian is
-  // told here, or it starts a copy of its own next to the one relaunch() starts.
-  signalCleanQuit();
   app.releaseSingleInstanceLock();
-  // Without the guardian's mark: the new copy is a start the user asked for.
+  // Without the old guardian's mark: the new copy is a start the user asked for.
   app.relaunch({ args: process.argv.slice(1).filter((a) => a !== '--by-guardian') });
   app.exit(0);
 });
@@ -3967,14 +3916,6 @@ ipcMain.handle('set-click-through', (_e, value) => setClickThrough(value));
 ipcMain.handle('get-click-through', () => state.clickThrough);
 ipcMain.handle('hide', () => hideMain());
 ipcMain.handle('quit', () => quitWhenIdle());
-ipcMain.handle('get-anti-close', () => ({ supported: process.platform === 'win32', enabled: state.antiClose !== false }));
-ipcMain.handle('set-anti-close', (_e, v) => {
-  state.antiClose = !!v;
-  saveState();
-  if (state.antiClose) startWatchdog();
-  else stopWatchdog();
-  return state.antiClose;
-});
 // macOS lists no screens until the app has the Screen Recording permission.
 // Say so once per run and open the right Settings pane, so it can be granted.
 let screenPermissionShown = false;

@@ -123,6 +123,16 @@
             <button type="button" data-scale="1.6" role="radio">160%</button>
           </div>
           <p class="hint">The size of the generated answers only. Or press <span class="kbd">Ctrl+=</span> / <span class="kbd">Ctrl+-</span> in Ace&rsquo;s window, and <span class="kbd">Ctrl+0</span> for the default (110%).</p>
+          <div class="field" id="windowSizeField" style="margin-top:12px">
+            <label for="windowWidth">Window width</label>
+            <input type="range" id="windowWidth" min="320" max="1200" step="10" />
+            <div class="range-value" id="windowWidthVal">380 px</div>
+            <label for="windowHeight">Window height</label>
+            <input type="range" id="windowHeight" min="480" max="1600" step="10" />
+            <div class="range-value" id="windowHeightVal">800 px</div>
+            <button type="button" class="action-btn" id="windowSizeReset" style="margin-top:8px">Default size (380 &times; 800)</button>
+            <p class="hint">The size of Ace&rsquo;s main window. It changes when you let go of the slider.</p>
+          </div>
         </section>
 
         <section class="settings-section">
@@ -155,10 +165,6 @@
           <div class="field">
             <label class="checkbox"><input type="checkbox" id="uploadSession" /> Upload the saved session folder to gofile.io and show the share link</label>
             <p class="hint">Runs after the files are written. The upload is anonymous and the link is public &mdash; anyone who has it can download the recording, transcript, CV and job description. The link is also saved as gofile-link.txt inside the session folder.</p>
-          </div>
-          <div class="field" id="antiCloseField" hidden>
-            <label class="checkbox"><input type="checkbox" id="antiClose" /> Keep the app running if another program closes it (Windows)</label>
-            <p class="hint">Relaunches the app automatically if it is terminated. It cannot stop a program running as administrator.</p>
           </div>
           <div class="field" id="keepFocusField" hidden>
             <label class="checkbox"><input type="checkbox" id="keepFocus" /> Keep focus in the other app when you click or type in Ace (Windows)</label>
