@@ -41,7 +41,6 @@
       "license.js",
       "ace-online.js",
       "license-public.key",
-      "watchdog.js",
       "webm-finalize.js"
     ],
     "directories": {

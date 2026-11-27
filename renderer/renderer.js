@@ -2180,6 +2180,36 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "-" || e.key === "_") { e.preventDefault(); window.api.stepTextScale(-1); }
   else if (e.key === "0" && !e.shiftKey) { e.preventDefault(); window.api.stepTextScale(0); }
 });
+// Main window size (Settings → Appearance): applied when the slider is let go,
+// so the window does not change under the pointer while dragging.
+const winWidthEl = document.getElementById("windowWidth");
+const winHeightEl = document.getElementById("windowHeight");
+function showWindowSize(r) {
+  if (!r || !winWidthEl || !winHeightEl) return;
+  if (r.min && r.max) {
+    winWidthEl.min = r.min.width; winWidthEl.max = Math.max(r.min.width, r.max.width);
+    winHeightEl.min = r.min.height; winHeightEl.max = Math.max(r.min.height, r.max.height);
+  }
+  winWidthEl.value = r.width; winHeightEl.value = r.height;
+  syncWindowSizeLabels();
+}
+function syncWindowSizeLabels() {
+  const w = document.getElementById("windowWidthVal"), h = document.getElementById("windowHeightVal");
+  if (w) w.textContent = winWidthEl.value + " px";
+  if (h) h.textContent = winHeightEl.value + " px";
+}
+if (winWidthEl && winHeightEl && window.api.getWindowSize) {
+  window.api.getWindowSize().then(showWindowSize).catch(() => {});
+  const apply = () => window.api.setWindowSize(Number(winWidthEl.value), Number(winHeightEl.value))
+    .then(() => window.api.getWindowSize()).then(showWindowSize).catch(() => {});
+  for (const el of [winWidthEl, winHeightEl]) {
+    el.addEventListener("input", syncWindowSizeLabels);
+    el.addEventListener("change", apply);
+  }
+  const resetEl = document.getElementById("windowSizeReset");
+  if (resetEl) resetEl.addEventListener("click", () => window.api.setWindowSize(null, null)
+    .then(() => window.api.getWindowSize()).then(showWindowSize).catch(() => {}));
+}
 const themeSegEl = document.getElementById("themeSeg");
 function syncThemeSeg() {
   if (!themeSegEl || !window.aceTheme) return;
@@ -2378,15 +2408,6 @@ if (recIndicatorEl) recIndicatorEl.addEventListener("click", async () => {
     window.startRecording(true); // manual: record even if auto-record is off in Settings
   }
 });
-const antiCloseEl = document.getElementById("antiClose");
-if (antiCloseEl && window.api.getAntiClose) {
-  window.api.getAntiClose().then((s) => {
-    const field = document.getElementById("antiCloseField");
-    if (field) field.hidden = !s.supported;
-    antiCloseEl.checked = !!s.enabled;
-  }).catch(() => {});
-  antiCloseEl.addEventListener("change", () => window.api.setAntiClose(antiCloseEl.checked));
-}
 const keepFocusEl = document.getElementById("keepFocus");
 if (keepFocusEl && window.api.getKeepFocus) {
   window.api.getKeepFocus().then((s) => {
